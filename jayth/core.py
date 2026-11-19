@@ -44,6 +44,7 @@ DEFAULTS = {
     "projects": [],
     "active_project": "",
     "app_mode": "chat",          # chat | code (ultimo modo usado)
+    "layout": {},                # distribucion de paneles: anchos, plegados, lados (la guarda la ventana sola)
     # interfaz
     "theme": "system",           # system | dark | light
     "font_scale": 100,
@@ -125,6 +126,8 @@ class Settings:
                 try:
                     if isinstance(dv, list):
                         x = list(x)
+                    elif isinstance(dv, dict):
+                        x = dict(x)
                     elif isinstance(dv, bool):
                         x = x if isinstance(x, bool) else str(x).lower() in ("1", "true", "on", "yes", "si", "sí")
                     elif isinstance(dv, int):

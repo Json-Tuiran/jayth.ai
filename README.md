@@ -13,6 +13,12 @@ equipo y **tú apruebas cada acción**.
 - **Sin nube:** después de descargar el modelo funciona sin internet. Las herramientas web solo se usan si hay conexión.
 - **Control total:** modos de permiso, botones Permitir/Denegar por acción, botón Detener y failsafe del ratón.
 - **Dos modos:** Chat para cualquier tarea y **Jayth Code** para proyectos (árbol de archivos, editor, terminal y agente).
+- **Distribución a tu gusto:** arrastra los divisores para cambiar el ancho de cada panel; doble clic en un divisor lo
+  pliega. En Code puedes ocultar el explorador (Ctrl+B), la terminal (Ctrl+\`) o el agente (Ctrl+L), mover el agente a la
+  izquierda o a la derecha, poner la terminal debajo o al lado del editor y usar el modo enfoque (Ctrl+Shift+M).
+  Las secciones y grupos del historial se pliegan. Todo se recuerda al volver a abrir.
+- **Descargas claras:** porcentaje, tamaño descargado, velocidad, tiempo restante y transcurrido, por archivo y en total;
+  se reanudan donde se quedaron y se verifican con SHA-256.
 - **Un arnés pensado para sacar lo máximo de cada modelo, incluso local:**
   - lista de tareas visible (`update_plan`), preguntas con opciones (`ask_user`) y modo **Planificar** (propone, tú apruebas, ejecuta);
   - lee `AGENTS.md` / `JAYTH.md` / `CLAUDE.md` del proyecto, conoce su estructura y recuerda tus preferencias (memoria);

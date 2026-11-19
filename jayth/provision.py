@@ -272,8 +272,41 @@ def find_server(folder):
 
 
 # ---------------------------------------------------------------- trabajos con progreso (para la interfaz)
+def fmt_duration(s):
+    """Duracion legible: 45 s · 3 min 20 s · 14 min · 1 h 27 min · 2 d 5 h."""
+    if s < 1:
+        return "menos de 1 s"
+    s = int(round(s))
+    if s < 60:
+        return "%d s" % s
+    m, s = divmod(s, 60)
+    if m < 10:
+        return "%d min %02d s" % (m, s)
+    if m < 60:
+        return "%d min" % m
+    h, m = divmod(m, 60)
+    if h < 24:
+        return "%d h %02d min" % (h, m)
+    d, h = divmod(h, 24)
+    return "%d d %d h" % (d, h)
+
+
+def fmt_bytes(n):
+    n = float(n)
+    for u in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or u == "TB":
+            return ("%.0f %s" if u in ("B", "KB") else "%.1f %s") % (n, u)
+        n /= 1024
+
+
+DOWNLOAD_PHASES = ("descargando", "ya descargado")
+
+
 class Job:
-    """Ejecuta pasos en un hilo; la interfaz lee self.steps periodicamente."""
+    """Ejecuta pasos en un hilo; la interfaz lee self.steps y self.overall() periodicamente.
+
+    Por paso: done/total de la fase actual (descarga o verificacion), got = bytes descargados, speed = velocidad
+    suavizada (media movil exponencial, no salta con cada bloque), eta = segundos que quedan de la fase."""
 
     def __init__(self):
         self.steps = []
@@ -282,35 +315,65 @@ class Job:
         self.error = None
         self.finished = False
         self.result = {}
+        self.started = self.ended = 0.0
 
-    def add(self, label, fn):
-        self.steps.append({"label": label, "fn": fn, "status": "pending", "done": 0, "total": 0, "phase": "", "speed": 0.0})
+    def add(self, label, fn, size=0):
+        """size: tamaño previsto en bytes (si se conoce), para calcular el total desde el principio."""
+        self.steps.append({"label": label, "fn": fn, "status": "pending", "done": 0, "total": size, "size": size, "got": 0,
+                           "phase": "", "speed": 0.0, "eta": None, "started": 0.0, "ended": 0.0, "base": None, "_t": 0.0, "_d": 0})
 
     def start(self):
+        self.started = time.time()
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
 
     def cancel(self):
         self.stop.set()
 
+    def overall(self):
+        """Progreso de todo el trabajo: bytes descargados de todos los pasos, velocidad actual y tiempo restante."""
+        total = sum(st["size"] or st["total"] for st in self.steps)
+        got = sum((st["size"] or st["total"]) if st["status"] == "done" else st["got"] for st in self.steps)
+        run = next((st for st in self.steps if st["status"] == "running"), None)
+        speed = run["speed"] if run and run["phase"] in DOWNLOAD_PHASES else 0.0
+        eta = (total - got) / speed if speed > 0 and total > got else None
+        end = self.ended or time.time()
+        return {"got": got, "total": total, "speed": speed, "eta": eta, "elapsed": end - self.started if self.started else 0,
+                "done_steps": sum(st["status"] == "done" for st in self.steps), "steps": len(self.steps)}
+
+    @staticmethod
+    def _progress(st, done, total, phase):
+        now = time.time()
+        if phase != st["phase"]:                    # nueva fase (descarga, verificacion, reintento): se reinicia la medida
+            st["_t"], st["_d"], st["speed"], st["eta"] = now, done, 0.0, None
+            st["_t0"], st["_d0"] = now, done
+        elif now - st["_t"] >= 0.5:
+            if now - st["_t0"] < 4:                 # al empezar: media real desde el inicio de la fase (estable y sin picos)
+                st["speed"] = max(0, done - st["_d0"]) / (now - st["_t0"])
+            else:                                   # despues: media movil, sigue los cambios de la conexion sin saltar
+                inst = max(0, done - st["_d"]) / (now - st["_t"])
+                st["speed"] = st["speed"] * 0.8 + inst * 0.2
+            st["_t"], st["_d"] = now, done
+        if phase in DOWNLOAD_PHASES or phase.startswith("reintentando"):
+            if st["base"] is None:
+                st["base"] = done                   # lo que ya habia de una descarga anterior (reanudada)
+            st["got"] = max(st["got"], done)
+        elif phase == "verificando":
+            st["got"] = total
+        st["done"], st["total"], st["phase"] = done, total or st["total"], phase
+        if total and not st["size"]:
+            st["size"] = total
+        st["eta"] = (total - done) / st["speed"] if st["speed"] > 0 and total > done else None
+
     def _run(self):
         try:
             for st in self.steps:
                 st["status"] = "running"
-                t0, last = [time.time(), 0], [0]
-
-                def prog(done, total, phase, st=st):
-                    now = time.time()
-                    if phase == "descargando" and now - t0[0] > 1:
-                        st["speed"] = (done - last[0]) / (now - t0[0])
-                        t0[0], last[0] = now, done
-                    elif phase != "descargando":
-                        st["speed"] = 0.0
-                    if not last[0]:
-                        last[0] = done
-                    st["done"], st["total"], st["phase"] = done, total, phase
-                st["fn"](prog, self.stop, self.result)
+                st["started"] = time.time()
+                st["fn"](lambda done, total, phase, st=st: self._progress(st, done, total, phase), self.stop, self.result)
+                st["ended"] = time.time()
                 st["status"] = "done"
+                st["skipped"] = st["phase"] == "ya descargado"
                 st["phase"] = "listo"
         except Cancelled:
             for st in self.steps:
@@ -323,4 +386,69 @@ class Job:
                     st["status"] = "error"
             self.error = str(e)
         finally:
+            self.ended = time.time()
             self.finished = True
+
+
+def describe_step(st):
+    """Texto de estado de un paso para la interfaz."""
+    if st["status"] == "pending":
+        return "en espera" + (" · %s" % fmt_bytes(st["size"]) if st["size"] else "")
+    if st["status"] == "done":
+        if st.get("skipped"):
+            return "✓ ya estaba descargado" + (" · %s" % fmt_bytes(st["size"]) if st["size"] else "")
+        took = st["ended"] - st["started"]
+        moved = st["got"] - (st["base"] or 0)
+        avg = moved / took if took > 0.5 and moved > 0 else 0
+        parts = ["✓ listo"]
+        if st["size"]:
+            parts.append(fmt_bytes(st["size"]))
+        parts.append("en " + fmt_duration(took))
+        if avg:
+            parts.append("%s/s de media" % fmt_bytes(avg))
+        return " · ".join(parts)
+    if st["status"] == "cancelled":
+        return "✗ cancelado · %s de %s conservados" % (fmt_bytes(st["got"]), fmt_bytes(st["size"] or st["total"]))
+    if st["status"] == "error":
+        return "✗ error"
+    # en curso
+    ph, done, total = st["phase"], st["done"], st["total"]
+    if ph == "verificando":
+        head = "Verificando la integridad (SHA-256)"
+    elif ph == "descomprimiendo":
+        return "Descomprimiendo…"
+    elif ph.startswith("reintentando"):
+        head = "Conexión perdida · " + ph
+    elif ph == "descargando":
+        head = "Descargando"
+    else:
+        head = ph.capitalize() if ph else "Preparando…"
+    parts = [head]
+    if total:
+        parts.append("%s %%" % (("%.1f" % (100.0 * done / total)) if total > 2 * 1024 ** 3 else ("%d" % (100 * done // total))))
+        parts.append("%s de %s" % (fmt_bytes(done), fmt_bytes(total)))
+    elif done:
+        parts.append(fmt_bytes(done))
+    if ph in ("descargando", "verificando"):
+        if st["speed"] > 0:
+            parts.append("%s/s" % fmt_bytes(st["speed"]))
+            if st["eta"] is not None:
+                parts.append("quedan " + fmt_duration(st["eta"]))
+        else:
+            parts.append("calculando velocidad…")
+    return " · ".join(parts)
+
+
+def describe_overall(o):
+    """Resumen de todo el trabajo: '6.5 GB de 17.1 GB · paso 2 de 3 · 11.2 MB/s · quedan ~16 min · llevas 9 min'."""
+    parts = []
+    if o["total"]:
+        parts.append("%s de %s" % (fmt_bytes(o["got"]), fmt_bytes(o["total"])))
+    parts.append("paso %d de %d" % (min(o["done_steps"] + 1, o["steps"]), o["steps"]))
+    if o["speed"] > 0:
+        parts.append("%s/s" % fmt_bytes(o["speed"]))
+    if o["eta"] is not None:
+        parts.append(("quedan ~" if o["eta"] >= 1 else "quedan ") + fmt_duration(o["eta"]))
+    if o["elapsed"] >= 1:
+        parts.append("llevas " + fmt_duration(o["elapsed"]))
+    return " · ".join(parts)

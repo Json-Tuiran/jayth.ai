@@ -3,7 +3,7 @@
 - Code: proyectos con arbol de archivos, editor, terminal y el agente trabajando dentro de la carpeta del proyecto."""
 import os, sys, json, uuid, time, shutil, threading, ctypes, datetime
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize, QPoint, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup
-from PySide6.QtGui import QPixmap, QImage, QKeySequence, QShortcut, QGuiApplication, QActionGroup, QCursor, QTransform, QFont
+from PySide6.QtGui import QPixmap, QImage, QKeySequence, QShortcut, QGuiApplication, QActionGroup, QCursor, QTransform, QFont, QIcon
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
                                QListWidget, QListWidgetItem, QScrollArea, QFrame, QPlainTextEdit, QFileDialog, QMessageBox, QMenu,
                                QSystemTrayIcon, QSizePolicy, QToolButton, QInputDialog, QLineEdit, QStackedWidget, QSplitter,
@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
 from . import APP_NAME, core, paths, osys, agent as A, tools as T
 if osys.WIN:
     from ctypes import wintypes
-from . import theme
+from . import theme, panels
 from .theme import C, restyle, make_icon, icon, pix
 from .wizard import SetupWizard, ModelsDialog, btn, lbl, set_icon, run_bg
 from .settings_ui import SettingsDialog
@@ -214,39 +214,55 @@ def note(text, error=False):
     return f
 
 
-def fill_history(lst, sessions, current, query="", empty_text="Tus conversaciones aparecerán aquí"):
-    """Rellena una lista con conversaciones agrupadas por fecha (Hoy, Ayer, …)."""
+GROUP_ROLE = Qt.UserRole + 1
+
+
+def fill_history(lst, sessions, current, query="", empty_text="Tus conversaciones aparecerán aquí", folded=()):
+    """Rellena una lista con conversaciones agrupadas por fecha (Hoy, Ayer, …). Los grupos en 'folded' salen plegados
+    (clic en la cabecera del grupo para plegar o desplegar). Al buscar se muestran todos."""
     lst.blockSignals(True)
     lst.clear()
     today = datetime.date.today()
-    last = None
+    groups = []
     for s in sessions:
         d = (today - datetime.date.fromtimestamp(s.updated)).days
         grp = "Hoy" if d <= 0 else "Ayer" if d == 1 else "Últimos 7 días" if d < 7 else "Últimos 30 días" if d < 30 else "Anteriores"
-        if grp != last:
-            h = QListWidgetItem(grp)
-            h.setFlags(Qt.NoItemFlags)
-            h.setForeground(QGuiApplication.palette().placeholderText())
-            f = h.font()
-            f.setPointSizeF(8.5)
-            h.setFont(f)
-            lst.addItem(h)
-            last = grp
-        it = QListWidgetItem(s.title)
-        if s.run is not None:
-            it.setIcon(icon("est_cargando", C["warn"], 14))
-        it.setData(Qt.UserRole, s.id)
-        it.setToolTip(s.title)
-        lst.addItem(it)
-        if s.id == current:
-            it.setSelected(True)
-            lst.setCurrentItem(it)
+        if not groups or groups[-1][0] != grp:
+            groups.append((grp, []))
+        groups[-1][1].append(s)
+    for grp, items in groups:
+        shut = grp in folded and not query and not any(s.id == current for s in items)
+        h = QListWidgetItem(("▸  %s  ·  %d" % (grp, len(items))) if shut else ("▾  " + grp))
+        h.setFlags(Qt.ItemIsEnabled)
+        h.setData(GROUP_ROLE, grp)
+        h.setToolTip("Clic para desplegar" if shut else "Clic para plegar")
+        h.setForeground(QGuiApplication.palette().placeholderText())
+        f = h.font()
+        f.setPointSizeF(8.5)
+        h.setFont(f)
+        lst.addItem(h)
+        if shut:
+            continue
+        for s in items:
+            _history_item(lst, s, current)
     if not sessions:
         e = QListWidgetItem("Sin resultados" if query else empty_text)
         e.setFlags(Qt.NoItemFlags)
         e.setForeground(QGuiApplication.palette().placeholderText())
         lst.addItem(e)
     lst.blockSignals(False)
+
+
+def _history_item(lst, s, current):
+    it = QListWidgetItem(s.title)
+    if s.run is not None:
+        it.setIcon(icon("est_cargando", C["warn"], 14))
+    it.setData(Qt.UserRole, s.id)
+    it.setToolTip(s.title)
+    lst.addItem(it)
+    if s.id == current:
+        it.setSelected(True)
+        lst.setCurrentItem(it)
 
 
 # ---------------------------------------------------------------- descripcion legible de cada accion
@@ -886,6 +902,7 @@ class ChatPanel(QWidget):
         m = 14 if self.compact else 24
         v.setContentsMargins(m, 0, m, 10)
         inner = QWidget()
+        self.composer_inner = inner
         if not self.compact:
             inner.setMaximumWidth(780)
         iv = QVBoxLayout(inner)
@@ -997,6 +1014,14 @@ class ChatPanel(QWidget):
             if it.widget():
                 it.widget().hide()
                 it.widget().deleteLater()
+
+    def set_column_width(self, px):
+        """Ancho maximo de la conversacion y del compositor (None = todo el ancho disponible)."""
+        if self.compact:
+            return
+        mx = px or 16777215
+        self.col.setMaximumWidth(mx)
+        self.composer_inner.setMaximumWidth(mx)
 
     def add(self, w):
         self.cl.insertWidget(self.cl.count() - 1, w)
@@ -1411,7 +1436,14 @@ class ChatPanel(QWidget):
 
 
 # ---------------------------------------------------------------- pagina del modo Code
+CODE_LAYOUT = {"tree": True, "term": True, "agent": True, "agent_side": "right", "term_pos": "bottom",
+               "w_tree": 230, "w_agent": 420, "h_term": 220, "w_term": 420, "focus": None}
+CHAT_WIDTHS = [("Estrecha", 660), ("Normal", 780), ("Ancha", 1040), ("Todo el ancho", 0)]
+
+
 class CodePage(QWidget):
+    layout_changed = Signal()
+
     def __init__(self, main):
         super().__init__()
         self.main = main
@@ -1444,14 +1476,16 @@ class CodePage(QWidget):
         ev.addLayout(row)
         ev.addStretch(2)
         self.stack.addWidget(e)
-        # espacio de trabajo
+        # espacio de trabajo: explorador | editor (+ terminal) | agente. Todo se redimensiona, se pliega y se recuerda;
+        # el agente puede ir a la izquierda o a la derecha y la terminal abajo o a la derecha del editor.
         ws = QWidget()
         wl = QHBoxLayout(ws)
         wl.setContentsMargins(0, 0, 0, 0)
-        self.split = QSplitter(Qt.Horizontal)
-        self.split.setHandleWidth(1)
-        self.split.setStyleSheet("QSplitter::handle { background: %s; }" % C["line"])
+        self.split = panels.Splitter(Qt.Horizontal, "codeSplit")
         left = QWidget()
+        self.left = left
+        left.setProperty("foldable", True)
+        left.setMinimumWidth(160)
         left.setObjectName("sidebar")
         lv = QVBoxLayout(left)
         lv.setContentsMargins(6, 6, 0, 6)
@@ -1467,24 +1501,174 @@ class CodePage(QWidget):
         self.tree.open_file.connect(lambda p: self.tabs.open(p))
         lv.addWidget(self.tree, 1)
         self.split.addWidget(left)
-        center = QSplitter(Qt.Vertical)
-        center.setHandleWidth(1)
+        center = panels.Splitter(Qt.Vertical, "codeCenter")
+        center.setProperty("main", True)
         self.tabs = EditorTabs()
+        self.tabs.setProperty("main", True)
+        self.tabs.setMinimumSize(260, 120)
         center.addWidget(self.tabs)
         self.term = Terminal()
+        self.term.setProperty("foldable", True)
+        self.term.setMinimumSize(220, 90)
         center.addWidget(self.term)
-        center.setSizes([520, 220])
         self.center = center
         self.split.addWidget(center)
         self.chat = ChatPanel(main, compact=True)
         self.chat.changed.connect(main.on_chat_changed)
         self.chat.file_written.connect(self.tabs.refresh)
-        self.chat.setMinimumWidth(340)
+        self.chat.setMinimumWidth(320)
+        self.chat.setProperty("foldable", True)
         self.split.addWidget(self.chat)
-        self.split.setSizes([230, 600, 420])
-        self.split.setCollapsible(1, False)
+        self.split.changed.connect(self._moved)
+        self.center.changed.connect(self._moved)
         wl.addWidget(self.split)
         self.stack.addWidget(ws)
+        self.lay = dict(CODE_LAYOUT)
+        self._sized = False
+
+    # ---- distribucion de paneles
+    PANELS = (("left", "tree", "w_tree"), ("chat", "agent", "w_agent"))
+
+    def _term_key(self):
+        return "w_term" if self.lay["term_pos"] == "right" else "h_term"
+
+    def _size_of(self, split, w, key):
+        if w.isHidden() or not self._sized:
+            return int(w.property("last_size") or self.lay[key])
+        return split.sizes()[split.indexOf(w)] or int(self.lay[key])
+
+    def layout_state(self):
+        """Estado actual para guardarlo en los ajustes."""
+        st = dict(self.lay)
+        for attr, k, wk in self.PANELS:
+            w = getattr(self, attr)
+            st[k] = not w.isHidden()
+            st[wk] = self._size_of(self.split, w, wk)
+        st["term"] = not self.term.isHidden()
+        st[self._term_key()] = self._size_of(self.center, self.term, self._term_key())
+        return st
+
+    def apply_layout(self, lay):
+        self.lay = dict(CODE_LAYOUT, **{k: v for k, v in (lay or {}).items() if k in CODE_LAYOUT})
+        self._place_agent(self.lay["agent_side"])
+        self.center.setOrientation(Qt.Horizontal if self.lay["term_pos"] == "right" else Qt.Vertical)
+        for attr, k, wk in self.PANELS:
+            w = getattr(self, attr)
+            w.setProperty("last_size", int(self.lay[wk]))
+            w.setVisible(bool(self.lay[k]))
+        self.term.setProperty("last_size", int(self.lay[self._term_key()]))
+        self.term.setVisible(bool(self.lay["term"]))
+        self._sized = False
+        if self.isVisible():
+            QTimer.singleShot(0, self._apply_sizes)
+
+    def _apply_sizes(self):
+        """Da a cada panel su tamaño guardado en píxeles y el resto al editor."""
+        tot = self.split.width() - self.split.handleWidth() * (self.split.count() - 1)
+        if tot < 300 or self.stack.currentIndex() != 1:
+            return
+        sizes = []
+        for i in range(self.split.count()):
+            w = self.split.widget(i)
+            key = "w_tree" if w is self.left else "w_agent" if w is self.chat else None
+            sizes.append(int(w.property("last_size") or self.lay[key]) if key and not w.isHidden() else 0)
+        sizes[self.split.indexOf(self.center)] = max(300, tot - sum(sizes))
+        for i in range(self.split.count()):           # al cambiar el tamaño de la ventana solo crece o encoge el editor
+            self.split.setStretchFactor(i, 1 if self.split.widget(i) is self.center else 0)
+        self.center.setStretchFactor(0, 1)
+        self.center.setStretchFactor(1, 0)
+        self.split.setSizes(sizes)
+        vertical = self.center.orientation() == Qt.Vertical
+        ctot = (self.center.height() if vertical else self.center.width()) - self.center.handleWidth()
+        t = int(self.term.property("last_size") or self.lay[self._term_key()]) if not self.term.isHidden() else 0
+        self.center.setSizes([max(160, ctot - t), t])
+        self._sized = True
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if not self._sized:
+            QTimer.singleShot(0, self._apply_sizes)
+
+    def _moved(self):
+        if self._sized:
+            self.lay.update(self.layout_state())
+            self.layout_changed.emit()
+
+    def _toggle(self, w, key, on=None, split=None, keep_focus=False):
+        split = split or self.split
+        on = w.isHidden() if on is None else bool(on)
+        if self._sized and not w.isHidden():
+            sz = split.sizes()[split.indexOf(w)]
+            if sz > 0:
+                w.setProperty("last_size", sz)
+        panels.set_visible(split, w, on, animated=animations_on() and self.isVisible() and self._sized)
+        self.lay[key] = on
+        if not keep_focus and on:
+            self.lay["focus"] = None
+        self.layout_changed.emit()
+        self.main.sync()
+
+    def toggle_tree(self, on=None):
+        self._toggle(self.left, "tree", on)
+
+    def toggle_agent(self, on=None):
+        self._toggle(self.chat, "agent", on)
+        if not self.chat.isHidden():
+            self.chat.input.setFocus()
+
+    def toggle_terminal(self, on=None):
+        self._toggle(self.term, "term", on, self.center)
+        if not self.term.isHidden():
+            self.term.inp.setFocus()
+
+    def _place_agent(self, side):
+        self.split.insertWidget(0 if side == "left" else self.split.count() - 1, self.chat)
+
+    def set_agent_side(self, side):
+        if self._sized:
+            self.lay.update(self.layout_state())
+        self.lay["agent_side"] = side
+        self._place_agent(side)
+        self._apply_sizes()
+        self.layout_changed.emit()
+
+    def set_term_pos(self, pos):
+        if self._sized:
+            self.lay.update(self.layout_state())
+        self.lay["term_pos"] = pos
+        self.center.setOrientation(Qt.Horizontal if pos == "right" else Qt.Vertical)
+        self.term.setProperty("last_size", int(self.lay[self._term_key()]))
+        if self.term.isHidden():
+            self._toggle(self.term, "term", True, self.center)
+        self._apply_sizes()
+        self.layout_changed.emit()
+
+    def toggle_focus(self):
+        """Modo enfoque: solo el editor (se recuerda qué había abierto para volver igual)."""
+        prev = self.lay.get("focus")
+        trio = ((self.left, "tree", self.split), (self.term, "term", self.center), (self.chat, "agent", self.split))
+        if prev:
+            self.lay["focus"] = None
+            for w, k, sp in trio:
+                if prev.get(k):
+                    self._toggle(w, k, True, sp, keep_focus=True)
+            if prev.get("side", True):
+                self.main.set_sidebar(True)
+        else:
+            state = {k: not w.isHidden() for w, k, _ in trio}
+            state["side"] = not self.main.side.isHidden()
+            for w, k, sp in trio:
+                self._toggle(w, k, False, sp, keep_focus=True)
+            self.main.set_sidebar(False)
+            self.lay["focus"] = state
+            self.main.toast("Modo enfoque: solo el editor. Pulsa Ctrl+Shift+M para volver.", ms=3500, icon_name="app_pantalla_completa")
+        self.layout_changed.emit()
+        self.main.sync()
+
+    def reset_layout(self):
+        self.apply_layout({})
+        self._apply_sizes()
+        self.layout_changed.emit()
 
     def set_project(self, p):
         if self.project and p and self.project["id"] == p["id"]:
@@ -1501,6 +1685,8 @@ class CodePage(QWidget):
             return
         os.makedirs(p["path"], exist_ok=True)
         self.stack.setCurrentIndex(1)
+        if not self._sized:
+            QTimer.singleShot(0, self._apply_sizes)
         self.proj_lbl.setText(p["name"])
         self.proj_lbl.setToolTip(p["path"])
         self.tree.set_root(p["path"])
@@ -1520,11 +1706,6 @@ class CodePage(QWidget):
             if not os.path.exists(fp):
                 open(fp, "w", encoding="utf-8").close()
             self.tabs.open(fp)
-
-    def toggle_terminal(self):
-        self.term.setVisible(not self.term.isVisible())
-        if self.term.isVisible():
-            self.term.inp.setFocus()
 
 
 class _Sig(QObject):
@@ -1553,6 +1734,7 @@ class Main(QMainWindow):
             self.setWindowFlag(Qt.FramelessWindowHint, True)   # Qt no reserva bordes; Windows recupera sus estilos en showEvent
         self.update_info = None
         self.model_news = []
+        self.folded, self.chat_width, self._side_sized = set(), 780, False
         self._build()
         self._tray()
         self.chat.open_session(None)
@@ -1565,6 +1747,123 @@ class Main(QMainWindow):
         self.news_t = QTimer(self, interval=6 * 3600 * 1000, timeout=self.check_news)   # …y cada 6 horas
         self.news_t.start()
         QTimer.singleShot(1500, self.sync_mcp)
+        # distribucion de paneles guardada (anchos, paneles plegados, lados) y atajos
+        self._restore_layout(cfg.get("layout") or {})
+        self.code.layout_changed.connect(self._save_layout_soon)
+        self.hsplit.changed.connect(self._save_layout_soon)
+        self._layout_t = QTimer(self, singleShot=True, interval=500, timeout=self._save_layout)
+        for keys, fn in (("Ctrl+N", self.new_conversation), ("Ctrl+K", self.focus_search), ("Ctrl+Shift+S", self.toggle_sidebar),
+                         ("Ctrl+1", lambda: self.set_mode("chat")), ("Ctrl+2", lambda: self.set_mode("code")),
+                         ("Ctrl+`", lambda: self._code_do(self.code.toggle_terminal)),
+                         ("Ctrl+B", lambda: self._code_do(self.code.toggle_tree)),
+                         ("Ctrl+L", lambda: self._code_do(self.code.toggle_agent)),
+                         ("Ctrl+Shift+M", lambda: self._code_do(self.code.toggle_focus)),
+                         ("Escape", self._escape)):
+            QShortcut(QKeySequence(keys), self, activated=fn)
+
+    def _code_do(self, fn):
+        """Acciones de paneles del modo Code (solo con un proyecto abierto)."""
+        if self.mode == "code" and self.code.project:
+            fn()
+
+    # ---- distribucion de paneles: se guarda sola y se restaura al abrir
+    def _restore_layout(self, lay):
+        lay = lay if isinstance(lay, dict) else {}
+        self.folded = set(lay.get("folded") or [])
+        self.chat_width = lay.get("chat_width", 780)
+        self.chat.set_column_width(self.chat_width)
+        self.side.setProperty("last_size", int(lay.get("side_w") or 264))
+        self._side_sized = False
+        if lay.get("side") is False:
+            self.side.hide()
+            self.b_expand.show()
+        for key, sec, w in (("projects", self.sec_projects, self.plist), ("convs", self.sec_convs, self.clist)):
+            on = (lay.get("sections") or {}).get(key, True)
+            sec.set_open(on)
+            w.setVisible(on)
+        self.code.apply_layout(lay.get("code"))
+
+    def _layout_state(self):
+        side_w = self.side.property("last_size") or 264
+        if not self.side.isHidden() and self._side_sized:
+            side_w = self.hsplit.sizes()[0] or side_w
+        return {"side": not self.side.isHidden(), "side_w": int(side_w), "code": self.code.layout_state(),
+                "chat_width": self.chat_width, "folded": sorted(self.folded),
+                "sections": {"projects": self.sec_projects.opened, "convs": self.sec_convs.opened}}
+
+    def _save_layout_soon(self):
+        if getattr(self, "_layout_t", None):
+            self._layout_t.start()
+
+    def _save_layout(self):
+        core.SET.update({"layout": self._layout_state()})
+
+    def _apply_side_width(self):
+        tot = self.hsplit.width() - self.hsplit.handleWidth()
+        if tot < 400:
+            return
+        w = int(self.side.property("last_size") or 264)
+        self.hsplit.setSizes([w if not self.side.isHidden() else 0, tot - (w if not self.side.isHidden() else 0)])
+        self._side_sized = True
+
+    def reset_layout(self):
+        self.folded = set()
+        self.chat_width = 780
+        self.chat.set_column_width(780)
+        self.side.setProperty("last_size", 264)
+        self.set_sidebar(True)
+        self._apply_side_width()
+        for sec, w in ((self.sec_projects, self.plist), (self.sec_convs, self.clist)):
+            sec.set_open(True)
+            w.show()
+        self.code.reset_layout()
+        self._sig_chat = self._sig_code = None
+        self.refresh_lists()
+        self._save_layout()
+        self.toast("Distribución de paneles restablecida.", ms=2500, icon_name="act_layout_ui")
+
+    def set_chat_width(self, px):
+        self.chat_width = px
+        self.chat.set_column_width(px)
+        self._save_layout_soon()
+
+    def _fill_layout_menu(self):
+        m = self.layout_menu
+        m.clear()
+
+        def check(text, on, fn, ico=None, keys=""):
+            a = m.addAction(icon(ico) if ico else QIcon(), text + ("\t" + keys if keys else ""), lambda *_: fn())   # sin pasar «checked»
+            a.setCheckable(True)
+            a.setChecked(bool(on))
+            return a
+        check("Barra lateral", not self.side.isHidden(), self.toggle_sidebar, "ui_barra_lateral", "Ctrl+Shift+S")
+        if self.mode == "code" and self.code.project:
+            c = self.code
+            check("Explorador de archivos", not c.left.isHidden(), c.toggle_tree, "pan_explorador", "Ctrl+B")
+            check("Terminal", not c.term.isHidden(), c.toggle_terminal, "pan_consola", "Ctrl+`")
+            check("Panel del agente", not c.chat.isHidden(), c.toggle_agent, "mat_comentario", "Ctrl+L")
+            m.addSeparator()
+            g1 = QActionGroup(m)
+            for side, text in (("left", "Agente a la izquierda"), ("right", "Agente a la derecha")):
+                a = check(text, c.lay["agent_side"] == side, lambda s=side: c.set_agent_side(s), "uij_alinear_izq" if side == "left" else "uij_alinear_der")
+                g1.addAction(a)
+            g2 = QActionGroup(m)
+            for pos, text, ico in (("bottom", "Terminal debajo del editor", "ui_dividir_v"), ("right", "Terminal a la derecha del editor", "ui_dividir_h")):
+                a = check(text, c.lay["term_pos"] == pos, lambda p=pos: c.set_term_pos(p), ico)
+                g2.addAction(a)
+            m.addSeparator()
+            check("Modo enfoque (solo el editor)", c.lay.get("focus"), c.toggle_focus, "app_pantalla_completa", "Ctrl+Shift+M")
+        else:
+            m.addSeparator()
+            sub = m.addMenu(icon("uij_layout_horizontal"), "Ancho de la conversación")
+            g = QActionGroup(sub)
+            for text, px in CHAT_WIDTHS:
+                a = sub.addAction(text, lambda *_, px=px: self.set_chat_width(px))
+                a.setCheckable(True)
+                a.setChecked((self.chat_width or 0) == px)
+                g.addAction(a)
+        m.addSeparator()
+        m.addAction(icon("acc_refrescar"), "Restablecer la distribución", self.reset_layout)
 
     def sync_mcp(self):
         """Arranca los conectores MCP configurados (en segundo plano) y avisa si alguno falla."""
@@ -1580,13 +1879,6 @@ class Main(QMainWindow):
             if bad:
                 self.toast("No se pudo conectar: %s" % "; ".join("%s (%s)" % (n, e[:80]) for n, e in bad.items()), icon_name="est_aviso", color=C["warn"])
         run_bg(lambda: harness.mcp_sync(servers), done)
-        QShortcut(QKeySequence("Ctrl+N"), self, activated=self.new_conversation)
-        QShortcut(QKeySequence("Ctrl+K"), self, activated=self.focus_search)
-        QShortcut(QKeySequence("Ctrl+Shift+S"), self, activated=self.toggle_sidebar)
-        QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self.set_mode("chat"))
-        QShortcut(QKeySequence("Ctrl+2"), self, activated=lambda: self.set_mode("code"))
-        QShortcut(QKeySequence("Ctrl+`"), self, activated=lambda: self.mode == "code" and self.code.toggle_terminal())
-        QShortcut(QKeySequence("Escape"), self, activated=self._escape)
 
     # ---- construccion
     def _build(self):
@@ -1596,9 +1888,12 @@ class Main(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         self.setCentralWidget(central)
-        root.addWidget(self._sidebar())
+        # barra lateral | contenido, con divisor arrastrable (doble clic: plegar la barra)
+        self.hsplit = panels.Splitter(Qt.Horizontal, "mainSplit")
+        self.hsplit.addWidget(self._sidebar())
         main = QWidget()
         main.setObjectName("main")
+        main.setProperty("main", True)
         mv = QVBoxLayout(main)
         mv.setContentsMargins(0, 0, 0, 0)
         mv.setSpacing(0)
@@ -1611,7 +1906,10 @@ class Main(QMainWindow):
         self.code = CodePage(self)
         self.pages.addWidget(self.code)
         mv.addWidget(self.pages, 1)
-        root.addWidget(main, 1)
+        self.hsplit.addWidget(main)
+        self.hsplit.setStretchFactor(0, 0)
+        self.hsplit.setStretchFactor(1, 1)
+        root.addWidget(self.hsplit, 1)
 
     def _nav(self, layout, ico, text, cb, tip=""):
         b = QPushButton(text)
@@ -1627,7 +1925,9 @@ class Main(QMainWindow):
     def _sidebar(self):
         self.side = QWidget()
         self.side.setObjectName("sidebar")
-        self.side.setFixedWidth(264)
+        self.side.setMinimumWidth(200)                 # el ancho se ajusta arrastrando el borde y se recuerda
+        self.side.setMaximumWidth(460)
+        self.side.setProperty("foldable", True)
         sv = QVBoxLayout(self.side)
         sv.setContentsMargins(10, 0, 10, 10)
         sv.setSpacing(2)
@@ -1679,7 +1979,7 @@ class Main(QMainWindow):
         cl.addSpacing(6)
         self.list = QListWidget()
         self.list.setObjectName("history")
-        self.list.itemClicked.connect(lambda it: it.data(Qt.UserRole) and self.chat.open_session(it.data(Qt.UserRole)))
+        self.list.itemClicked.connect(lambda it: self._history_click(it, self.chat))
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(lambda pos: self._session_menu(self.list, pos, self.chat))
         cl.addWidget(self.list, 1)
@@ -1691,9 +1991,9 @@ class Main(QMainWindow):
         kl.setSpacing(2)
         self._nav(kl, "acc_anadir", "Nuevo proyecto", self.new_project)
         self._nav(kl, "act_carpeta_abierta", "Abrir carpeta…", self.open_folder_project)
-        sec = QLabel("Proyectos")
-        sec.setObjectName("section")
-        kl.addWidget(sec)
+        # secciones plegables: Proyectos y Conversaciones del proyecto
+        self.sec_projects = panels.Section("Proyectos")
+        kl.addWidget(self.sec_projects)
         self.plist = QListWidget()
         self.plist.setObjectName("history")
         self.plist.setMaximumHeight(170)
@@ -1701,18 +2001,18 @@ class Main(QMainWindow):
         self.plist.setContextMenuPolicy(Qt.CustomContextMenu)
         self.plist.customContextMenuRequested.connect(self._project_menu)
         kl.addWidget(self.plist)
-        sec2 = QHBoxLayout()
-        s2 = QLabel("Conversaciones del proyecto")
-        s2.setObjectName("section")
-        sec2.addWidget(s2, 1)
-        sec2.addWidget(tbtn("acc_renombrar", "Nueva conversación del proyecto (Ctrl+N)", self.new_conversation, size=14))
-        kl.addLayout(sec2)
+        self.sec_convs = panels.Section("Conversaciones del proyecto")
+        self.sec_convs.extra.addWidget(tbtn("acc_renombrar", "Nueva conversación del proyecto (Ctrl+N)", self.new_conversation, size=14))
+        kl.addWidget(self.sec_convs)
+        self.sec_projects.toggled.connect(lambda on: self._fold_section(self.plist, on))
+        self.sec_convs.toggled.connect(lambda on: self._fold_section(self.clist, on))
         self.clist = QListWidget()
         self.clist.setObjectName("history")
-        self.clist.itemClicked.connect(lambda it: it.data(Qt.UserRole) and self.code.chat.open_session(it.data(Qt.UserRole)))
+        self.clist.itemClicked.connect(lambda it: self._history_click(it, self.code.chat))
         self.clist.setContextMenuPolicy(Qt.CustomContextMenu)
         self.clist.customContextMenuRequested.connect(lambda pos: self._session_menu(self.clist, pos, self.code.chat))
         kl.addWidget(self.clist, 1)
+        kl.addStretch(0)                   # con las listas plegadas, lo demás queda arriba
         self.side_stack.addWidget(kw)
         sv.addWidget(self.side_stack, 1)
         self.update_btn = QPushButton("  Actualización disponible")
@@ -1783,8 +2083,18 @@ class Main(QMainWindow):
         self.title.setAlignment(Qt.AlignCenter)
         h.addWidget(self.title, 2)
         h.addStretch(1)
-        self.b_term = tbtn("pan_consola", "Mostrar u ocultar la terminal (Ctrl+`)", lambda: self.code.toggle_terminal())
-        h.addWidget(self.b_term)
+        # paneles del modo Code: se resaltan cuando estan visibles
+        self.b_tree = tbtn("pan_explorador", "Explorador de archivos  ·  Ctrl+B", lambda: self.code.toggle_tree())
+        self.b_term = tbtn("pan_consola", "Terminal  ·  Ctrl+`", lambda: self.code.toggle_terminal())
+        self.b_agent = tbtn("mat_comentario", "Panel del agente  ·  Ctrl+L", lambda: self.code.toggle_agent())
+        for b in (self.b_tree, self.b_term, self.b_agent):
+            h.addWidget(b)
+        self.b_layout = tbtn("act_layout_ui", "Distribución de paneles")
+        self.b_layout.setPopupMode(QToolButton.InstantPopup)
+        self.layout_menu = QMenu(self)
+        self.layout_menu.aboutToShow.connect(self._fill_layout_menu)
+        self.b_layout.setMenu(self.layout_menu)
+        h.addWidget(self.b_layout)
         self.b_folder = tbtn("act_carpeta_abierta", "", lambda: osys.open_path(self.current_panel().workspace()))
         h.addWidget(self.b_folder)
         more = tbtn("ui_menu_horizontal", "Más opciones")
@@ -1826,6 +2136,8 @@ class Main(QMainWindow):
     # ---- barra de titulo integrada (Windows): se quita la nativa y se indica a Windows que zonas son "titulo" y "borde"
     def showEvent(self, e):
         super().showEvent(e)
+        if not getattr(self, "_side_sized", True):
+            QTimer.singleShot(0, self._apply_side_width)        # ancho guardado de la barra lateral, en pixeles reales
         if getattr(self, "frameless", False) and not getattr(self, "_frame_done", False):
             self._frame_done = True
             hwnd = int(self.winId())
@@ -1941,26 +2253,19 @@ class Main(QMainWindow):
         self.sync()
 
     def toggle_sidebar(self):
-        show = not self.side.isVisible() or self.side.maximumWidth() == 0
-        self.b_expand.setVisible(not show)
-        if not animations_on():
-            self.side.setFixedWidth(264)
-            self.side.setVisible(show)
+        self.set_sidebar(self.side.isHidden())
+
+    def set_sidebar(self, on):
+        """Muestra u oculta la barra lateral conservando el ancho que le diste."""
+        if on == (not self.side.isHidden()):
             return
-        if show:
-            self.side.setFixedWidth(0)
-            self.side.show()
-        grp = QParallelAnimationGroup(self)
-        for prop in (b"minimumWidth", b"maximumWidth"):
-            a = QPropertyAnimation(self.side, prop)
-            a.setDuration(190)
-            a.setStartValue(self.side.width())
-            a.setEndValue(264 if show else 0)
-            a.setEasingCurve(QEasingCurve.OutCubic)
-            grp.addAnimation(a)
-        if not show:
-            grp.finished.connect(lambda: (self.side.hide(), self.side.setFixedWidth(264)))
-        grp.start(QPropertyAnimation.DeleteWhenStopped)
+        self.b_expand.setVisible(not on)
+        if not on and self._side_sized:
+            w = self.hsplit.sizes()[0]
+            if w > 0:
+                self.side.setProperty("last_size", w)
+        panels.set_visible(self.hsplit, self.side, on, animated=animations_on() and self.isVisible() and self._side_sized)
+        self._save_layout_soon()
 
     def toast(self, text, action=None, on_action=None, ms=7000, icon_name="est_info", color=None):
         return Toast(self.centralWidget(), text, action, on_action, ms, icon_name, color)
@@ -2109,7 +2414,7 @@ class Main(QMainWindow):
         sig = (q, [(s.id, s.title, s.run is not None) for s in ss], self.chat.sid)
         if sig != self._sig_chat:
             self._sig_chat = sig
-            fill_history(self.list, ss, self.chat.sid, q)
+            fill_history(self.list, ss, self.chat.sid, q, folded=self.folded)
         cfg = core.SET.snapshot()
         pid = self.code.project["id"] if self.code.project else None
         cs = core.sessions_for(pid) if pid else []
@@ -2129,7 +2434,22 @@ class Main(QMainWindow):
                 e.setFlags(Qt.NoItemFlags)
                 e.setForeground(QGuiApplication.palette().placeholderText())
                 self.plist.addItem(e)
-            fill_history(self.clist, cs, self.code.chat.sid, empty_text="Las conversaciones del proyecto aparecerán aquí")
+            fill_history(self.clist, cs, self.code.chat.sid, empty_text="Las conversaciones del proyecto aparecerán aquí", folded=self.folded)
+
+    def _history_click(self, it, panel):
+        """Clic en el historial: abre la conversación o pliega/despliega su grupo (Hoy, Ayer…)."""
+        grp = it.data(GROUP_ROLE)
+        if grp:
+            self.folded.symmetric_difference_update({grp})
+            self._sig_chat = self._sig_code = None
+            self.refresh_lists()
+            self._save_layout_soon()
+        elif it.data(Qt.UserRole):
+            panel.open_session(it.data(Qt.UserRole))
+
+    def _fold_section(self, lst, on):
+        lst.setVisible(on)
+        self._save_layout_soon()
 
     def _session_menu(self, lst, pos, panel):
         it = lst.itemAt(pos)
@@ -2257,7 +2577,11 @@ class Main(QMainWindow):
         else:
             self.title.setText(s.title if s and s.events else ("" if self.mode == "chat" else CODE_NAME))
         self.b_folder.setToolTip("Carpeta de trabajo: %s" % panel.workspace())
-        self.b_term.setVisible(self.mode == "code" and self.code.project is not None)
+        in_code = self.mode == "code" and self.code.project is not None
+        for b, w, ico in ((self.b_tree, self.code.left, "pan_explorador"), (self.b_term, self.code.term, "pan_consola"),
+                          (self.b_agent, self.code.chat, "mat_comentario")):
+            b.setVisible(in_code)
+            b.setIcon(icon(ico, C["acc"] if not w.isHidden() else C["faint"], 18))
         un = (cfg.get("user_name") or "").strip()     # nunca se usa el usuario de Windows: el perfil es generico
         self.user_lbl.setText(un or "Tu perfil")
         if un:

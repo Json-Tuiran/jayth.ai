@@ -38,12 +38,15 @@ QLabel#greeting { font-size: 20pt; font-weight: 600; }
 QLabel#muted { color: %(mut)s; }
 QLabel#faint, QLabel#stats { color: %(faint)s; font-size: 9pt; }
 QLabel#section { color: %(faint)s; font-size: 8.5pt; padding: 10px 8px 2px 8px; }
+QPushButton#sectionBtn { background: transparent; border: none; color: %(faint)s; font-size: 8.5pt; padding: 4px 6px; text-align: left; border-radius: 6px; }
+QPushButton#sectionBtn:hover { color: %(tx)s; background: %(hover)s; }
 QPushButton { background: %(panel)s; border: 1px solid %(line)s; border-radius: 8px; padding: 6px 12px; }
 QPushButton:hover { background: %(hover)s; border-color: %(faint)s; }
 QPushButton:pressed { background: %(panel2)s; }
 QPushButton:disabled { color: %(faint)s; }
 QPushButton[kind="primary"], QPushButton[kind="ok"] { background: %(acc)s; color: %(on_acc)s; border-color: %(acc)s; font-weight: 600; }
 QPushButton[kind="primary"]:hover, QPushButton[kind="ok"]:hover { background: %(acc_hi)s; border-color: %(acc_hi)s; }
+QPushButton[kind="primary"]:disabled, QPushButton[kind="ok"]:disabled { background: %(panel2)s; color: %(faint)s; border-color: %(line)s; }
 QPushButton[kind="danger"] { background: transparent; color: %(bad)s; border-color: %(bad)s; }
 QPushButton[kind="danger"]:hover { background: %(bad_bg)s; }
 QPushButton[kind="flat"] { background: transparent; border: none; color: %(mut)s; padding: 4px 8px; }

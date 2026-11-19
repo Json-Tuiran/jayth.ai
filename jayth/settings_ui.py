@@ -18,7 +18,9 @@ LANGS = [("Automático (el idioma de tu mensaje)", "auto"), ("Español", "es"), 
 SHORTCUTS = [("Ctrl+N", "Nueva conversación"), ("Ctrl+K", "Buscar en tus conversaciones"), ("Ctrl+1 / Ctrl+2", "Cambiar entre Chat y Code"),
              ("Ctrl+Shift+S", "Mostrar u ocultar la barra lateral"), ("Enter / Shift+Enter", "Enviar / nueva línea"),
              ("Ctrl+V", "Pegar una imagen en el mensaje"), ("Ctrl+S", "Guardar el archivo (Code)"), ("Ctrl+W", "Cerrar la pestaña (Code)"),
-             ("Ctrl+`", "Mostrar u ocultar la terminal (Code)"), ("Esc", "Cerrar el buscador"),
+             ("Ctrl+`", "Mostrar u ocultar la terminal (Code)"), ("Ctrl+B", "Mostrar u ocultar el explorador de archivos (Code)"),
+             ("Ctrl+L", "Mostrar u ocultar el panel del agente (Code)"), ("Ctrl+Shift+M", "Modo enfoque: solo el editor (Code)"),
+             ("Doble clic en un divisor", "Plegar o recuperar el panel de al lado"), ("Esc", "Cerrar el buscador"),
              ("Ratón a la esquina superior izquierda", "Detener al instante el control del ratón")]
 
 

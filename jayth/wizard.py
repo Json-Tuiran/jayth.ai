@@ -483,11 +483,11 @@ class SetupWizard(QDialog):
             for k, part in enumerate(q["parts"]):
                 job.add("Modelo %s%s" % (q["label"], " parte %d/%d" % (k + 1, len(q["parts"])) if len(q["parts"]) > 1 else ""),
                         lambda pr, st, res, part=part: P.download(P.hf_url(info["repo"], part["file"]), os.path.join(folder, os.path.basename(part["file"])),
-                                                                  part["size"], part["sha256"], pr, st))
+                                                                  part["size"], part["sha256"], pr, st), size=part["size"])
             mm = info["mmproj"][0] if info["mmproj"] and self.chk_mm.isChecked() else None
             if mm:
                 job.add("Proyector de visión", lambda pr, st, res: P.download(P.hf_url(info["repo"], mm["file"]), os.path.join(folder, os.path.basename(mm["file"])),
-                                                                               mm["size"], mm["sha256"], pr, st))
+                                                                               mm["size"], mm["sha256"], pr, st), size=mm["size"])
             self.pending_model = {"id": re.sub(r"[^\w.-]+", "_", info["repo"] + "_" + q["label"]), "name": P.pretty_name(info["repo"]),
                                   "quant": quant_short(q["label"]), "path": os.path.join(folder, os.path.basename(q["parts"][0]["file"])),
                                   "mmproj": os.path.join(folder, os.path.basename(mm["file"])) if mm else "",
@@ -528,43 +528,62 @@ class SetupWizard(QDialog):
             it = self.prog_box.takeAt(0)
             if it.widget():
                 it.widget().deleteLater()
+        # resumen de todo el trabajo arriba, y una fila por paso con su barra y su estado debajo
+        head = QFrame()
+        head.setObjectName("noteBox")
+        hv = QVBoxLayout(head)
+        hv.setContentsMargins(14, 10, 14, 10)
+        self.ov_pct = QLabel("0 %")
+        self.ov_pct.setStyleSheet("font-size:20pt; font-weight:700")
+        self.ov_bar = QProgressBar()
+        self.ov_bar.setRange(0, 1000)
+        self.ov_bar.setTextVisible(False)
+        self.ov_det = lbl("Preparando…", "muted")
+        hv.addWidget(self.ov_pct)
+        hv.addWidget(self.ov_bar)
+        hv.addWidget(self.ov_det)
+        self.prog_box.addWidget(head)
         self.rows = []
         for st in job.steps:
             w = QWidget()
-            g = QGridLayout(w)
-            g.setContentsMargins(0, 4, 0, 4)
+            g = QVBoxLayout(w)
+            g.setContentsMargins(0, 8, 0, 2)
+            g.setSpacing(3)
             name = lbl(st["label"])
+            name.setStyleSheet("font-weight:600")
             bar = QProgressBar()
             bar.setRange(0, 1000)
-            det = lbl("en espera", "muted")
-            g.addWidget(name, 0, 0)
-            g.addWidget(det, 0, 1, Qt.AlignRight)
-            g.addWidget(bar, 1, 0, 1, 2)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(8)
+            det = lbl(P.describe_step(st), "muted")
+            det.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            g.addWidget(name)
+            g.addWidget(bar)
+            g.addWidget(det)
             self.prog_box.addWidget(w)
             self.rows.append((bar, det))
         self.prog_err.hide()
         self.go(self.p_progress)
         job.start()
         self.timer.start()
+        self._tick()
 
     def _tick(self):
         j = self.job
         for st, (bar, det) in zip(j.steps, self.rows):
-            if st["total"]:
-                bar.setValue(int(1000 * st["done"] / max(1, st["total"])))
             if st["status"] == "done":
                 bar.setValue(1000)
-                det.setText("✓ listo")
-            elif st["status"] == "running":
-                sp = st["speed"]
-                eta = ""
-                if sp > 0 and st["total"]:
-                    s = (st["total"] - st["done"]) / sp
-                    eta = " · quedan %dm %02ds" % (s // 60, s % 60)
-                det.setText("%s %s / %s%s%s" % (st["phase"], HW.human(st["done"]), HW.human(st["total"]),
-                                                 (" · %s/s" % HW.human(sp)) if sp else "", eta))
-            elif st["status"] in ("error", "cancelled"):
-                det.setText("✗ " + ("cancelado" if st["status"] == "cancelled" else "error"))
+            elif st["total"]:
+                bar.setValue(int(1000 * st["done"] / max(1, st["total"])))
+            det.setText(P.describe_step(st))
+        o = j.overall()
+        frac = o["got"] / o["total"] if o["total"] else (o["done_steps"] / max(1, o["steps"]))
+        if j.finished and not j.error:
+            frac = 1.0
+        self.ov_bar.setValue(int(1000 * frac))
+        self.ov_pct.setText("%d %%" % int(100 * frac))
+        self.ov_det.setText(P.describe_overall(o))
+        self.setWindowTitle("%d %% · Descargando · Asistente de configuración" % int(100 * frac) if not j.finished else "Asistente de configuración")
         if j.finished:
             self.timer.stop()
             if j.error:
