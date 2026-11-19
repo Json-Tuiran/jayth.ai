@@ -59,8 +59,9 @@ class Settings:
                 self.v.update({k: x for k, x in json.load(f).items() if k in DEFAULTS})
         except Exception:
             pass
-        if os.path.normcase(self.v["workspace"]).endswith(os.path.normcase(os.path.join("Documents", "AgenteLocal"))):
-            self.v["workspace"] = paths.WORKSPACE_DEFAULT   # carpeta del nombre provisional anterior
+        old_ws = os.path.join(os.path.dirname(paths.WORKSPACE_DEFAULT), "AgenteLocal")
+        if os.path.normcase(os.path.normpath(self.v["workspace"])) == os.path.normcase(old_ws):
+            self.v["workspace"] = paths.WORKSPACE_DEFAULT   # carpeta del nombre provisional anterior (Documentos\AgenteLocal)
 
     def update(self, new):
         with self.lock:
