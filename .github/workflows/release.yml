@@ -20,7 +20,7 @@ jobs:
       matrix:
         include:
           - { os: windows-latest, name: windows-x64 }
-          - { os: macos-14, name: macos-arm64 }
+          - { os: macos-15, name: macos-arm64 }
           - { os: macos-15-intel, name: macos-x64 }
           - { os: ubuntu-22.04, name: linux-x86_64 }
     steps:
@@ -107,5 +107,10 @@ jobs:
           - **macOS:** la primera vez, clic derecho sobre Jayth → *Abrir*; o en *Ajustes del Sistema → Privacidad y seguridad → Abrir igualmente*.
           - **Linux:** `chmod +x Jayth-*.AppImage` y ábrelo.
           EOF
-          gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --title "Jayth ${GITHUB_REF_NAME#v}" \
-            --notes-file notes.md --generate-notes
+          # idempotente: si la Release ya existe (p. ej. al repetir una plataforma que fallo) se suben o reemplazan los archivos
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --title "Jayth ${GITHUB_REF_NAME#v}" \
+              --notes-file notes.md --generate-notes
+          fi

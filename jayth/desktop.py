@@ -2134,26 +2134,32 @@ class Main(QMainWindow):
             self.b_max.setToolTip("Restaurar" if self.isMaximized() else "Maximizar")
 
     # ---- barra de titulo integrada (Windows): se quita la nativa y se indica a Windows que zonas son "titulo" y "borde"
+    def _native_frame(self):
+        """Barra de titulo integrada: devuelve a la ventana sin marco los estilos de una ventana normal (ajuste a los
+        bordes, animaciones, redimensionado y, sobre todo, maximizar al area de trabajo sin tapar la barra de tareas).
+        Debe hacerse ANTES de mostrarla: si se maximiza sin WS_CAPTION, Windows la trata como pantalla completa."""
+        if not getattr(self, "frameless", False) or getattr(self, "_frame_done", False):
+            return
+        self._frame_done = True
+        hwnd = int(self.winId())                  # crea la ventana nativa (todavia oculta)
+        try:
+            u = ctypes.windll.user32
+            style = u.GetWindowLongW(hwnd, -16)
+            u.SetWindowLongW(hwnd, -16, style | 0x00040000 | 0x00C00000 | 0x00010000 | 0x00020000)   # THICKFRAME|CAPTION|MAXIMIZEBOX|MINIMIZEBOX
+
+            class MARGINS(ctypes.Structure):
+                _fields_ = [("l", ctypes.c_int), ("r", ctypes.c_int), ("t", ctypes.c_int), ("b", ctypes.c_int)]
+            ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(MARGINS(1, 1, 1, 1)))   # mantiene la sombra
+            u.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0020 | 0x0002 | 0x0001 | 0x0004 | 0x0010)              # FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER|NOACTIVATE
+            theme.rounded(self)
+        except Exception:
+            pass
+
     def showEvent(self, e):
+        self._native_frame()                      # por si se mostro sin pasar por main()
         super().showEvent(e)
         if not getattr(self, "_side_sized", True):
             QTimer.singleShot(0, self._apply_side_width)        # ancho guardado de la barra lateral, en pixeles reales
-        if getattr(self, "frameless", False) and not getattr(self, "_frame_done", False):
-            self._frame_done = True
-            hwnd = int(self.winId())
-            try:
-                u = ctypes.windll.user32
-                # estilos de ventana normal: ajuste a los bordes (Aero Snap), animaciones de minimizar/maximizar y redimensionado
-                style = u.GetWindowLongW(hwnd, -16)
-                u.SetWindowLongW(hwnd, -16, style | 0x00040000 | 0x00C00000 | 0x00010000 | 0x00020000)   # THICKFRAME|CAPTION|MAXIMIZEBOX|MINIMIZEBOX
-
-                class MARGINS(ctypes.Structure):
-                    _fields_ = [("l", ctypes.c_int), ("r", ctypes.c_int), ("t", ctypes.c_int), ("b", ctypes.c_int)]
-                ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(MARGINS(1, 1, 1, 1)))   # mantiene la sombra
-                u.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0020 | 0x0002 | 0x0001 | 0x0004)                         # FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER
-                theme.rounded(self)
-            except Exception:
-                pass
 
     def nativeEvent(self, event_type, message):
         if not getattr(self, "frameless", False) or not hasattr(self, "head") or bytes(event_type) != b"windows_generic_MSG":
