@@ -1,5 +1,5 @@
 """Asistente de configuracion, gestor de modelos y ajustes (ventanas de dialogo)."""
-import os, re, shutil, threading, urllib.request
+import os, re, time, shutil, threading, urllib.request
 from PySide6.QtCore import Qt, QTimer, Signal, QObject
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QPushButton, QRadioButton,
                                QButtonGroup, QStackedWidget, QComboBox, QLineEdit, QTableWidget, QTableWidgetItem, QAbstractItemView,
@@ -86,8 +86,9 @@ BACKENDS = [("cpu", "Solo CPU (funciona en cualquier PC)"), ("cuda", "GPU NVIDIA
 class SetupWizard(QDialog):
     """Primera configuracion o 'Añadir modelo'. Deja todo listo: motor, modelo y ajustes."""
 
-    def __init__(self, parent=None, start="welcome"):
+    def __init__(self, parent=None, start="welcome", repo=None):
         super().__init__(parent)
+        self.preset_repo = repo           # p. ej. al pulsar «Ver» en el aviso de un modelo nuevo
         self.setWindowTitle("Asistente de configuración")
         self.resize(780, 600)
         self.cfg = core.SET.snapshot()
@@ -113,6 +114,9 @@ class SetupWizard(QDialog):
             self.stack.addWidget(p)
         self.timer = QTimer(self, interval=300, timeout=self._tick)
         self.history = []
+        if repo:
+            self.repo.insertItem(0, repo, repo)
+            self.repo.setCurrentIndex(0)
         self.go(self.p_model if start == "model" else self.p_welcome, push=False)
         run_bg(HW.detect, self._got_hw)
 
@@ -474,16 +478,15 @@ class SetupWizard(QDialog):
             if mm:
                 job.add("Proyector de visión", lambda pr, st, res: P.download(P.hf_url(info["repo"], mm["file"]), os.path.join(folder, os.path.basename(mm["file"])),
                                                                                mm["size"], mm["sha256"], pr, st))
-            name = re.sub(r"-GGUF$", "", info["repo"].split("/")[-1], flags=re.I)
-            self.pending_model = {"id": re.sub(r"[^\w.-]+", "_", info["repo"] + "_" + q["label"]), "name": "%s · %s" % (name, quant_short(q["label"])),
-                                  "path": os.path.join(folder, os.path.basename(q["parts"][0]["file"])),
+            self.pending_model = {"id": re.sub(r"[^\w.-]+", "_", info["repo"] + "_" + q["label"]), "name": P.pretty_name(info["repo"]),
+                                  "quant": quant_short(q["label"]), "path": os.path.join(folder, os.path.basename(q["parts"][0]["file"])),
                                   "mmproj": os.path.join(folder, os.path.basename(mm["file"])) if mm else "",
-                                  "repo": info["repo"], "file": q["file"], "size": q["size"]}
+                                  "repo": info["repo"], "file": q["file"], "size": q["size"], "added": time.time()}
         else:
             p = os.path.normpath(self.f_model.text())
-            self.pending_model = {"id": re.sub(r"[^\w.-]+", "_", "local_" + os.path.basename(p)), "name": os.path.splitext(os.path.basename(p))[0],
-                                  "path": p, "mmproj": os.path.normpath(self.f_mm.text()) if self.f_mm.text() else "", "repo": "", "file": "",
-                                  "size": os.path.getsize(p)}
+            self.pending_model = {"id": re.sub(r"[^\w.-]+", "_", "local_" + os.path.basename(p)), "name": P.pretty_name(os.path.basename(p)),
+                                  "quant": P.quant_label(os.path.basename(p)), "path": p, "mmproj": os.path.normpath(self.f_mm.text()) if self.f_mm.text() else "",
+                                  "repo": "", "file": os.path.basename(p), "size": os.path.getsize(p), "added": time.time()}
         self.pending_cfg = {"backend": "cpu" if self.chk_own.isChecked() and backend == "cpu" else backend, "threads": self.threads.value(),
                             "n_ctx": self.ctx.currentData(), "models_dir": self.dest.text() or paths.MODELS_DEFAULT}
         self._start_job(job)
@@ -595,9 +598,9 @@ class ModelsDialog(QDialog):
         v = QVBoxLayout(self)
         v.addWidget(lbl("Modelos instalados", "h1"))
         v.addWidget(lbl("El modelo activo es el que usa el agente. Cambiarlo apaga el modelo actual.", "muted"))
-        self.t = QTableWidget(0, 4)
-        self.t.setHorizontalHeaderLabels(["", "Nombre", "Tamaño", "Archivo"])
-        self.t.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.t = QTableWidget(0, 5)
+        self.t.setHorizontalHeaderLabels(["", "Modelo", "Variante", "Tamaño", "Archivo"])
+        self.t.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.t.verticalHeader().setVisible(False)
         self.t.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.t.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -623,11 +626,13 @@ class ModelsDialog(QDialog):
         for i, m in enumerate(ms):
             ok = os.path.isfile(m.get("path", ""))
             self.t.setItem(i, 0, QTableWidgetItem("●" if m["id"] == cfg["active_model"] else ""))
-            self.t.setItem(i, 1, QTableWidgetItem(m["name"] + ("" if ok else "  (archivo no encontrado)")))
-            self.t.setItem(i, 2, QTableWidgetItem(HW.human(m.get("size", 0))))
-            self.t.setItem(i, 3, QTableWidgetItem(m.get("path", "")))
-        self.t.resizeColumnToContents(0)
-        self.t.resizeColumnToContents(1)
+            self.t.setItem(i, 1, QTableWidgetItem(core.model_title(m) + ("" if ok else "  (archivo no encontrado)")))
+            self.t.setItem(i, 2, QTableWidgetItem(core.model_quant(m)))
+            self.t.setItem(i, 3, QTableWidgetItem(HW.human(m.get("size", 0))))
+            self.t.setItem(i, 4, QTableWidgetItem(m.get("path", "")))
+            self.t.item(i, 4).setToolTip(m.get("path", ""))
+        for c in (0, 1, 2, 3):
+            self.t.resizeColumnToContents(c)
 
     def _sel(self):
         rows = self.t.selectionModel().selectedRows()

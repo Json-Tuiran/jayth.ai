@@ -27,6 +27,37 @@ QUANT_RE = re.compile(r"((?:UD-)?(?:IQ\d_[A-Z0-9_]+|Q\d_K(?:_[A-Z]+)?|Q\d_\d|Q\d
 SPLIT_RE = re.compile(r"^(.*)-(\d{5})-of-(\d{5})\.gguf$", re.I)
 
 
+_JUNK = re.compile(r"(?i)[-_. ](?:UD[-_])?(?:I?Q\d(?:_[A-Z0-9]+)*|BF16|F16|F32|FP16|FP8|MXFP4\w*|GGUF|imatrix|i1|hf)(?=$|[-_. ])")
+_WORDS = {"it": "IT", "qat": "QAT", "vl": "VL", "moe": "MoE", "gpt": "GPT", "oss": "OSS", "dpo": "DPO", "sft": "SFT"}
+
+
+def pretty_name(text):
+    """Nombre legible de un modelo: 'unsloth/Qwen3.8-27B-GGUF' o 'Qwen3.8-27B-UD-Q4_K_S.gguf' -> 'Qwen3.8 27B'.
+    Conserva familia, versión, tamaño y variantes (Instruct, Coder, Flash, Thinking…); quita cuantización y extensiones."""
+    base = str(text or "").split(" · ")[0].replace("\\", "/").split("/")[-1]
+    base = re.sub(r"(?i)\.gguf$", "", base)
+    base = re.sub(r"-\d{5}-of-\d{5}$", "", base)
+    prev = None
+    while prev != base:
+        prev = base
+        base = _JUNK.sub("", base)
+    out = []
+    for p in re.split(r"[-_ ]+", base):
+        if not p:
+            continue
+        low = p.lower()
+        if low in _WORDS:
+            p = _WORDS[low]
+        elif re.fullmatch(r"\d+(\.\d+)?[bmk]", low):
+            p = p[:-1] + p[-1].upper()           # 27b -> 27B
+        elif re.fullmatch(r"[ae]\d+(\.\d+)?b", low):
+            p = p.upper()                         # a3b -> A3B (expertos activos)
+        elif p.islower() and len(p) > 2:
+            p = p.capitalize()                    # instruct -> Instruct
+        out.append(p)
+    return " ".join(out) or str(text)
+
+
 def quant_label(fname):
     m = QUANT_RE.search(os.path.basename(fname))
     return m.group(1).upper() if m else os.path.basename(fname)

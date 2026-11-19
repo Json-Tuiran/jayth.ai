@@ -2,17 +2,21 @@
 - Chat: conversaciones para cualquier tarea.
 - Code: proyectos con arbol de archivos, editor, terminal y el agente trabajando dentro de la carpeta del proyecto."""
 import os, sys, json, uuid, time, shutil, threading, ctypes, datetime
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize, QPoint
-from PySide6.QtGui import QPixmap, QImage, QKeySequence, QShortcut, QGuiApplication, QActionGroup
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize, QPoint, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup
+from PySide6.QtGui import QPixmap, QImage, QKeySequence, QShortcut, QGuiApplication, QActionGroup, QCursor, QTransform, QFont
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
                                QListWidget, QListWidgetItem, QScrollArea, QFrame, QPlainTextEdit, QFileDialog, QMessageBox, QMenu,
-                               QSystemTrayIcon, QSizePolicy, QToolButton, QInputDialog, QLineEdit, QStackedWidget, QSplitter)
+                               QSystemTrayIcon, QSizePolicy, QToolButton, QInputDialog, QLineEdit, QStackedWidget, QSplitter,
+                               QGraphicsOpacityEffect, QAbstractButton, QComboBox)
+from ctypes import wintypes
 from . import APP_NAME, core, paths, agent as A, tools as T
 from . import theme
 from .theme import C, restyle, make_icon, icon, pix
-from .wizard import SetupWizard, ModelsDialog, btn, lbl, set_icon
+from .wizard import SetupWizard, ModelsDialog, btn, lbl, set_icon, run_bg
 from .settings_ui import SettingsDialog
 from .codeview import EditorTabs, FileTree, Terminal, ProjectDialog
+from .feedback import FeedbackDialog
+from . import updater
 
 MODE_LABEL = {k: v.split(":")[0] for k, v in A.MODES.items()}
 CODE_NAME = APP_NAME + " Code"
@@ -77,6 +81,108 @@ class Clickable(QWidget):
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
             self.clicked.emit()
+
+
+# ---------------------------------------------------------------- animaciones
+def animations_on():
+    return core.SET.snapshot().get("animations", True)
+
+
+def fade_in(w, ms=220):
+    """Aparicion suave; el efecto se retira al terminar (los efectos graficos ralentizan el texto)."""
+    if not animations_on():
+        return
+    eff = QGraphicsOpacityEffect(w)
+    eff.setOpacity(0.0)
+    w.setGraphicsEffect(eff)
+    a = QPropertyAnimation(eff, b"opacity", w)
+    a.setDuration(ms)
+    a.setStartValue(0.0)
+    a.setEndValue(1.0)
+    a.setEasingCurve(QEasingCurve.OutCubic)
+    a.finished.connect(lambda: w.setGraphicsEffect(None))
+    a.start(QPropertyAnimation.DeleteWhenStopped)
+
+
+class Spinner(QLabel):
+    """Icono de carga que gira (o fijo si las animaciones estan desactivadas)."""
+
+    def __init__(self, name="est_cargando", color=None, size=14):
+        super().__init__()
+        self.base = pix(name, color or C["acc"], size)
+        self.size_ = size
+        self.setFixedSize(size + 4, size + 4)
+        self.setAlignment(Qt.AlignCenter)
+        self.angle = 0
+        self.t = QTimer(self, interval=60, timeout=self._step)
+        self.setPixmap(self.base)
+
+    def start(self, name=None, color=None):
+        if name:
+            self.base = pix(name, color or C["acc"], self.size_)
+        self.setPixmap(self.base)
+        if animations_on():
+            self.t.start()
+
+    def stop(self, pixmap=None):
+        self.t.stop()
+        self.setPixmap(pixmap or self.base)
+
+    def _step(self):
+        self.angle = (self.angle + 30) % 360
+        p = self.base.transformed(QTransform().rotate(self.angle), Qt.SmoothTransformation)
+        p.setDevicePixelRatio(self.base.devicePixelRatio())
+        self.setPixmap(p)
+
+
+class Toast(QFrame):
+    """Aviso flotante dentro de la ventana (abajo a la derecha) con accion opcional."""
+
+    def __init__(self, parent, text, action=None, on_action=None, ms=7000, icon_name="est_info", color=None):
+        super().__init__(parent)
+        self.setObjectName("toast")
+        h = QHBoxLayout(self)
+        h.setContentsMargins(12, 10, 8, 10)
+        h.setSpacing(10)
+        h.addWidget(pix_label(icon_name, color or C["acc"], 16), 0, Qt.AlignTop)
+        t = lbl(text)
+        t.setMaximumWidth(330)
+        h.addWidget(t, 1)
+        if action:
+            b = btn(action, "primary")
+            b.clicked.connect(lambda: (on_action(), self.close_()))
+            h.addWidget(b, 0, Qt.AlignVCenter)
+        h.addWidget(tbtn("ui_cerrar", "Cerrar", self.close_, size=11), 0, Qt.AlignTop)
+        self.adjustSize()
+        self.eff = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.eff)
+        self.eff.setOpacity(0.0)
+        self._place()
+        self.show()
+        self.raise_()
+        self._anim(1.0)
+        QTimer.singleShot(ms, self.close_)
+
+    def _place(self, dy=0):
+        p = self.parentWidget()
+        self.move(p.width() - self.width() - 22, p.height() - self.height() - 120 - dy)
+
+    def _anim(self, to, done=None):
+        a = QPropertyAnimation(self.eff, b"opacity", self)
+        a.setDuration(200 if animations_on() else 1)
+        a.setStartValue(self.eff.opacity())
+        a.setEndValue(to)
+        if done:
+            a.finished.connect(done)
+        a.start(QPropertyAnimation.DeleteWhenStopped)
+
+    def close_(self):
+        try:
+            if self.isVisible() and not getattr(self, "_closing", False):
+                self._closing = True
+                self._anim(0.0, self.deleteLater)
+        except RuntimeError:      # ya destruido
+            pass
 
 
 class ImageLabel(QLabel):
@@ -213,8 +319,7 @@ class StepRow(QWidget):
         h = QHBoxLayout(head)
         h.setContentsMargins(10, 6, 8, 6)
         h.setSpacing(8)
-        self.st_icon = QLabel()
-        self.st_icon.setFixedSize(18, 18)
+        self.st_icon = Spinner(size=14)
         h.addWidget(self.st_icon)
         self.title = QLabel()
         self.title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -294,7 +399,10 @@ class StepRow(QWidget):
     def _set(self, phase):
         ico, col = {"pending": ("est_aviso", C["acc"]), "run": ("est_cargando", C["warn"]), "ok": ("ui_check", C["ok"]),
                     "err": ("ui_cerrar", C["bad"]), "denied": ("est_bloqueado", C["bad"]), "blocked": ("est_bloqueado", C["faint"])}[phase]
-        self.st_icon.setPixmap(pix(ico, col, 14))
+        if phase == "run" and self.ev.get("ts", 0) > time.time() - 30:
+            self.st_icon.start(ico, col)          # gira mientras se ejecuta
+        else:
+            self.st_icon.stop(pix(ico, col, 14))
         text = describe(self.ev["name"], self.ev.get("args"), {"pending": "pending", "run": "run"}.get(phase, "done"))
         if phase == "denied":
             text = describe(self.ev["name"], self.ev.get("args"), "pending").replace("Quiere", "No se permitió", 1)
@@ -365,7 +473,10 @@ class AssistantBlock(QWidget):
         self.status = QWidget()
         sh = QHBoxLayout(self.status)
         sh.setContentsMargins(0, 0, 0, 0)
-        sh.addWidget(pix_label("est_cargando", C["acc"], 14))
+        self.spin = Spinner(size=14)
+        sh.addWidget(self.spin)
+        if started > time.time() - 5:
+            self.spin.start()
         self.status_lbl = QLabel("Leyendo tu mensaje…")
         self.status_lbl.setObjectName("muted")
         sh.addWidget(self.status_lbl)
@@ -393,8 +504,10 @@ class AssistantBlock(QWidget):
         ah.setSpacing(2)
         self.b_copy = tbtn("acc_copiar", "Copiar respuesta", self.copy, size=15)
         self.b_regen = tbtn("acc_refrescar", "Regenerar respuesta", size=15)
+        self.b_report = tbtn("est_aviso", "Informar de un problema con esta respuesta", self.report, size=15)
         ah.addWidget(self.b_copy)
         ah.addWidget(self.b_regen)
+        ah.addWidget(self.b_report)
         ah.addStretch(1)
         self.stats = QLabel()
         self.stats.setObjectName("stats")
@@ -410,7 +523,9 @@ class AssistantBlock(QWidget):
             self.think_btn.setText("Pensando… %d s" % (now - self.r_start))
 
     def delta(self, kind, text, ts):
-        self.status.hide()
+        if self.status.isVisible():
+            self.spin.stop()
+            self.status.hide()
         if kind == "reasoning":
             if self.r_start is None:
                 self.r_start = ts
@@ -430,6 +545,7 @@ class AssistantBlock(QWidget):
             self.think_btn.setText("Pensó durante %d s" % max(1, round(self.r_end - self.r_start)))
 
     def finish(self, text, ts):
+        self.spin.stop()
         self.status.hide()
         self._end_think(ts)
         if text:
@@ -444,6 +560,10 @@ class AssistantBlock(QWidget):
         QGuiApplication.clipboard().setText(self.text)
         self.b_copy.setIcon(icon("ui_check", C["ok"], 15))
         QTimer.singleShot(1200, lambda: self.b_copy.setIcon(icon("acc_copiar", C["mut"], 15)))
+
+    def report(self):
+        excerpt = self.text if len(self.text) < 1500 else self.text[:1500] + "…"
+        FeedbackDialog(self.window(), "error", "Respuesta con problemas:\n\n> " + excerpt.replace("\n", "\n> ") + "\n\nQué esperaba: ").exec()
 
 
 def user_bubble(ev, compact=False):
@@ -482,7 +602,7 @@ class EmptyState(QWidget):
         v.setContentsMargins(0, 30 if compact else 70, 0, 0)
         v.setSpacing(14 if compact else 18)
         logo = QLabel()
-        logo.setPixmap(make_icon().pixmap(40 if compact else 52, 40 if compact else 52))
+        logo.setPixmap(theme.logo(44 if compact else 60))
         logo.setAlignment(Qt.AlignCenter)
         v.addWidget(logo)
         g = QLabel(title)
@@ -722,6 +842,8 @@ class ChatPanel(QWidget):
 
     def add(self, w):
         self.cl.insertWidget(self.cl.count() - 1, w)
+        if getattr(self, "_live", False):
+            fade_in(w)                    # solo lo que llega en vivo, no al reabrir una conversacion
         return w
 
     def open_session(self, sid):
@@ -775,6 +897,7 @@ class ChatPanel(QWidget):
             new = s.events[self.ev_i:self.ev_i + 400]
         for ev in new:
             try:
+                self._live = ev.get("ts", 0) > time.time() - 3
                 self.handle(ev)
             except Exception as e:
                 print("evento", ev.get("t"), e, file=sys.stderr)
@@ -1010,7 +1133,7 @@ class CodePage(QWidget):
         ev = QVBoxLayout(e)
         ev.addStretch(1)
         logo = QLabel()
-        logo.setPixmap(make_icon().pixmap(52, 52))
+        logo.setPixmap(theme.logo(60))
         logo.setAlignment(Qt.AlignCenter)
         ev.addWidget(logo)
         g = QLabel(CODE_NAME)
@@ -1131,15 +1254,24 @@ class Main(QMainWindow):
         self._sig_chat = self._sig_code = None
         self._swapping = False
         self.mode = "chat"
+        cfg = core.SET.snapshot()
+        # barra de titulo integrada: se quita la de Windows conservando el ajuste a los bordes, la sombra y las animaciones
+        self.frameless = bool(cfg.get("custom_titlebar", True)) and os.name == "nt"
+        if self.frameless:
+            self.setWindowFlag(Qt.FramelessWindowHint, True)   # Qt no reserva bordes; Windows recupera sus estilos en showEvent
+        self.update_info = None
+        self.model_news = []
         self._build()
         self._tray()
-        cfg = core.SET.snapshot()
         self.chat.open_session(None)
         self.code.set_project(core.project(cfg, cfg["active_project"]))
         self.set_mode(cfg.get("app_mode") or "chat", save=False)
         self.poll_t = QTimer(self, interval=2500, timeout=self.poll)
         self.poll_t.start()
         self.poll()
+        QTimer.singleShot(9000, self.check_news)                                   # novedades al poco de abrir…
+        self.news_t = QTimer(self, interval=6 * 3600 * 1000, timeout=self.check_news)   # …y cada 6 horas
+        self.news_t.start()
         QShortcut(QKeySequence("Ctrl+N"), self, activated=self.new_conversation)
         QShortcut(QKeySequence("Ctrl+K"), self, activated=self.focus_search)
         QShortcut(QKeySequence("Ctrl+Shift+S"), self, activated=self.toggle_sidebar)
@@ -1179,7 +1311,7 @@ class Main(QMainWindow):
         b.setIcon(icon(ico, C["tx"], 16))
         b.setIconSize(QSize(16, 16))
         b.setCursor(Qt.PointingHandCursor)
-        b.setToolTip(tip)
+        b.setToolTip("%s  ·  %s" % (text, tip) if tip else text)
         b.clicked.connect(cb)
         layout.addWidget(b)
         return b
@@ -1189,18 +1321,21 @@ class Main(QMainWindow):
         self.side.setObjectName("sidebar")
         self.side.setFixedWidth(264)
         sv = QVBoxLayout(self.side)
-        sv.setContentsMargins(10, 12, 10, 10)
+        sv.setContentsMargins(10, 0, 10, 10)
         sv.setSpacing(2)
-        top = QHBoxLayout()
+        self.side_top = QWidget()            # zona de arrastre de la ventana (junto con la cabecera)
+        self.side_top.setFixedHeight(46)
+        top = QHBoxLayout(self.side_top)
+        top.setContentsMargins(2, 0, 0, 0)
         logo = QLabel()
-        logo.setPixmap(make_icon().pixmap(24, 24))
+        logo.setPixmap(theme.logo(24))
         top.addWidget(logo)
         name = QLabel(APP_NAME)
         name.setStyleSheet("font-weight:700; font-size:12pt")
         top.addWidget(name, 1)
-        top.addWidget(tbtn("ui_menu_hamburguesa", "Ocultar barra lateral (Ctrl+Shift+S)", self.toggle_sidebar, size=16))
-        sv.addLayout(top)
-        sv.addSpacing(8)
+        top.addWidget(tbtn("ui_menu_hamburguesa", "Ocultar barra lateral  ·  Ctrl+Shift+S", self.toggle_sidebar, size=16))
+        sv.addWidget(self.side_top)
+        sv.addSpacing(4)
         seg = QFrame()
         seg.setObjectName("segment")
         sl = QHBoxLayout(seg)
@@ -1272,6 +1407,14 @@ class Main(QMainWindow):
         kl.addWidget(self.clist, 1)
         self.side_stack.addWidget(kw)
         sv.addWidget(self.side_stack, 1)
+        self.update_btn = QPushButton("  Actualización disponible")
+        self.update_btn.setObjectName("updateBtn")
+        self.update_btn.setIcon(icon("acc_descargar", C["acc"], 15))
+        self.update_btn.setCursor(Qt.PointingHandCursor)
+        self.update_btn.clicked.connect(self.install_update)
+        self.update_btn.hide()
+        sv.addWidget(self.update_btn)
+        sv.addSpacing(4)
         sv.addWidget(hline())
         # perfil: generico (sin datos de nadie) y con un menu util, como en las apps de escritorio habituales
         foot = QPushButton()
@@ -1295,6 +1438,9 @@ class Main(QMainWindow):
         pm.addAction(icon("ia_controlador"), "Modelos", self.models)
         pm.addSeparator()
         pm.addAction(icon("inp_teclado"), "Atajos de teclado", lambda: self.settings("Atajos de teclado"))
+        pm.addAction(icon("mat_comentario"), "Enviar comentarios…", lambda: FeedbackDialog(self, "idea").exec())
+        pm.addAction(icon("est_error"), "Informar de un error…", lambda: FeedbackDialog(self, "error").exec())
+        pm.addAction(icon("acc_refrescar"), "Buscar actualizaciones", lambda: self.check_news(manual=True))
         pm.addAction(icon("est_info"), "Acerca de %s" % APP_NAME, lambda: self.settings("Acerca de"))
         pm.addSeparator()
         pm.addAction(icon("ui_cerrar"), "Salir", self.quit_app)
@@ -1304,10 +1450,13 @@ class Main(QMainWindow):
 
     def _header(self):
         head = QWidget()
+        head.setObjectName("titlebar")
+        head.setFixedHeight(46)
+        self.head = head                     # tambien es la barra de titulo de la ventana (zona de arrastre)
         h = QHBoxLayout(head)
-        h.setContentsMargins(14, 8, 14, 8)
+        h.setContentsMargins(14, 0, 0 if self.frameless else 14, 0)
         h.setSpacing(6)
-        self.b_expand = tbtn("ui_menu_hamburguesa", "Mostrar barra lateral (Ctrl+Shift+S)", self.toggle_sidebar, size=16)
+        self.b_expand = tbtn("ui_menu_hamburguesa", "Mostrar barra lateral  ·  Ctrl+Shift+S", self.toggle_sidebar, size=16)
         self.b_expand.hide()
         h.addWidget(self.b_expand)
         self.model_btn = QToolButton()
@@ -1339,7 +1488,106 @@ class Main(QMainWindow):
         m.addAction(icon("acc_eliminar", C["bad"]), "Borrar conversación", lambda: self._delete(self.current_panel().session(), self.current_panel()))
         more.setMenu(m)
         h.addWidget(more)
+        if self.frameless:
+            h.addSpacing(8)
+            # botones de ventana con la fuente de iconos de Windows (Segoe Fluent / MDL2)
+            self.b_min = self._winbtn("", "Minimizar", self.showMinimized)
+            self.b_max = self._winbtn("", "Maximizar", self.toggle_max)
+            self.b_close = self._winbtn("", "Cerrar", self.close, close=True)
+            for b in (self.b_min, self.b_max, self.b_close):
+                h.addWidget(b, 0, Qt.AlignTop)
         return head
+
+    def _winbtn(self, glyph, tip, cb, close=False):
+        b = QPushButton(glyph)
+        b.setObjectName("winClose" if close else "winBtn")
+        b.setFixedHeight(46)
+        b.setToolTip(tip)
+        b.clicked.connect(cb)
+        return b
+
+    def toggle_max(self):
+        self.showNormal() if self.isMaximized() else self.showMaximized()
+
+    def changeEvent(self, e):
+        super().changeEvent(e)
+        if getattr(self, "frameless", False) and hasattr(self, "b_max") and e.type() == e.Type.WindowStateChange:
+            self.b_max.setText("" if self.isMaximized() else "")
+            self.b_max.setToolTip("Restaurar" if self.isMaximized() else "Maximizar")
+
+    # ---- barra de titulo integrada (Windows): se quita la nativa y se indica a Windows que zonas son "titulo" y "borde"
+    def showEvent(self, e):
+        super().showEvent(e)
+        if getattr(self, "frameless", False) and not getattr(self, "_frame_done", False):
+            self._frame_done = True
+            hwnd = int(self.winId())
+            try:
+                u = ctypes.windll.user32
+                # estilos de ventana normal: ajuste a los bordes (Aero Snap), animaciones de minimizar/maximizar y redimensionado
+                style = u.GetWindowLongW(hwnd, -16)
+                u.SetWindowLongW(hwnd, -16, style | 0x00040000 | 0x00C00000 | 0x00010000 | 0x00020000)   # THICKFRAME|CAPTION|MAXIMIZEBOX|MINIMIZEBOX
+
+                class MARGINS(ctypes.Structure):
+                    _fields_ = [("l", ctypes.c_int), ("r", ctypes.c_int), ("t", ctypes.c_int), ("b", ctypes.c_int)]
+                ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(MARGINS(1, 1, 1, 1)))   # mantiene la sombra
+                u.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0020 | 0x0002 | 0x0001 | 0x0004)                         # FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER
+                theme.rounded(self)
+            except Exception:
+                pass
+
+    def nativeEvent(self, event_type, message):
+        if not getattr(self, "frameless", False) or not hasattr(self, "head") or bytes(event_type) != b"windows_generic_MSG":
+            return super().nativeEvent(event_type, message)
+        msg = wintypes.MSG.from_address(int(message))
+        if msg.message == 0x0083 and msg.wParam:                    # WM_NCCALCSIZE: toda la ventana es area de cliente
+            if self.isMaximized():                                  # al maximizar Windows desborda el monitor por el grosor del borde
+                user32 = ctypes.windll.user32
+                dpi = user32.GetDpiForWindow(msg.hWnd) or 96
+                f = user32.GetSystemMetricsForDpi(32, dpi) + user32.GetSystemMetricsForDpi(92, dpi)   # SM_CXSIZEFRAME + SM_CXPADDEDBORDER
+
+                class NCCALCSIZE_PARAMS(ctypes.Structure):
+                    _fields_ = [("rgrc", wintypes.RECT * 3), ("lppos", ctypes.c_void_p)]
+                p = NCCALCSIZE_PARAMS.from_address(msg.lParam)
+                p.rgrc[0].left += f
+                p.rgrc[0].top += f
+                p.rgrc[0].right -= f
+                p.rgrc[0].bottom -= f
+            return True, 0
+        if msg.message == 0x0084:                                   # WM_NCHITTEST
+            return True, self._hit_test()
+        return super().nativeEvent(event_type, message)
+
+    def _hit_test(self):
+        pos = self.mapFromGlobal(QCursor.pos())
+        x, y, w, h = pos.x(), pos.y(), self.width(), self.height()
+        b = 6
+        if not self.isMaximized():
+            left, right, top, bottom = x < b, x >= w - b, y < b, y >= h - b
+            if top and left:
+                return 13          # HTTOPLEFT
+            if top and right:
+                return 14          # HTTOPRIGHT
+            if bottom and left:
+                return 16          # HTBOTTOMLEFT
+            if bottom and right:
+                return 17          # HTBOTTOMRIGHT
+            if left:
+                return 10          # HTLEFT
+            if right:
+                return 11          # HTRIGHT
+            if top:
+                return 12          # HTTOP
+            if bottom:
+                return 15          # HTBOTTOM
+        for zone in (self.head, self.side_top):
+            if zone.isVisible() and zone.rect().contains(zone.mapFromGlobal(QCursor.pos())):
+                child = self.childAt(pos)
+                while child is not None and child is not zone:
+                    if isinstance(child, (QAbstractButton, QLineEdit, QComboBox)):
+                        return 1   # HTCLIENT: los botones siguen funcionando
+                    child = child.parentWidget()
+                return 2           # HTCAPTION: arrastrar, doble clic para maximizar y ajuste a los bordes
+        return 1
 
     def _tray(self):
         self.tray = QSystemTrayIcon(make_icon(), self)
@@ -1385,9 +1633,79 @@ class Main(QMainWindow):
         self.sync()
 
     def toggle_sidebar(self):
-        vis = not self.side.isVisible()
-        self.side.setVisible(vis)
-        self.b_expand.setVisible(not vis)
+        show = not self.side.isVisible() or self.side.maximumWidth() == 0
+        self.b_expand.setVisible(not show)
+        if not animations_on():
+            self.side.setFixedWidth(264)
+            self.side.setVisible(show)
+            return
+        if show:
+            self.side.setFixedWidth(0)
+            self.side.show()
+        grp = QParallelAnimationGroup(self)
+        for prop in (b"minimumWidth", b"maximumWidth"):
+            a = QPropertyAnimation(self.side, prop)
+            a.setDuration(190)
+            a.setStartValue(self.side.width())
+            a.setEndValue(264 if show else 0)
+            a.setEasingCurve(QEasingCurve.OutCubic)
+            grp.addAnimation(a)
+        if not show:
+            grp.finished.connect(lambda: (self.side.hide(), self.side.setFixedWidth(264)))
+        grp.start(QPropertyAnimation.DeleteWhenStopped)
+
+    def toast(self, text, action=None, on_action=None, ms=7000, icon_name="est_info", color=None):
+        return Toast(self.centralWidget(), text, action, on_action, ms, icon_name, color)
+
+    # ---- novedades: versiones nuevas de Jayth y de los modelos
+    def check_news(self, manual=False):
+        cfg = core.SET.snapshot()
+        if cfg.get("auto_update_check", True) or manual:
+            run_bg(updater.check_app, lambda r: self._got_app_news(r, manual))
+        if cfg.get("model_news", True) and cfg["models"]:
+            run_bg(lambda: updater.check_models(cfg["models"], set(cfg.get("model_news_seen") or [])), self._got_model_news)
+
+    def _got_app_news(self, r, manual):
+        if isinstance(r, Exception):
+            if manual:
+                self.toast("No pude consultar si hay actualizaciones (¿sin internet?).", icon_name="est_aviso", color=C["warn"])
+            return
+        self.update_info = r
+        self.update_btn.setVisible(bool(r))
+        if r:
+            self.update_btn.setToolTip("Versión del %s: %s" % (r["date"], r["message"]))
+            self.toast("Hay una versión nueva de %s (%s): «%s»." % (APP_NAME, r["date"], r["message"]), "Actualizar", self.install_update,
+                       12000, "acc_descargar")
+        elif manual:
+            self.toast("Tienes la última versión de %s." % APP_NAME, icon_name="ui_check", color=C["ok"])
+
+    def _got_model_news(self, news):
+        if isinstance(news, Exception) or not news:
+            return
+        self.model_news = news
+        seen = list(core.SET.snapshot().get("model_news_seen") or [])
+        for n in news:
+            self.toast("Nuevo modelo disponible: %s (más reciente que tu %s)." % (n["title"], n["for"]), "Ver",
+                       lambda r=n["repo"]: self.setup("model", r), 15000, "ia_controlador")
+            seen.append(n["repo"])
+        core.SET.update({"model_news_seen": seen[-50:]})
+
+    def install_update(self):
+        info = self.update_info
+        if not info:
+            return
+        if any(s.run for s in core.SESSIONS.values()):
+            return QMessageBox.information(self, APP_NAME, "Espera a que el agente termine antes de actualizar.")
+        if QMessageBox.question(self, "Actualizar %s" % APP_NAME, "Versión del %s:\n«%s»\n\n%s se cerrará, se actualizará y volverá a abrirse. "
+                                "Tus conversaciones, ajustes y modelos se conservan. ¿Actualizar ahora?" % (info["date"], info["message"], APP_NAME)) \
+                != QMessageBox.StandardButton.Yes:
+            return
+        ok, how = updater.apply_update()
+        if not ok:
+            return QMessageBox.warning(self, APP_NAME, how)
+        if how == "restart":
+            updater.restart()
+        self.quit_app()
 
     def focus_search(self):
         if self.mode != "chat":
@@ -1538,7 +1856,7 @@ class Main(QMainWindow):
             hdr = m.addAction("Modelos locales")
             hdr.setEnabled(False)
         for md in cfg["models"]:
-            a = m.addAction(md["name"])
+            a = m.addAction(core.model_title(md) + ("   " + core.model_quant(md) if core.model_quant(md) else ""))
             a.setCheckable(True)
             a.setChecked(not ext and md["id"] == cfg["active_model"])
             grp.addAction(a)
@@ -1607,8 +1925,9 @@ class Main(QMainWindow):
         st = self.llm.get("state", "off")
         ext = cfg["llm_mode"] == "external"
         m = core.active_model(cfg)
-        name = ("Externo · " + (cfg["external_model"] or cfg["external_url"])) if ext else (m["name"] if m else "Sin modelo")
+        name = ("Externo · " + (cfg["external_model"] or cfg["external_url"])) if ext else (core.model_title(m) if m else "Sin modelo")
         self.model_btn.setText(name + "  ⌄")
+        self.model_btn.setToolTip(("%s · %s · %s" % (core.model_title(m), core.model_quant(m), m.get("path", ""))) if (m and not ext) else "Elegir modelo")
         col, txt = {"ready": (C["ok"], "Listo" + (" · externo" if ext else " · local")), "loading": (C["warn"], "Cargando…")}.get(st, (C["faint"], "Apagado"))
         if st == "ready" and self.llm.get("warm") == "warming":
             col, txt = C["warn"], "Preparando el agente…"
@@ -1648,8 +1967,8 @@ class Main(QMainWindow):
         self.sync()
         QTimer.singleShot(800, self.poll)
 
-    def setup(self, start="welcome"):
-        w = SetupWizard(self, start=start)
+    def setup(self, start="welcome", repo=None):
+        w = SetupWizard(self, start=start, repo=repo)
         if w.exec() and w.start_llm:
             core.LLM_MGR.stop()
             core.LLM_MGR.start()
@@ -1720,24 +2039,9 @@ class Main(QMainWindow):
 
 
 def _dark_titlebar(w):
-    """Barra de titulo con los colores del tema (Windows 11), sin el color de acento del sistema."""
-    try:
-        hwnd = int(w.winId())
-        dwm = ctypes.windll.dwmapi
-
-        def setattr_(attr, val):
-            v = ctypes.c_int(val)
-            dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(v), ctypes.sizeof(v))
-
-        def colorref(hexcol):
-            h = hexcol.lstrip("#")
-            return int(h[4:6], 16) << 16 | int(h[2:4], 16) << 8 | int(h[0:2], 16)   # COLORREF = 0x00BBGGRR
-        setattr_(20, 1 if theme.MODE == "dark" else 0)       # DWMWA_USE_IMMERSIVE_DARK_MODE
-        setattr_(35, colorref(C["side"]))                     # DWMWA_CAPTION_COLOR
-        setattr_(36, colorref(C["tx"]))                       # DWMWA_TEXT_COLOR
-        setattr_(34, colorref(C["side"]))                     # DWMWA_BORDER_COLOR
-    except Exception:
-        pass
+    """Con la barra nativa (si se desactiva la integrada) al menos se pinta con los colores del tema."""
+    if not getattr(w, "frameless", False):
+        theme.titlebar_colors(w)
 
 
 def main():

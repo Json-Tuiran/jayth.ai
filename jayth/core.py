@@ -48,6 +48,12 @@ DEFAULTS = {
     "start_with_windows": False,
     "close_to_tray": False,
     "notifications": True,
+    "custom_titlebar": True,     # barra de titulo integrada en la ventana (como las apps de escritorio modernas)
+    "animations": True,
+    # novedades
+    "auto_update_check": True,   # avisar cuando haya una version nueva de Jayth
+    "model_news": True,          # avisar cuando se publiquen versiones nuevas de tus modelos
+    "model_news_seen": [],
     # personalizacion
     "about_me": "",
     "response_style": "",
@@ -200,6 +206,19 @@ def active_model(cfg):
         if m.get("id") == cfg.get("active_model"):
             return m
     return None
+
+
+def model_title(m):
+    """Nombre limpio para mostrar (familia, versión, tamaño y variante; sin cuantización)."""
+    from .provision import pretty_name
+    return pretty_name(m.get("repo") or m.get("file") or m.get("name") or "") if m else ""
+
+
+def model_quant(m):
+    from .provision import quant_label
+    f = os.path.basename(m.get("file") or m.get("path") or "") if m else ""
+    q = quant_label(f) if f else ""
+    return "" if q == f else q
 
 
 def llm_base(cfg):

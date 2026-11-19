@@ -53,6 +53,11 @@ if ($local) {
     Copy-Item (Join-Path $inner.FullName "*") $InstallDir -Recurse -Force
     Remove-Item $tmp -Recurse -Force
     $AppDir = $InstallDir
+    # version instalada (la usa Jayth para saber si hay actualizaciones)
+    try {
+        $c = Invoke-RestMethod "https://api.github.com/repos/$Repo/commits/$Branch" -UseBasicParsing
+        @{ sha = $c.sha; date = $c.commit.committer.date } | ConvertTo-Json | Set-Content (Join-Path $AppDir "installed.json") -Encoding utf8
+    } catch { }
     Ok "Instalado en: $AppDir"
 }
 

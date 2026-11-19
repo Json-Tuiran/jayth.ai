@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icon.png" width="96" alt="Jayth"></p>
+
 # Jayth
 
 Aplicación de escritorio para Windows que convierte **cualquier modelo de IA local** (formato GGUF) en un agente que
@@ -10,6 +12,9 @@ y **tú apruebas cada acción**.
   (CPU, CUDA o Vulkan) y recomienda la cuantización.
 - **Sin nube:** después de descargar el modelo funciona sin internet. Las herramientas web solo se usan si hay conexión.
 - **Control total:** modos de permiso, botones Permitir/Denegar por acción, botón Detener y failsafe del ratón.
+- **Dos modos:** Chat para cualquier tarea y **Jayth Code** para proyectos (árbol de archivos, editor, terminal y agente).
+- **Siempre al día:** avisa de versiones nuevas de Jayth (y se actualiza con un clic) y de versiones nuevas de tus modelos.
+- **Comentarios:** informa de errores o sugiere mejoras desde la app; revisas el texto antes de enviarlo.
 
 ## Instalación
 

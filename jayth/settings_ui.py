@@ -263,6 +263,9 @@ class SettingsDialog(QDialog):
         self.field(v, "theme", "Tema", "choice", choices=[("Según el sistema", "system"), ("Oscuro", "dark"), ("Claro", "light")])
         self.field(v, "font_scale", "Tamaño del texto", "choice", choices=[("Pequeño", 90), ("Normal", 100), ("Grande", 115), ("Muy grande", 130)],
                    help="El tema y el tamaño se aplican al cerrar esta ventana.")
+        self.field(v, "animations", "Animaciones (aparición de mensajes, barra lateral, avisos)", "bool")
+        self.field(v, "custom_titlebar", "Barra de título integrada en la ventana", "bool",
+                   help="Como en las apps de escritorio modernas. Si la desactivas se usa la barra de Windows (al reiniciar %s)." % APP_NAME)
         self._section(v, "Inicio y ventana")
         self.field(v, "start_with_windows", "Abrir %s al iniciar Windows (minimizado en la bandeja)" % APP_NAME, "bool")
         self.field(v, "autostart_llm", "Encender el modelo al abrir %s" % APP_NAME, "bool",
@@ -288,9 +291,9 @@ class SettingsDialog(QDialog):
         card.setObjectName("noteBox")
         cl = QVBoxLayout(card)
         cl.setContentsMargins(14, 12, 14, 12)
-        cl.addWidget(lbl("<b>Modelo activo:</b> %s" % ((m["name"] if m else "ninguno") if cfg["llm_mode"] == "local" else "servidor externo")))
+        cl.addWidget(lbl("<b>Modelo activo:</b> %s" % ((core.model_title(m) if m else "ninguno") if cfg["llm_mode"] == "local" else "servidor externo")))
         if m and cfg["llm_mode"] == "local":
-            cl.addWidget(lbl("%s · %s" % (HW.human(m.get("size", 0)), m.get("path", "")), "faint"))
+            cl.addWidget(lbl("%s · %s · %s" % (core.model_quant(m) or "GGUF", HW.human(m.get("size", 0)), m.get("path", "")), "faint"))
         row = QHBoxLayout()
         row.addWidget(btn("Gestionar modelos…", cb=lambda: ModelsDialog(self).exec(), ico="ia_controlador"))
         row.addWidget(btn("Añadir modelo…", cb=lambda: SetupWizard(self, start="model").exec(), ico="acc_anadir"))
@@ -508,7 +511,8 @@ class SettingsDialog(QDialog):
         from .theme import make_icon
         head = QHBoxLayout()
         lg = QLabel()
-        lg.setPixmap(make_icon().pixmap(56, 56))
+        from .theme import logo
+        lg.setPixmap(logo(64))
         head.addWidget(lg)
         tl = QVBoxLayout()
         n = QLabel(APP_NAME)
@@ -526,6 +530,18 @@ class SettingsDialog(QDialog):
         r.addStretch(1)
         v.addLayout(r)
         v.addWidget(self.upd)
+        self._section(v, "Novedades")
+        self.field(v, "auto_update_check", "Avisarme cuando haya una versión nueva de %s" % APP_NAME, "bool")
+        self.field(v, "model_news", "Avisarme cuando se publique una versión nueva de mis modelos", "bool",
+                   help="Busca en Hugging Face versiones más recientes de la misma familia, tamaño y variante (p. ej. de Gemma 3 12B a Gemma 4 12B).")
+        self._section(v, "Comentarios")
+        v.addWidget(lbl("¿Encontraste un error o tienes una idea? Tu comentario ayuda a mejorar %s." % APP_NAME, "muted"))
+        r = QHBoxLayout()
+        from .feedback import FeedbackDialog
+        r.addWidget(btn("Informar de un error…", cb=lambda: FeedbackDialog(self, "error").exec(), ico="est_error"))
+        r.addWidget(btn("Sugerir una mejora…", cb=lambda: FeedbackDialog(self, "idea").exec(), ico="vfx_magia"))
+        r.addStretch(1)
+        v.addLayout(r)
 
     def _check_updates(self):
         self.upd.setText("Consultando GitHub…")
