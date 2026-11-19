@@ -1,5 +1,5 @@
 ﻿<#
-  Instalador de Agente Local (Windows 10/11, 64 bits).
+  Instalador de Jayth (Windows 10/11, 64 bits).
 
   Desde GitHub (una sola linea en PowerShell):
       irm https://raw.githubusercontent.com/Json-Tuiran/agentes-en-local/main/install.ps1 | iex
@@ -16,16 +16,16 @@
   No necesita permisos de administrador.
 #>
 param(
-    [string]$Repo = $(if ($env:AGENTELOCAL_REPO) { $env:AGENTELOCAL_REPO } else { "Json-Tuiran/agentes-en-local" }),
+    [string]$Repo = $(if ($env:JAYTH_REPO) { $env:JAYTH_REPO } else { "Json-Tuiran/agentes-en-local" }),
     [string]$Branch = "main",
-    [string]$InstallDir = "$env:LOCALAPPDATA\Programs\AgenteLocal",
+    [string]$InstallDir = "$env:LOCALAPPDATA\Programs\Jayth",
     [switch]$NoShortcut,
     [switch]$NoLaunch
 )
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$AppName = "Agente Local"
+$AppName = "Jayth"
 $PyVersion = "3.12.10"
 
 function Step($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
@@ -40,8 +40,8 @@ if ($local) {
     $AppDir = $local
     Ok "Usando la carpeta local: $AppDir"
 } else {
-    if ($Repo -like "TU_USUARIO/*") { Fail "Este instalador aun no apunta a un repositorio. Define AGENTELOCAL_REPO=usuario/repositorio o edita la variable `$Repo." }
-    $tmp = Join-Path $env:TEMP ("agentelocal_" + [guid]::NewGuid().ToString("N"))
+    if ($Repo -like "TU_USUARIO/*") { Fail "Este instalador aun no apunta a un repositorio. Define JAYTH_REPO=usuario/repositorio o edita la variable `$Repo." }
+    $tmp = Join-Path $env:TEMP ("jayth_" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Force $tmp | Out-Null
     $zip = Join-Path $tmp "src.zip"
     Invoke-WebRequest "https://codeload.github.com/$Repo/zip/refs/heads/$Branch" -OutFile $zip -UseBasicParsing
@@ -127,6 +127,6 @@ if (-not $NoShortcut) {
 
 Step "$AppName está instalado"
 Write-Host "    Código:  $AppDir"
-Write-Host "    Datos:   $env:LOCALAPPDATA\AgenteLocal  (ajustes, conversaciones, modelos)"
+Write-Host "    Datos:   $env:LOCALAPPDATA\Jayth  (ajustes, conversaciones, modelos)"
 Write-Host "    Al abrirlo por primera vez, el asistente descargará el motor y el modelo que elijas."
 if (-not $NoLaunch) { Start-Process "$venv\Scripts\pythonw.exe" -ArgumentList "`"$AppDir\app.py`"" -WorkingDirectory $AppDir }

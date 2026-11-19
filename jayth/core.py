@@ -24,6 +24,10 @@ DEFAULTS = {
     "threads": max(1, (os.cpu_count() or 2) // 2),
     "llm_port": 8080,
     "n_ctx": 16384,
+    # proyectos del modo Code
+    "projects": [],
+    "active_project": "",
+    "app_mode": "chat",          # chat | code (ultimo modo usado)
     # interfaz
     "theme": "system",           # system | dark | light
     "user_name": "",
@@ -55,6 +59,8 @@ class Settings:
                 self.v.update({k: x for k, x in json.load(f).items() if k in DEFAULTS})
         except Exception:
             pass
+        if os.path.normcase(self.v["workspace"]).endswith(os.path.normcase(os.path.join("Documents", "AgenteLocal"))):
+            self.v["workspace"] = paths.WORKSPACE_DEFAULT   # carpeta del nombre provisional anterior
 
     def update(self, new):
         with self.lock:
@@ -110,6 +116,30 @@ class Settings:
             self.v["models"] = ms
             if activate or not self.v["active_model"]:
                 self.v["active_model"] = m["id"]
+            self._save()
+
+    # --- proyectos (modo Code): {id, name, path, instructions, created}
+    def add_project(self, name, path, instructions=""):
+        p = {"id": uuid.uuid4().hex[:10], "name": name.strip() or os.path.basename(path), "path": os.path.normpath(path),
+             "instructions": instructions, "created": time.time()}
+        os.makedirs(p["path"], exist_ok=True)
+        with self.lock:
+            self.v["projects"] = self.v["projects"] + [p]
+            self.v["active_project"] = p["id"]
+            self._save()
+        return p
+
+    def update_project(self, pid, **kw):
+        with self.lock:
+            self.v["projects"] = [dict(p, **kw) if p["id"] == pid else p for p in self.v["projects"]]
+            self._save()
+
+    def remove_project(self, pid):
+        """Quita el proyecto de la lista (no borra su carpeta)."""
+        with self.lock:
+            self.v["projects"] = [p for p in self.v["projects"] if p["id"] != pid]
+            if self.v["active_project"] == pid:
+                self.v["active_project"] = self.v["projects"][0]["id"] if self.v["projects"] else ""
             self._save()
 
     def remove_model(self, mid):
@@ -183,7 +213,16 @@ class Session:
         """Lanza el agente en un hilo. Devuelve None o un mensaje de error."""
         if self.run is not None:
             return "El agente sigue trabajando en esta conversación."
-        run = A.Run(self.data, SET.snapshot(), self.add_event, paths.IMG_DIR)
+        cfg = SET.snapshot()
+        proj = project(cfg, self.data.get("project"))
+        if proj:   # en un proyecto el agente trabaja dentro de su carpeta y sigue sus instrucciones
+            cfg["workspace"] = proj["path"]
+            extra = "Trabajas en el proyecto «%s» (carpeta %s). Las rutas relativas son relativas a esa carpeta." % (proj["name"], proj["path"])
+            if proj.get("instructions"):
+                extra += "\nInstrucciones del proyecto:\n" + proj["instructions"]
+            cfg["custom_instructions"] = (cfg["custom_instructions"] + "\n\n" + extra).strip()
+            os.makedirs(proj["path"], exist_ok=True)
+        run = A.Run(self.data, cfg, self.add_event, paths.IMG_DIR)
         self.run = run
         if self.title == DEFAULT_TITLE:
             self.title = (text or "Imagen")[:48]
@@ -263,11 +302,25 @@ def load_sessions():
                 continue
 
 
-def new_session():
+def new_session(project_id=None):
     s = Session(uuid.uuid4().hex[:10])
+    if project_id:
+        s.data["project"] = project_id
     SESSIONS[s.id] = s
     s.save()
     return s
+
+
+def project(cfg, pid):
+    for p in cfg.get("projects", []):
+        if pid and p["id"] == pid:
+            return p
+    return None
+
+
+def sessions_for(project_id=None):
+    """Conversaciones del modo Chat (project_id=None) o de un proyecto."""
+    return [s for s in sorted_sessions() if (s.data.get("project") or None) == (project_id or None)]
 
 
 def sorted_sessions():

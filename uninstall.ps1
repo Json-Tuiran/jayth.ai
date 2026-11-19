@@ -1,12 +1,12 @@
 ﻿<#
-  Desinstala Agente Local: quita los accesos directos y el entorno .venv.
-  Si se instalo desde GitHub (en %LOCALAPPDATA%\Programs\AgenteLocal) tambien borra el codigo.
+  Desinstala Jayth: quita los accesos directos y el entorno .venv.
+  Si se instalo desde GitHub (en %LOCALAPPDATA%\Programs\Jayth) tambien borra el codigo.
   Tus datos (conversaciones, ajustes y modelos descargados) solo se borran si lo confirmas.
 #>
 $ErrorActionPreference = "Stop"
-$AppName = "Agente Local"
+$AppName = "Jayth"
 $AppDir = $PSScriptRoot
-$Data = "$env:LOCALAPPDATA\AgenteLocal"
+$Data = "$env:LOCALAPPDATA\Jayth"
 
 foreach ($dir in @([Environment]::GetFolderPath("Desktop"), (Join-Path ([Environment]::GetFolderPath("Programs")) $AppName))) {
     $l = Join-Path $dir "$AppName.lnk"
@@ -21,7 +21,7 @@ if (Test-Path $Data) {
     $ans = Read-Host "¿Borrar también tus datos en $Data ($size GB: conversaciones, ajustes y modelos descargados)? Esto no se puede deshacer. [s/N]"
     if ($ans -match '^(s|si|sí|y|yes)$') { Remove-Item $Data -Recurse -Force; Write-Host "Datos borrados." } else { Write-Host "Datos conservados." }
 }
-if ($AppDir -like "$env:LOCALAPPDATA\Programs\AgenteLocal*") {
+if ($AppDir -like "$env:LOCALAPPDATA\Programs\Jayth*") {
     Set-Location $env:TEMP
     Remove-Item $AppDir -Recurse -Force
     Write-Host "Código borrado: $AppDir"

@@ -2,7 +2,7 @@
 Reanudables (.part + HTTP Range), con reintentos y verificacion SHA-256 cuando la fuente la publica."""
 import os, re, json, time, hashlib, zipfile, threading, http.client, urllib.request, urllib.error, urllib.parse
 
-UA = {"User-Agent": "AgenteLocal/0.1 (+python-urllib)"}
+UA = {"User-Agent": "Jayth/0.1 (+python-urllib)"}
 CHUNK = 1 << 20
 
 # Modelos sugeridos en el asistente. Cualquier otro repositorio GGUF de Hugging Face tambien sirve.

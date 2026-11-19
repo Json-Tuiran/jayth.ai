@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Agente Local</title>
+<title>Jayth</title>
 <style>
 :root{--bg:#0f1115;--panel:#161920;--panel2:#1c2029;--line:#272c38;--tx:#e6e8ee;--mut:#8b93a7;--acc:#7c9cff;--ok:#3ecf8e;--bad:#ff6b6b;--warn:#f5b84b;--code:#0b0d11;color-scheme:dark}
 *{box-sizing:border-box}
@@ -107,7 +107,7 @@ pre#mlog{background:var(--code);padding:8px;border-radius:8px;max-height:200px;o
 </head>
 <body>
 <aside>
-  <h1>Agente Local <small>local · sin nube</small></h1>
+  <h1>Jayth <small>local · sin nube</small></h1>
   <div style="padding:0 12px 8px"><button class="primary" style="width:100%" id="bnew">+ Nueva conversación</button></div>
   <div id="sessions"></div>
   <div class="box">
@@ -123,7 +123,7 @@ pre#mlog{background:var(--code);padding:8px;border-radius:8px;max-height:200px;o
 </aside>
 <main>
   <header>
-    <div class="title" id="title">Agente Local</div>
+    <div class="title" id="title">Jayth</div>
     <div class="ws" id="ws"></div>
     <div class="chip" id="chip">Inactivo</div>
   </header>
@@ -307,7 +307,7 @@ function openSession(id) {
   if (es) es.close();
   sid = id; log.innerHTML = ''; cur = null; cards = {}; lastAsst = null; waiting = 0; setBusy(false);
   const m = S.sessions.find(s => s.id === id);
-  $('#title').textContent = m ? m.title : 'Agente Local';
+  $('#title').textContent = m ? m.title : 'Jayth';
   renderSessions();
   if (!id) { log.innerHTML = '<div id="empty"><h2>¿En qué te ayudo?</h2><p>Puedo leer y crear archivos, ejecutar comandos, programar, navegar y manejar programas.<br>Cada acción aparece aquí y tú decides qué permitir.</p></div>'; return; }
   es = new EventSource('/api/events/' + id + '?t=' + TOKEN);

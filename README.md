@@ -1,4 +1,4 @@
-# Agente Local
+# Jayth
 
 Aplicación de escritorio para Windows que convierte **cualquier modelo de IA local** (formato GGUF) en un agente que
 programa, crea archivos, ejecuta comandos y programas, usa la web y controla el ordenador. Todo ocurre en tu equipo
@@ -55,8 +55,8 @@ completa añade una clave de Brave Search en Ajustes.
 
 | Qué | Dónde |
 |---|---|
-| Ajustes, conversaciones, motor, modelos | `%LOCALAPPDATA%\AgenteLocal` (la carpeta de modelos se puede cambiar) |
-| Carpeta de trabajo del agente | `Documentos\AgenteLocal` (configurable) |
+| Ajustes, conversaciones, motor, modelos | `%LOCALAPPDATA%\Jayth` (la carpeta de modelos se puede cambiar) |
+| Carpeta de trabajo del agente | `Documentos\Jayth` (configurable) |
 | **Modo portátil** (USB) | Crea un archivo vacío `portable.txt` junto a `app.py`: todo se guarda en `userdata\` |
 
 ## Desinstalar
@@ -73,7 +73,7 @@ Con GPU NVIDIA el modelo se reparte automáticamente entre la VRAM y la RAM.
 ```
 app.py                  entrada de la app de escritorio
 server.py               interfaz web opcional (python server.py --open)
-agentelocal/
+jayth/
   desktop.py            ventana principal
   wizard.py             asistente, gestor de modelos y ajustes
   agent.py              bucle del agente (API compatible con OpenAI)

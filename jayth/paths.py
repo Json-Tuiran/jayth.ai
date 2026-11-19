@@ -1,10 +1,10 @@
 """Rutas de la aplicacion. Nada depende de una unidad o carpeta concreta de un equipo.
 
 - Codigo: la carpeta donde este instalado el programa (APP_DIR).
-- Datos de usuario (ajustes, conversaciones, modelos, llama.cpp): %LOCALAPPDATA%\\AgenteLocal
+- Datos de usuario (ajustes, conversaciones, modelos, llama.cpp): %LOCALAPPDATA%\\Jayth
   * Modo portatil: si existe APP_DIR\\portable.txt, todo se guarda en APP_DIR\\userdata (util para un USB).
-  * AGENTELOCAL_HOME permite forzar otra carpeta (se usa en pruebas).
-- Carpeta de trabajo del agente por defecto: Documentos\\AgenteLocal
+  * JAYTH_HOME permite forzar otra carpeta (se usa en pruebas).
+- Carpeta de trabajo del agente por defecto: Documentos\\Jayth
 """
 import os
 
@@ -12,12 +12,19 @@ APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _home():
-    if os.environ.get("AGENTELOCAL_HOME"):
-        return os.environ["AGENTELOCAL_HOME"]
+    if os.environ.get("JAYTH_HOME"):
+        return os.environ["JAYTH_HOME"]
     if os.path.exists(os.path.join(APP_DIR, "portable.txt")):
         return os.path.join(APP_DIR, "userdata")
     base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".local", "share")
-    return os.path.join(base, "AgenteLocal")
+    home = os.path.join(base, "Jayth")
+    old = os.path.join(base, "AgenteLocal")          # nombre provisional anterior: migrar sus datos una sola vez
+    if not os.path.exists(home) and os.path.isdir(old):
+        try:
+            os.rename(old, home)
+        except OSError:
+            return old                                  # en uso (p. ej. el motor encendido): seguir usando la antigua
+    return home
 
 
 def _documents():
@@ -39,7 +46,7 @@ SESS_DIR = os.path.join(DATA, "sessions")
 IMG_DIR = os.path.join(DATA, "images")
 RUNTIME_DIR = os.path.join(HOME, "runtime")      # llama.cpp descargado
 MODELS_DEFAULT = os.path.join(HOME, "models")
-WORKSPACE_DEFAULT = os.path.join(_documents(), "AgenteLocal")
+WORKSPACE_DEFAULT = os.path.join(_documents(), "Jayth")
 ICON = os.path.join(APP_DIR, "assets", "icon.ico")
 WEB_DIR = os.path.join(APP_DIR, "web")
 

@@ -1,19 +1,19 @@
-"""Interfaz web opcional de Agente Local (la principal es la app de escritorio: app.py).
+"""Interfaz web opcional de Jayth (la principal es la app de escritorio: app.py).
 Solo escucha en 127.0.0.1 y exige un token distinto en cada arranque."""
 import os, sys, re, json, uuid, base64, atexit, secrets, threading, argparse, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from agentelocal import paths, core, tools as T, agent as A
+from jayth import paths, core, tools as T, agent as A
 
-TOKEN = os.environ.get("AGENTELOCAL_TOKEN") or secrets.token_urlsafe(24)   # la variable es solo para pruebas
+TOKEN = os.environ.get("JAYTH_TOKEN") or secrets.token_urlsafe(24)   # la variable es solo para pruebas
 PORT = 8787
 atexit.register(core.shutdown)
 
 
 class H(BaseHTTPRequestHandler):
-    server_version = "AgenteLocal"
+    server_version = "Jayth"
 
     def log_message(self, *a):
         pass
@@ -170,7 +170,7 @@ class H(BaseHTTPRequestHandler):
 
 def main():
     global PORT
-    ap = argparse.ArgumentParser(description="Interfaz web opcional de Agente Local")
+    ap = argparse.ArgumentParser(description="Interfaz web opcional de Jayth")
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--open", action="store_true", help="abrir el navegador")
     ap.add_argument("--start-llm", action="store_true", help="encender el modelo al iniciar")
@@ -180,7 +180,7 @@ def main():
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)
     srv.daemon_threads = True
     url = "http://127.0.0.1:%d/" % PORT
-    print("Agente Local (web) en", url, "- solo accesible desde este equipo")
+    print("Jayth (web) en", url, "- solo accesible desde este equipo")
     if args.start_llm:
         print("Modelo:", core.LLM_MGR.start() or "arrancando…")
     if args.open:

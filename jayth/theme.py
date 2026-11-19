@@ -40,6 +40,13 @@ QPushButton[kind="flat"] { background: transparent; border: none; color: %(mut)s
 QPushButton[kind="flat"]:hover { color: %(tx)s; background: %(hover)s; }
 QPushButton#nav { background: transparent; border: none; text-align: left; padding: 7px 8px; color: %(tx)s; border-radius: 8px; }
 QPushButton#nav:hover { background: %(hover)s; }
+QFrame#segment { background: %(panel)s; border: 1px solid %(line)s; border-radius: 10px; }
+QPushButton#segBtn { background: transparent; border: none; border-radius: 7px; padding: 5px 8px; color: %(mut)s; }
+QPushButton#segBtn:hover { color: %(tx)s; }
+QPushButton#segBtn:checked { background: %(panel2)s; color: %(tx)s; font-weight: 600; }
+QTabWidget::pane { border: none; }
+QTabBar::tab:!selected:hover { color: %(tx)s; }
+QTreeView { outline: 0; }
 QPushButton#suggestion { background: transparent; border: 1px solid %(line)s; border-radius: 12px; padding: 10px 14px; text-align: left; color: %(mut)s; }
 QPushButton#suggestion:hover { background: %(panel)s; color: %(tx)s; }
 QToolButton { background: transparent; border: none; border-radius: 8px; padding: 4px; color: %(mut)s; }
