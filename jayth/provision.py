@@ -1,8 +1,9 @@
 """Descargas de llama.cpp (GitHub oficial) y de modelos GGUF (Hugging Face).
 Reanudables (.part + HTTP Range), con reintentos y verificacion SHA-256 cuando la fuente la publica."""
-import os, re, json, time, hashlib, zipfile, threading, http.client, urllib.request, urllib.error, urllib.parse
+import os, re, json, time, hashlib, zipfile, platform, threading, subprocess, http.client, urllib.request, urllib.error, urllib.parse
+from . import osys
 
-UA = {"User-Agent": "Jayth/0.1 (+python-urllib)"}
+UA = {"User-Agent": "Jayth (+python-urllib)"}
 CHUNK = 1 << 20
 
 # Modelos sugeridos en el asistente. Cualquier otro repositorio GGUF de Hugging Face tambien sirve.
@@ -104,15 +105,29 @@ def hf_url(repo, file):
 
 
 # ---------------------------------------------------------------- llama.cpp
-LLAMA_PATTERNS = {
-    "cpu": [r"llama-b\d+-bin-win-cpu-x64\.zip$"],
-    "cuda": [r"llama-b\d+-bin-win-cuda-12\.4-x64\.zip$", r"^cudart-llama-bin-win-cuda-12\.4-x64\.zip$"],
-    "vulkan": [r"llama-b\d+-bin-win-vulkan-x64\.zip$"],
-}
+_ARM = platform.machine().lower() in ("arm64", "aarch64")
+if osys.WIN:
+    _A = "arm64" if _ARM else "x64"
+    LLAMA_PATTERNS = {
+        "cpu": [r"llama-b\d+-bin-win-cpu-%s\.zip$" % _A],
+        "cuda": [r"llama-b\d+-bin-win-cuda-12\.4-x64\.zip$", r"^cudart-llama-bin-win-cuda-12\.4-x64\.zip$"],
+        "vulkan": [r"llama-b\d+-bin-win-vulkan-x64\.zip$"],
+    }
+elif osys.MAC:
+    # las compilaciones de macOS para arm64 ya llevan Metal
+    LLAMA_PATTERNS = {"metal": [r"llama-b\d+-bin-macos-arm64\.(tar\.gz|zip)$"], "cpu": [r"llama-b\d+-bin-macos-%s\.(tar\.gz|zip)$" % ("arm64" if _ARM else "x64")]}
+else:
+    LLAMA_PATTERNS = {
+        "cpu": [r"llama-b\d+-bin-ubuntu-%s\.(tar\.gz|zip)$" % ("arm64" if _ARM else "x64")],
+        "cuda": [r"llama-b\d+-bin-ubuntu-cuda-12\.\d+-x64\.(tar\.gz|zip)$", r"^cudart-llama(-b\d+)?-bin-ubuntu-cuda-12\.\d+-x64\.(tar\.gz|zip)$"],
+        "vulkan": [r"llama-b\d+-bin-ubuntu-vulkan-x64\.(tar\.gz|zip)$"],
+    }
 
 
 def llama_release(backend):
-    """Ultima compilacion oficial de llama.cpp para Windows con los archivos del motor elegido."""
+    """Ultima compilacion oficial de llama.cpp para este sistema con los archivos del motor elegido."""
+    if backend not in LLAMA_PATTERNS:
+        raise RuntimeError("El motor «%s» no está disponible en %s." % (backend, osys.os_label()))
     pats = LLAMA_PATTERNS[backend]
     for rel in get_json("https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=10"):
         if rel.get("draft"):
@@ -127,7 +142,7 @@ def llama_release(backend):
                            "sha256": dig.split(":", 1)[1] if dig.startswith("sha256:") else ""})
         if len(assets) == len(pats):
             return {"tag": rel["tag_name"], "assets": assets}
-    raise RuntimeError("No encontré una versión de llama.cpp para Windows (%s)." % backend)
+    raise RuntimeError("No encontré una versión de llama.cpp para %s (%s)." % (osys.os_label(), backend))
 
 
 # ---------------------------------------------------------------- descarga generica
@@ -222,10 +237,37 @@ def extract_zip(zpath, dest):
         z.extractall(dest)
 
 
+def extract_archive(path, dest):
+    """Descomprime .zip o .tar.gz sin permitir rutas fuera de dest; conserva permisos y enlaces (bibliotecas de macOS/Linux)."""
+    if path.lower().endswith(".zip"):
+        return extract_zip(path, dest)
+    import tarfile
+    os.makedirs(dest, exist_ok=True)
+    with tarfile.open(path) as t:
+        root = os.path.abspath(dest)
+        for m in t.getmembers():
+            target = os.path.abspath(os.path.join(dest, m.name))
+            if not (target == root or target.startswith(root + os.sep)):
+                raise RuntimeError("Ruta peligrosa en el paquete: " + m.name)
+        try:
+            t.extractall(dest, filter="tar")         # Python 3.12+: bloquea rutas absolutas y enlaces hacia fuera
+        except TypeError:
+            t.extractall(dest)
+
+
 def find_server(folder):
+    name = osys.exe("llama-server")
     for root, _, files in os.walk(folder):
-        if "llama-server.exe" in files:
-            return os.path.join(root, "llama-server.exe")
+        if name in files:
+            exe = os.path.join(root, name)
+            if not osys.WIN:
+                try:
+                    os.chmod(exe, os.stat(exe).st_mode | 0o755)
+                    if osys.MAC:                    # por si llego con cuarentena (descarga desde el navegador)
+                        subprocess.run(["xattr", "-dr", "com.apple.quarantine", folder], capture_output=True)
+                except OSError:
+                    pass
+            return exe
     return ""
 
 

@@ -4,12 +4,14 @@ from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QPushButton, QListWidget, QListWidgetItem,
                                QStackedWidget, QScrollArea, QCheckBox, QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit, QPlainTextEdit,
                                QFrame, QFileDialog, QMessageBox, QGridLayout)
-from . import APP_NAME, __version__, core, paths, hardware as HW, agent as A, tools as T
+from . import APP_NAME, __version__, core, paths, osys, hardware as HW, agent as A, tools as T
 from .theme import C, icon, pix
 from .wizard import SetupWizard, ModelsDialog, btn, lbl, browse_row, run_bg
 
 REPO = "Json-Tuiran/jayth.ai"
-NO_WINDOW = 0x08000000
+NO_WINDOW = osys.NO_WINDOW
+SYSTEM = "Windows" if osys.WIN else ("macOS" if osys.MAC else "Linux")
+FILE_MANAGER = "el Explorador" if osys.WIN else ("el Finder" if osys.MAC else "el gestor de archivos")
 
 LANGS = [("Automático (el idioma de tu mensaje)", "auto"), ("Español", "es"), ("English", "en"), ("Português", "pt"), ("Français", "fr"),
          ("Deutsch", "de"), ("Italiano", "it")]
@@ -21,22 +23,9 @@ SHORTCUTS = [("Ctrl+N", "Nueva conversación"), ("Ctrl+K", "Buscar en tus conver
 
 
 # ---------------------------------------------------------------- acciones del sistema
-def startup_link():
-    return os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup", APP_NAME + ".lnk")
-
-
 def set_autostart(on):
-    """Crea o quita el acceso directo en la carpeta Inicio de Windows."""
-    link = startup_link()
-    if not on:
-        if os.path.exists(link):
-            os.remove(link)
-        return
-    exe = sys.executable.replace("python.exe", "pythonw.exe")
-    app = os.path.join(paths.APP_DIR, "app.py")
-    ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%s');$s.TargetPath='%s';$s.Arguments='\"%s\" --minimized';"
-          "$s.WorkingDirectory='%s';$s.IconLocation='%s';$s.Save()") % (link, exe, app, paths.APP_DIR, paths.ICON)
-    subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, creationflags=NO_WINDOW)
+    """Inicio con el sistema: carpeta Inicio (Windows), LaunchAgent (macOS) o ~/.config/autostart (Linux)."""
+    osys.set_autostart(on, APP_NAME)
 
 
 def export_conversations(folder):
@@ -264,10 +253,11 @@ class SettingsDialog(QDialog):
         self.field(v, "font_scale", "Tamaño del texto", "choice", choices=[("Pequeño", 90), ("Normal", 100), ("Grande", 115), ("Muy grande", 130)],
                    help="El tema y el tamaño se aplican al cerrar esta ventana.")
         self.field(v, "animations", "Animaciones (aparición de mensajes, barra lateral, avisos)", "bool")
-        self.field(v, "custom_titlebar", "Barra de título integrada en la ventana", "bool",
-                   help="Como en las apps de escritorio modernas. Si la desactivas se usa la barra de Windows (al reiniciar %s)." % APP_NAME)
+        if osys.WIN:      # en macOS y Linux se usa siempre la barra del sistema (semáforos de macOS, decoraciones del escritorio)
+            self.field(v, "custom_titlebar", "Barra de título integrada en la ventana", "bool",
+                       help="Como en las apps de escritorio modernas. Si la desactivas se usa la barra de Windows (al reiniciar %s)." % APP_NAME)
         self._section(v, "Inicio y ventana")
-        self.field(v, "start_with_windows", "Abrir %s al iniciar Windows (minimizado en la bandeja)" % APP_NAME, "bool")
+        self.field(v, "start_with_windows", "Abrir %s al iniciar %s (minimizado en la bandeja)" % (APP_NAME, SYSTEM), "bool")
         self.field(v, "autostart_llm", "Encender el modelo al abrir %s" % APP_NAME, "bool",
                    help="Así está listo cuando lo necesites. Usa la memoria del modelo mientras la app esté abierta.")
         self.field(v, "close_to_tray", "Al cerrar la ventana, seguir funcionando en la bandeja del sistema", "bool")
@@ -277,7 +267,7 @@ class SettingsDialog(QDialog):
         self.field(v, "user_name", "¿Cómo quieres que te llame?", "text", placeholder="Tu nombre (opcional)",
                    help="Se usa en el saludo y para que el agente sepa cómo dirigirse a ti.")
         self.field(v, "about_me", "¿Qué debería saber %s de ti?" % APP_NAME, "area",
-                   placeholder="Ej.: Soy diseñador, trabajo con Python y Figma, uso Windows 11 y guardo mis proyectos en D:\\Trabajo.")
+                   placeholder="Ej.: Soy diseñador, trabajo con Python y Figma, uso %s y guardo mis proyectos en %s." % (SYSTEM, "D:\\Trabajo" if osys.WIN else "~/Trabajo"))
         self.field(v, "response_style", "¿Cómo quieres que responda?", "area",
                    placeholder="Ej.: Respuestas breves y directas, con ejemplos de código y sin relleno.")
         self.field(v, "response_language", "Idioma de las respuestas", "choice", choices=LANGS)
@@ -405,7 +395,7 @@ class SettingsDialog(QDialog):
                    choices=[("No (máxima calidad)", "f16"), ("8 bits (la mitad de memoria, casi sin pérdida)", "q8_0"), ("4 bits (un cuarto de memoria)", "q4_0")])
         self.field(v, "flash_attn", "Flash attention", "choice", choices=[("Automático", "auto"), ("Activado", "on"), ("Desactivado", "off")])
         self.field(v, "mmap", "Cargar el modelo con mmap (arranque más rápido)", "bool")
-        self.field(v, "mlock", "Bloquear el modelo en la RAM (evita que Windows lo mueva al disco)", "bool",
+        self.field(v, "mlock", "Bloquear el modelo en la RAM (evita que el sistema lo mueva al disco)", "bool",
                    help="Útil si tienes RAM de sobra; si no, puede ralentizar el equipo.")
         self.field(v, "llm_port", "Puerto local del motor", "int", min=1024, max=65535)
 
@@ -544,7 +534,7 @@ class SettingsDialog(QDialog):
                         "Solo se conecta a internet para descargar modelos y para las herramientas web que tú permitas." % APP_NAME, "muted"))
         r = QHBoxLayout()
         r.addWidget(lbl("Datos: " + paths.HOME, "faint"), 1)
-        r.addWidget(btn("Abrir carpeta", cb=lambda: os.startfile(paths.HOME), ico="act_carpeta_abierta"))
+        r.addWidget(btn("Abrir carpeta", cb=lambda: osys.open_path(paths.HOME), ico="act_carpeta_abierta"))
         v.addLayout(r)
         self._section(v, "Conversaciones")
         n = len(core.SESSIONS)
@@ -603,8 +593,8 @@ class SettingsDialog(QDialog):
         g = QGridLayout()
         g.setHorizontalSpacing(24)
         for i, (k, d) in enumerate(SHORTCUTS):
-            kl = QLabel(k)
-            kl.setStyleSheet("font-family: Consolas; color:%s" % C["acc"])
+            kl = QLabel(k.replace("Ctrl+", "⌘ ") if osys.MAC else k)      # en macOS Qt asigna Ctrl a la tecla Comando
+            kl.setStyleSheet("font-family: '%s'; color:%s" % (osys.mono_font(), C["acc"]))
             g.addWidget(kl, i, 0)
             g.addWidget(QLabel(d), i, 1)
         g.setColumnStretch(1, 1)
@@ -650,23 +640,19 @@ class SettingsDialog(QDialog):
     def _check_updates(self):
         self.upd.setText("Consultando GitHub…")
 
-        def work():
-            req = urllib.request.Request("https://api.github.com/repos/%s/commits/main" % REPO, headers={"User-Agent": APP_NAME})
-            d = json.loads(urllib.request.urlopen(req, timeout=10).read().decode("utf-8"))
-            return d["sha"], d["commit"]["committer"]["date"][:10], d["commit"]["message"].splitlines()[0]
+        from . import updater
 
         def done(r):
             if isinstance(r, Exception):
                 return self.upd.setText("No se pudo consultar GitHub (¿sin internet?).")
-            sha, date, msg = r
-            local = local_commit()
-            if local and local == sha:
-                self.upd.setText("✓ Tienes la última versión (%s)." % date)
-            elif os.path.isdir(os.path.join(paths.APP_DIR, ".git")):
-                self.upd.setText("Hay una versión nueva (%s): «%s».\nActualiza con:  git -C \"%s\" pull   y reinicia %s." % (date, msg, paths.APP_DIR, APP_NAME))
-            else:
-                self.upd.setText("Última versión publicada: %s («%s»). Para actualizar, vuelve a ejecutar el instalador." % (date, msg))
-        run_bg(work, done)
+            if not r:
+                return self.upd.setText("✓ Tienes la última versión de %s." % APP_NAME)
+            self.upd.setText("Hay una versión nueva (%s): «%s».\nUsa el botón «Actualizar» de la barra lateral; %s se reiniciará solo." % (
+                r.get("date") or r.get("version"), r["message"], APP_NAME))
+            win = self.parent()
+            if hasattr(win, "_got_app_news"):
+                win._got_app_news(r, False)
+        run_bg(updater.check_app, done)
 
     def _restart_llm(self):
         core.LLM_MGR.stop()

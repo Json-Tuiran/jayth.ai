@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Jayth
+GenericName=Agente de IA local
+Comment=Usa modelos de IA locales para programar, crear archivos y controlar tu equipo
+Exec=jayth
+Icon=jayth
+Terminal=false
+Categories=Development;Utility;
+Keywords=IA;AI;LLM;agente;agent;llama;
+StartupWMClass=jayth

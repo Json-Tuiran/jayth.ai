@@ -1,11 +1,11 @@
 """Nucleo compartido por la app de escritorio y la interfaz web: ajustes, conversaciones y el proceso del modelo."""
 import os, re, json, time, uuid, threading, subprocess, http.client
-from . import paths
+from . import paths, osys
 from . import agent as A
 
 paths.ensure()
 
-NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+NO_WINDOW = osys.NO_WINDOW
 
 DEFAULTS = {
     "setup_done": False,
@@ -489,7 +489,7 @@ class LLM:
                "-t", str(cfg["threads"]), "-c", str(cfg["n_ctx"]), "--jinja", "--no-warmup",
                "-np", "1",                       # una sola ranura: todo el contexto disponible y la cache de prompt siempre se reutiliza
                "-b", str(cfg["batch_size"])]
-        if cfg["backend"] in ("cuda", "vulkan"):
+        if cfg["backend"] in ("cuda", "vulkan", "metal"):
             if int(cfg["gpu_layers"]) >= 0:
                 cmd += ["-ngl", str(cfg["gpu_layers"])]
             else:
@@ -546,13 +546,23 @@ class LLM:
         if m.get("size") and have < int(m["size"]) and not re.search(r"-\d{5}-of-\d{5}\.gguf$", m["path"]):
             return "El archivo del modelo aún está incompleto (%.1f de %.1f GB). Espera a que termine la descarga." % (have / 1024 ** 3, int(m["size"]) / 1024 ** 3)
         lf = open(self.log, "wb")
+        bindir = os.path.dirname(cfg["llama_exe"])
+        env = dict(os.environ)
+        if osys.LINUX:      # las bibliotecas (.so) de llama.cpp vienen junto al ejecutable
+            env["LD_LIBRARY_PATH"] = bindir + os.pathsep + env.get("LD_LIBRARY_PATH", "")
+        elif osys.MAC:
+            env["DYLD_LIBRARY_PATH"] = bindir + os.pathsep + env.get("DYLD_LIBRARY_PATH", "")
         self.proc = subprocess.Popen(self.command(cfg), stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                     cwd=os.path.dirname(cfg["llama_exe"]), creationflags=NO_WINDOW)
+                                     cwd=bindir, env=env, **osys.popen_kwargs())
         return None
 
     def stop(self):
         if self.proc is not None and self.proc.poll() is None:
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(self.proc.pid)], capture_output=True, creationflags=NO_WINDOW)
+            osys.kill_tree(self.proc.pid)
+            try:
+                self.proc.wait(5)
+            except Exception:
+                pass
         self.proc = None
         self.warm = ""
 

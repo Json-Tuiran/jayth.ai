@@ -2,14 +2,14 @@
 
 # Jayth
 
-Aplicación de escritorio para Windows que convierte **cualquier modelo de IA local** (formato GGUF) en un agente que
-programa, crea archivos, ejecuta comandos y programas, usa la web y controla el ordenador. Todo ocurre en tu equipo
-y **tú apruebas cada acción**.
+Aplicación de escritorio para **Windows, macOS y Linux** que convierte **cualquier modelo de IA local** (formato GGUF) en un
+agente que programa, crea archivos, ejecuta comandos y programas, usa la web y controla el ordenador. Todo ocurre en tu
+equipo y **tú apruebas cada acción**.
 
 - **Cualquier modelo:** descarga GGUF de Hugging Face desde la propia app (lista las cuantizaciones y marca cuáles caben
   en tu equipo), usa un `.gguf` que ya tengas, o conéctate a un servidor compatible con OpenAI (Ollama, LM Studio, otro PC).
-- **Se adapta al hardware:** detecta RAM, CPU y GPU NVIDIA; descarga la compilación oficial de llama.cpp adecuada
-  (CPU, CUDA o Vulkan) y recomienda la cuantización.
+- **Se adapta al hardware:** detecta RAM, CPU y GPU; descarga la compilación oficial de llama.cpp adecuada
+  (Metal en Mac con Apple Silicon, CUDA para NVIDIA, Vulkan para AMD/Intel Arc, o CPU) y recomienda la cuantización.
 - **Sin nube:** después de descargar el modelo funciona sin internet. Las herramientas web solo se usan si hay conexión.
 - **Control total:** modos de permiso, botones Permitir/Denegar por acción, botón Detener y failsafe del ratón.
 - **Dos modos:** Chat para cualquier tarea y **Jayth Code** para proyectos (árbol de archivos, editor, terminal y agente).
@@ -21,27 +21,47 @@ y **tú apruebas cada acción**.
   - repara JSON mal formado, frena acciones repetidas, resume el contexto al llenarse y cuenta los tokens reales;
   - muestreo recomendado por familia de modelo (Qwen, Gemma, Llama, Mistral, DeepSeek…) y precalentamiento de la caché;
   - **conectores MCP** (Model Context Protocol) para añadir herramientas externas.
-- **Siempre al día:** avisa de versiones nuevas de Jayth (y se actualiza con un clic) y de versiones nuevas de tus modelos.
+- **Siempre al día:** avisa de versiones nuevas de Jayth (y se actualiza sola con un clic) y de versiones nuevas de tus modelos.
 - **Comentarios:** informa de errores o sugiere mejoras desde la app; revisas el texto antes de enviarlo.
 
-## Instalación
+## Descargar e instalar
 
-**Opción 1: una línea** (PowerShell, sin permisos de administrador):
+Descarga el paquete de tu sistema en **[Releases](https://github.com/Json-Tuiran/jayth.ai/releases/latest)**.
+No hace falta instalar Python ni nada más.
+
+| Sistema | Archivo | Cómo |
+|---|---|---|
+| Windows 10/11 (64 bits) | `Jayth-Setup-<versión>-x64.exe` | Ábrelo y sigue el asistente. Se instala para tu usuario, sin permisos de administrador. |
+| Windows, sin instalar | `Jayth-<versión>-windows-x64-portable.zip` | Descomprime y abre `Jayth.exe`. Guarda los datos junto al programa (ideal para un USB). |
+| macOS Apple Silicon (M1–M4) | `Jayth-<versión>-macos-arm64.dmg` | Abre el `.dmg` y arrastra Jayth a Aplicaciones. |
+| macOS Intel | `Jayth-<versión>-macos-x64.dmg` | Igual que el anterior. |
+| Linux x86_64 | `Jayth-<versión>-linux-x86_64.AppImage` | `chmod +x Jayth-*.AppImage` y ábrelo. También hay un `.tar.gz`. |
+
+En el primer arranque, un **asistente** detecta tu hardware, descarga el motor y el modelo (con reanudación y
+verificación SHA-256) y deja todo configurado.
+
+> Los paquetes aún no están firmados. **Windows:** si aparece «Windows protegió su PC», pulsa *Más información →
+> Ejecutar de todas formas*. **macOS:** la primera vez, clic derecho sobre Jayth → *Abrir* (o *Ajustes del Sistema →
+> Privacidad y seguridad → Abrir igualmente*).
+
+### Desde el código (para desarrollar)
+
+Con Python 3.10+:
+
+```bash
+git clone https://github.com/Json-Tuiran/jayth.ai.git
+cd jayth.ai
+python -m venv .venv
+# Windows: .venv\Scripts\activate     macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+python app.py
+```
+
+En Windows también puedes usar el instalador desde el código (PowerShell, sin permisos de administrador):
 
 ```powershell
 irm https://raw.githubusercontent.com/Json-Tuiran/jayth.ai/main/install.ps1 | iex
 ```
-
-**Opción 2: desde una copia local:** descarga o clona el repositorio y haz doble clic en `install.bat`.
-
-El instalador:
-
-1. Busca Python 3.10+ (64 bits) y, si no hay, lo instala para tu usuario.
-2. Crea un entorno aislado (`.venv`) con la única dependencia, PySide6.
-3. Crea accesos directos en el Escritorio y el menú Inicio, y abre la app.
-
-En el primer arranque, un **asistente** detecta tu hardware, descarga el motor y el modelo (con reanudación y
-verificación SHA-256) y deja todo configurado.
 
 ## Uso
 
@@ -49,37 +69,71 @@ verificación SHA-256) y deja todo configurado.
 |---|---|
 | Conversaciones (panel izquierdo) | Historial guardado; clic derecho para renombrar o borrar |
 | Modelo | Encender/apagar el motor; **Modelos…** para añadir, cambiar o borrar modelos |
-| Permisos | Solo lectura · Preguntar (por defecto) · Editar archivos · Automático |
+| Permisos | Solo lectura · Planificar · Preguntar (por defecto) · Editar archivos · Automático |
 | Chat | Cada acción aparece como tarjeta con su comando o cambio exacto, y su resultado |
 
-**Modos de permiso:** las acciones delicadas (borrar, instalar, tocar el sistema o rutas de Windows) **siempre** piden
-confirmación, incluso en modo Automático. Para abortar el control del ratón al instante, lleva el cursor a la esquina
+**Modos de permiso:** las acciones delicadas (borrar, instalar, `sudo`, tocar el sistema o rutas protegidas) **siempre**
+piden confirmación, incluso en modo Automático. Para abortar el control del ratón al instante, lleva el cursor a la esquina
 superior izquierda de la pantalla.
 
 ## Herramientas del agente
 
-Archivos (leer, escribir, editar, listar, buscar) · PowerShell y scripts · abrir programas/archivos/URLs · web (buscar,
-leer páginas, descargar) · control del PC (capturas, clic, teclado, ventanas).
+Archivos (leer, escribir, editar, mover, papelera, buscar) · terminal del sistema (PowerShell en Windows, zsh/bash en
+macOS y Linux) y procesos en segundo plano · abrir programas/archivos/URLs · documentos e imágenes · web (buscar, leer
+páginas, descargar) · control del PC (capturas, clic, teclado, ventanas) · conectores MCP.
 
 La búsqueda web usa DuckDuckGo. Si este pide un captcha, la app no lo salta y cae a Wikipedia. Para una búsqueda web
-completa añade una clave de Brave Search en Ajustes.
+completa añade una clave de Brave Search o tu propio SearXNG en Ajustes.
+
+**Control del PC fuera de Windows:**
+- **macOS:** concede a Jayth *Grabación de pantalla* y *Accesibilidad* en *Ajustes del Sistema → Privacidad y seguridad*.
+- **Linux:** funciona en sesiones X11. En Wayland el control global del ratón y el teclado está limitado por diseño
+  (elige «Ubuntu on Xorg» al iniciar sesión). Para listar y enfocar ventanas instala `wmctrl` (`sudo apt install wmctrl`).
 
 ## Dónde se guarda todo
 
-| Qué | Dónde |
-|---|---|
-| Ajustes, conversaciones, motor, modelos | `%LOCALAPPDATA%\Jayth` (la carpeta de modelos se puede cambiar) |
-| Carpeta de trabajo del agente | `Documentos\Jayth` (configurable) |
-| **Modo portátil** (USB) | Crea un archivo vacío `portable.txt` junto a `app.py`: todo se guarda en `userdata\` |
+| Qué | Windows | macOS | Linux |
+|---|---|---|---|
+| Ajustes, conversaciones, motor y modelos | `%LOCALAPPDATA%\Jayth` | `~/Library/Application Support/Jayth` | `~/.local/share/jayth` |
+| Carpeta de trabajo del agente | `Documentos\Jayth` | `~/Documents/Jayth` | `~/Documentos/Jayth` (o `~/Documents`) |
+
+La carpeta de modelos y la de trabajo se pueden cambiar en Ajustes. **Modo portátil:** un archivo `portable.txt` junto al
+programa hace que todo se guarde en `userdata/` a su lado.
 
 ## Desinstalar
 
-Ejecuta `uninstall.ps1`. Quita los accesos directos y el entorno, y pregunta antes de borrar tus datos y modelos.
+- **Windows:** *Configuración → Aplicaciones → Jayth → Desinstalar* (o `uninstall.ps1` si lo instalaste desde el código).
+- **macOS:** arrastra Jayth a la Papelera.
+- **Linux:** borra el `.AppImage`.
+
+Tus datos y modelos no se borran al desinstalar; están en las carpetas de la tabla anterior.
 
 ## Requisitos
 
-Windows 10/11 de 64 bits. La memoria necesaria depende del modelo: el asistente indica qué cuantizaciones caben.
-Con GPU NVIDIA el modelo se reparte automáticamente entre la VRAM y la RAM.
+Windows 10/11 (64 bits), macOS 11 o posterior, o una distribución Linux de 64 bits con glibc 2.35+ (Ubuntu 22.04,
+Debian 12, Fedora 36 o posteriores). La memoria necesaria depende del modelo: el asistente indica qué cuantizaciones
+caben. Con GPU NVIDIA el modelo se reparte automáticamente entre la VRAM y la RAM; en los Mac con Apple Silicon usa la
+memoria unificada con Metal.
+
+## Compilar los paquetes
+
+Cada etiqueta `v*` compila y publica automáticamente los paquetes de los tres sistemas
+([`.github/workflows/release.yml`](.github/workflows/release.yml)):
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+Para compilar a mano en cada sistema (con `pip install -r requirements.txt pyinstaller`):
+
+| Sistema | Comando | Resultado |
+|---|---|---|
+| Windows | `powershell -File packaging\windows\build.ps1` | instalador `.exe` (Inno Setup 6) y `.zip` portátil |
+| macOS | `bash packaging/macos/build_dmg.sh` | `Jayth.app` y `.dmg` |
+| Linux | `bash packaging/linux/build_appimage.sh` | `.AppImage` y `.tar.gz` |
+
+Cada script comprueba el paquete antes de terminar (`Jayth --selftest`).
 
 ## Estructura
 
@@ -88,13 +142,18 @@ app.py                  entrada de la app de escritorio
 server.py               interfaz web opcional (python server.py --open)
 jayth/
   desktop.py            ventana principal
-  wizard.py             asistente, gestor de modelos y ajustes
+  wizard.py             asistente y gestor de modelos
+  settings_ui.py        ajustes
   agent.py              bucle del agente (API compatible con OpenAI)
-  tools.py              herramientas
+  harness.py            arnés: contexto, memoria, deshacer, procesos, MCP
+  tools.py              herramientas (control_posix.py: control del PC en macOS/Linux)
   core.py               ajustes, conversaciones y proceso del motor
   provision.py          descargas (llama.cpp y Hugging Face)
   hardware.py           detección de hardware y recomendaciones
+  osys.py               todo lo que cambia entre Windows, macOS y Linux
+  updater.py            actualizaciones de Jayth y novedades de modelos
   paths.py / theme.py   rutas y tema
-assets/                 icono e iconos de la interfaz
-install.ps1 / .bat      instalador · uninstall.ps1
+assets/                 logo, iconos de la app (.ico, .icns, .png) e iconos de la interfaz
+packaging/              PyInstaller (jayth.spec), instalador de Windows, .dmg de macOS y AppImage de Linux
+install.ps1 / .bat      instalador desde el código (Windows) · uninstall.ps1
 ```

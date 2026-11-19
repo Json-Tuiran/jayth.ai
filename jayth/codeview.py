@@ -6,12 +6,13 @@ from PySide6.QtGui import (QColor, QFont, QPainter, QTextFormat, QSyntaxHighligh
 from PySide6.QtWidgets import (QWidget, QPlainTextEdit, QTextEdit, QTabWidget, QTreeView, QFileSystemModel, QVBoxLayout, QHBoxLayout,
                                QLabel, QLineEdit, QMenu, QMessageBox, QInputDialog, QDialog, QFormLayout, QFileDialog, QHeaderView,
                                QAbstractItemView, QScrollArea, QToolButton, QPushButton, QDialogButtonBox, QRadioButton, QButtonGroup)
-from . import core, paths
+from . import core, paths, osys
 from .theme import C, icon, pix
 from .wizard import btn, lbl, browse_row
 
-MONO = QFont("Consolas", 10)
+MONO = QFont(osys.mono_font(), 10)
 MONO.setStyleHint(QFont.Monospace)
+MONO_CSS = "'%s'" % osys.mono_font()
 TEXT_EXT = {".py", ".pyw", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".json", ".html", ".htm", ".css", ".scss", ".md", ".txt", ".ps1", ".psm1",
             ".bat", ".cmd", ".sh", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".xml", ".svg", ".csv", ".sql", ".c", ".h", ".cpp", ".hpp", ".cs",
             ".java", ".go", ".rs", ".php", ".rb", ".lua", ".gd", ".env", ".gitignore", ".log", ".vue", ".kt", ".swift", ".r", ".dart"}
@@ -121,7 +122,7 @@ class CodeEditor(QPlainTextEdit):
         self.setFont(MONO)
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * 4)
-        self.setStyleSheet("QPlainTextEdit { background: %s; border: none; border-radius: 0; padding: 0; font-family: Consolas; font-size: 10pt; }" % C["bg"])
+        self.setStyleSheet("QPlainTextEdit { background: %s; border: none; border-radius: 0; padding: 0; font-family: %s; font-size: 10pt; }" % (C["bg"], MONO_CSS))
         self.gutter = _Gutter(self)
         self.gutter.setFont(MONO)
         self.blockCountChanged.connect(lambda _: self.setViewportMargins(self.gutter_width(), 0, 0, 0))
@@ -410,7 +411,7 @@ class FileTree(QTreeView):
         m.addSeparator()
         a_ren = m.addAction(icon("acc_renombrar"), "Renombrar") if idx.isValid() else None
         a_copy = m.addAction(icon("acc_copiar"), "Copiar ruta")
-        a_os = m.addAction(icon("act_carpeta_abierta"), "Mostrar en el Explorador")
+        a_os = m.addAction(icon("act_carpeta_abierta"), "Mostrar en el Explorador" if osys.WIN else ("Mostrar en el Finder" if osys.MAC else "Abrir la carpeta"))
         m.addSeparator()
         a_del = m.addAction(icon("acc_eliminar", C["bad"]), "Mover a la papelera") if idx.isValid() else None
         a = m.exec(self.viewport().mapToGlobal(pos))
@@ -433,9 +434,9 @@ class FileTree(QTreeView):
         elif a == a_copy:
             QGuiApplication.clipboard().setText(p)
         elif a == a_os:
-            os.startfile(folder)
+            osys.open_path(folder)
         elif a == a_del:
-            if QMessageBox.question(self, "Mover a la papelera", "¿Mover «%s» a la papelera de reciclaje?" % os.path.basename(p)) == QMessageBox.StandardButton.Yes:
+            if QMessageBox.question(self, "Mover a la papelera", "¿Mover «%s» a la papelera?" % os.path.basename(p)) == QMessageBox.StandardButton.Yes:
                 from PySide6.QtCore import QFile
                 if not QFile.moveToTrash(p):
                     QMessageBox.warning(self, "No se pudo", "No se pudo mover a la papelera.")
@@ -446,7 +447,7 @@ MARK = "__JAYTH_CWD__"
 
 
 class Terminal(QWidget):
-    """Terminal de PowerShell persistente (el cd y las variables se conservan entre comandos).
+    """Terminal persistente del sistema (PowerShell en Windows, zsh/bash en macOS y Linux) (el cd y las variables se conservan entre comandos).
     Pensada para comandos; los programas interactivos que esperan teclado no funcionan aqui."""
 
     def __init__(self):
@@ -471,18 +472,18 @@ class Terminal(QWidget):
         self.out.setReadOnly(True)
         self.out.setFont(MONO)
         self.out.setMaximumBlockCount(5000)
-        self.out.setStyleSheet("QPlainTextEdit { background: %s; border: none; border-radius: 0; padding: 6px 10px; font-family: Consolas; font-size: 9.5pt; }" % C["code"])
+        self.out.setStyleSheet("QPlainTextEdit { background: %s; border: none; border-radius: 0; padding: 6px 10px; font-family: %s; font-size: 9.5pt; }" % (C["code"], MONO_CSS))
         v.addWidget(self.out, 1)
         row = QHBoxLayout()
         row.setContentsMargins(10, 4, 10, 6)
-        self.prompt = QLabel("PS>")
+        self.prompt = QLabel(">")
         self.prompt.setFont(MONO)
-        self.prompt.setStyleSheet("color:%s; font-family: Consolas; font-size: 9.5pt;" % C["acc"])
+        self.prompt.setStyleSheet("color:%s; font-family: %s; font-size: 9.5pt;" % (C["acc"], MONO_CSS))
         row.addWidget(self.prompt)
         self.inp = QLineEdit()
         self.inp.setFont(MONO)
         self.inp.setPlaceholderText("Escribe un comando y pulsa Enter (↑ ↓ historial)")
-        self.inp.setStyleSheet("QLineEdit { background: transparent; border: none; font-family: Consolas; font-size: 9.5pt; }")
+        self.inp.setStyleSheet("QLineEdit { background: transparent; border: none; font-family: %s; font-size: 9.5pt; }" % MONO_CSS)
         self.inp.returnPressed.connect(self.run_input)
         self.inp.installEventFilter(self)
         row.addWidget(self.inp, 1)
@@ -514,10 +515,18 @@ class Terminal(QWidget):
         self.proc.setWorkingDirectory(cwd)
         self.proc.setProcessChannelMode(QProcess.MergedChannels)
         self.proc.readyReadStandardOutput.connect(self._read)
-        self.proc.start("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        from PySide6.QtCore import QProcessEnvironment
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert("TERM", "dumb")                     # sin colores ANSI ni paginadores
+        env.insert("PAGER", "cat")
+        env.insert("GIT_PAGER", "cat")
+        self.proc.setProcessEnvironment(env)
+        argv = osys.interactive_shell_argv()
+        self.proc.start(argv[0], argv[1:])
         self.proc.waitForStarted(3000)
-        self._send("[Console]::OutputEncoding=[Text.Encoding]::UTF8; $OutputEncoding=[Text.Encoding]::UTF8; $ProgressPreference='SilentlyContinue'")
-        self._send("Write-Output \"%s$($PWD.Path)\"" % MARK)
+        if osys.WIN:
+            self._send("[Console]::OutputEncoding=[Text.Encoding]::UTF8; $OutputEncoding=[Text.Encoding]::UTF8; $ProgressPreference='SilentlyContinue'")
+        self._send(self._mark_cmd())
         self._update_prompt()
 
     def stop(self):
@@ -550,9 +559,16 @@ class Terminal(QWidget):
         if cmd.strip().lower() in ("cls", "clear"):
             self.out.clear()
             return
-        # ". { }" ejecuta en el ambito actual: las variables y el cd se conservan; Out-String vuelca la salida antes de la marca
-        self._send(". { %s } 2>&1 | Out-String -Width 200" % cmd)
-        self._send("Write-Output \"%s$($PWD.Path)\"" % MARK)
+        if osys.WIN:
+            # ". { }" ejecuta en el ambito actual: las variables y el cd se conservan; Out-String vuelca la salida antes de la marca
+            self._send(". { %s } 2>&1 | Out-String -Width 200" % cmd)
+        else:
+            self._send("{ %s\n} 2>&1 </dev/null" % cmd)
+        self._send(self._mark_cmd())
+
+    @staticmethod
+    def _mark_cmd():
+        return ("Write-Output \"%s$($PWD.Path)\"" if osys.WIN else "printf '%s%%s\\n' \"$PWD\"") % MARK
 
     def _read(self):
         self._buf += bytes(self.proc.readAllStandardOutput()).decode("utf-8", "replace")
@@ -560,8 +576,11 @@ class Terminal(QWidget):
         self._buf = lines.pop()
         for l in lines:
             l = l.rstrip("\r")
-            if l.startswith(MARK):
-                self.cwd = l[len(MARK):].strip() or self.cwd
+            if MARK in l:                                  # la marca puede quedar pegada a una salida sin salto final
+                before, _, after = l.partition(MARK)
+                if before:
+                    self.out.appendPlainText(before)
+                self.cwd = after.strip() or self.cwd
                 self._update_prompt()
             else:
                 self.out.appendPlainText(l)
@@ -572,7 +591,7 @@ class Terminal(QWidget):
         root = getattr(self, "root", "") or ""
         if root and os.path.normcase(self.cwd).startswith(os.path.normcase(root)):
             rel = os.path.relpath(self.cwd, root)
-            return os.path.basename(root) + ("" if rel == "." else "\\" + rel)
+            return os.path.basename(root) + ("" if rel == "." else os.sep + rel)
         return self.cwd if len(self.cwd) < 40 else "…" + self.cwd[-38:]
 
     def _update_prompt(self):

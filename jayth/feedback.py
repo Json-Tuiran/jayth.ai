@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QCheckBox, QButtonGroup,
                                QPushButton, QMessageBox)
-from . import APP_NAME, __version__, core, paths
+from . import APP_NAME, __version__, core, paths, osys
 from .theme import C, icon
 from .wizard import btn, lbl
 from .updater import installed, REPO
@@ -18,7 +18,7 @@ def tech_info():
     cfg = core.SET.snapshot()
     m = core.active_model(cfg)
     lines = ["- %s %s (%s %s)" % (APP_NAME, __version__, installed().get("kind", ""), (installed().get("sha") or "")[:7]),
-             "- Sistema: %s %s · Python %s" % (platform.system(), platform.release(), platform.python_version()),
+             "- Sistema: %s · %s · Python %s" % (osys.os_label(), platform.machine(), platform.python_version()),
              "- Motor: llama.cpp %s · %s · contexto %s" % (cfg["llama_tag"] or "—", cfg["backend"], cfg["n_ctx"]),
              "- Modelo: %s %s" % (core.model_title(m) if m else ("externo" if cfg["llm_mode"] == "external" else "ninguno"), core.model_quant(m) if m else "")]
     return "\n".join(lines)
@@ -28,7 +28,7 @@ def log_tail(n=25):
     t = core.LLM_MGR.tail(n)
     # sin rutas personales: se sustituye la carpeta del usuario
     home = os.path.expanduser("~")
-    return t.replace(home, "%USERPROFILE%") if t else ""
+    return t.replace(home, "%USERPROFILE%" if osys.WIN else "~") if t else ""
 
 
 class FeedbackDialog(QDialog):

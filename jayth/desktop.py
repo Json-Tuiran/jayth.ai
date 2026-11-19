@@ -8,8 +8,9 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                                QListWidget, QListWidgetItem, QScrollArea, QFrame, QPlainTextEdit, QFileDialog, QMessageBox, QMenu,
                                QSystemTrayIcon, QSizePolicy, QToolButton, QInputDialog, QLineEdit, QStackedWidget, QSplitter,
                                QGraphicsOpacityEffect, QAbstractButton, QComboBox)
-from ctypes import wintypes
-from . import APP_NAME, core, paths, agent as A, tools as T
+from . import APP_NAME, core, paths, osys, agent as A, tools as T
+if osys.WIN:
+    from ctypes import wintypes
 from . import theme
 from .theme import C, restyle, make_icon, icon, pix
 from .wizard import SetupWizard, ModelsDialog, btn, lbl, set_icon, run_bg
@@ -20,6 +21,7 @@ from . import updater
 
 MODE_LABEL = {k: v.split(":")[0] for k, v in A.MODES.items()}
 CODE_NAME = APP_NAME + " Code"
+SHOW_IN = "Mostrar en el Explorador" if osys.WIN else ("Mostrar en el Finder" if osys.MAC else "Abrir la carpeta")
 
 
 # ---------------------------------------------------------------- utilidades de interfaz
@@ -197,7 +199,7 @@ class ImageLabel(QLabel):
 
     def mousePressEvent(self, e):
         if os.path.isfile(self.path):
-            os.startfile(self.path)
+            osys.open_path(self.path)
 
 
 def note(text, error=False):
@@ -1459,7 +1461,7 @@ class CodePage(QWidget):
         self.proj_lbl.setStyleSheet("font-weight:600; padding-left:4px")
         th.addWidget(self.proj_lbl, 1)
         th.addWidget(tbtn("acc_nuevo", "Nuevo archivo", self._new_file, size=14))
-        th.addWidget(tbtn("act_carpeta_abierta", "Mostrar en el Explorador", lambda: self.project and os.startfile(self.project["path"]), size=14))
+        th.addWidget(tbtn("act_carpeta_abierta", SHOW_IN, lambda: self.project and osys.open_path(self.project["path"]), size=14))
         lv.addLayout(th)
         self.tree = FileTree()
         self.tree.open_file.connect(lambda p: self.tabs.open(p))
@@ -1783,13 +1785,13 @@ class Main(QMainWindow):
         h.addStretch(1)
         self.b_term = tbtn("pan_consola", "Mostrar u ocultar la terminal (Ctrl+`)", lambda: self.code.toggle_terminal())
         h.addWidget(self.b_term)
-        self.b_folder = tbtn("act_carpeta_abierta", "", lambda: os.startfile(self.current_panel().workspace()))
+        self.b_folder = tbtn("act_carpeta_abierta", "", lambda: osys.open_path(self.current_panel().workspace()))
         h.addWidget(self.b_folder)
         more = tbtn("ui_menu_horizontal", "Más opciones")
         more.setPopupMode(QToolButton.InstantPopup)
         m = QMenu(self)
         m.addAction(icon("acc_renombrar"), "Renombrar conversación", lambda: self._rename(self.current_panel().session()))
-        m.addAction(icon("act_carpeta_abierta"), "Abrir carpeta de trabajo", lambda: os.startfile(self.current_panel().workspace()))
+        m.addAction(icon("act_carpeta_abierta"), "Abrir carpeta de trabajo", lambda: osys.open_path(self.current_panel().workspace()))
         m.addSeparator()
         m.addAction(icon("acc_eliminar", C["bad"]), "Borrar conversación", lambda: self._delete(self.current_panel().session(), self.current_panel()))
         more.setMenu(m)
@@ -2006,12 +2008,22 @@ class Main(QMainWindow):
                                 "Tus conversaciones, ajustes y modelos se conservan. ¿Actualizar ahora?" % (info["date"], info["message"], APP_NAME)) \
                 != QMessageBox.StandardButton.Yes:
             return
-        ok, how = updater.apply_update()
-        if not ok:
-            return QMessageBox.warning(self, APP_NAME, how)
-        if how == "restart":
-            updater.restart()
-        self.quit_app()
+        def done(r):
+            if isinstance(r, Exception):
+                return QMessageBox.warning(self, APP_NAME, "No se pudo actualizar: %s" % r)
+            ok, how = r
+            if not ok:
+                return QMessageBox.warning(self, APP_NAME, how)
+            if how == "restart":
+                updater.restart()
+            self.quit_app()
+        if updater.installed()["kind"] == "frozen":          # hay que descargar el paquete: en segundo plano
+            self.update_btn.setEnabled(False)
+            self.update_btn.setText("  Descargando actualización…")
+            self.toast("Descargando la versión nueva. %s se reiniciará al terminar." % APP_NAME, ms=6000, icon_name="acc_descargar")
+            run_bg(lambda: updater.apply_update(info), done)
+        else:
+            done(updater.apply_update(info))
 
     def focus_search(self):
         if self.mode != "chat":
@@ -2065,7 +2077,7 @@ class Main(QMainWindow):
         p = core.project(core.SET.snapshot(), it.data(Qt.UserRole))
         m = QMenu(self)
         a_edit = m.addAction(icon("acc_renombrar"), "Editar proyecto…")
-        a_os = m.addAction(icon("act_carpeta_abierta"), "Mostrar en el Explorador")
+        a_os = m.addAction(icon("act_carpeta_abierta"), SHOW_IN)
         m.addSeparator()
         a_rm = m.addAction(icon("ui_cerrar", C["bad"]), "Quitar de la lista")
         a = m.exec(self.plist.mapToGlobal(pos))
@@ -2075,7 +2087,7 @@ class Main(QMainWindow):
                 self.code.project = None
                 self.code.set_project(d.result_project)
         elif a == a_os:
-            os.startfile(p["path"])
+            osys.open_path(p["path"])
         elif a == a_rm:
             if QMessageBox.question(self, "Quitar proyecto", "¿Quitar «%s» de la lista? La carpeta y sus archivos no se borran." % p["name"]) == QMessageBox.StandardButton.Yes:
                 core.SET.remove_project(p["id"])
@@ -2319,7 +2331,7 @@ class Main(QMainWindow):
     def closeEvent(self, e):
         if self._swapping:
             return e.accept()
-        if core.SET.snapshot().get("close_to_tray") and not getattr(self, "_quitting", False):
+        if core.SET.snapshot().get("close_to_tray") and not getattr(self, "_quitting", False) and QSystemTrayIcon.isSystemTrayAvailable():
             self.hide()       # sigue funcionando en la bandeja; «Salir» del menú la cierra de verdad
             if not getattr(self, "_tray_told", False):
                 self._tray_told = True
@@ -2350,23 +2362,66 @@ def _dark_titlebar(w):
         theme.titlebar_colors(w)
 
 
+def selftest(app):
+    """Comprobación del paquete (se usa en la compilación automática): carga todo y cierra con código 0 si está bien."""
+    import importlib.util, platform as _pf
+    from . import hardware as HW, provision as P, __version__
+    checks = {}
+
+    def ok(name, fn):
+        try:
+            r = fn()
+            checks[name] = "ok" if r in (None, True) else str(r)
+        except Exception as e:
+            checks[name] = "ERROR: %r" % e
+    ok("logo", lambda: not theme.logo(64).isNull() or "logo vacío")
+    ok("icons", lambda: not theme.pix("ia_controlador").isNull() or "faltan iconos")
+    ok("icon", lambda: os.path.isfile(paths.ICON) or "falta " + paths.ICON)
+    ok("modules", lambda: [m for m in ("certifi", "pypdf") + (() if osys.WIN else ("mss", "pynput")) if not importlib.util.find_spec(m)] or None)
+    ok("certifi", lambda: os.path.isfile(__import__("certifi").where()) or "sin certificados")
+    ok("hardware", lambda: HW.summary(HW.detect()) and None)
+    ok("engine", lambda: bool(P.LLAMA_PATTERNS) or "sin motores")
+    ok("tools", lambda: len(T.TOOLS) >= 25 or "faltan herramientas")
+    ok("shell", lambda: "JAYTH_OK" in __import__("subprocess").run(osys.shell_argv("echo JAYTH_OK"), capture_output=True, text=True,
+                                                                     timeout=60, **osys.popen_kwargs()).stdout or "la terminal no responde")
+    def window():
+        w = Main()
+        w.tray.hide()
+        w.poll_t.stop()
+        w.news_t.stop()
+    ok("window", window)
+    report = {"version": __version__, "os": osys.os_label(), "arch": _pf.machine(), "frozen": osys.FROZEN, "checks": checks}
+    text = json.dumps(report, ensure_ascii=False, indent=1)
+    try:
+        print(text, flush=True)
+    except Exception:
+        pass
+    with open(os.path.join(paths.HOME, "selftest.json"), "w", encoding="utf-8") as f:
+        f.write(text)
+    core.shutdown()
+    return 0 if all(v == "ok" for v in checks.values()) else 1
+
+
 def main():
-    if os.name == "nt":
+    if osys.WIN:
         try:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Jayth.App")   # icono propio en la barra de tareas
         except Exception:
             pass
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    app.setDesktopFileName("jayth")        # Linux: enlaza la ventana con jayth.desktop (icono correcto en el dock/panel)
     cfg = core.SET.snapshot()
     theme.apply(app, cfg["theme"], cfg["font_scale"])
     app.setWindowIcon(make_icon())
     app.setQuitOnLastWindowClosed(False)
     core.load_sessions()
+    if "--selftest" in sys.argv:
+        sys.exit(selftest(app))
     w = Main()
     app._main = w
     _dark_titlebar(w)
-    if "--minimized" in sys.argv:          # arranque con Windows: queda en la bandeja
+    if "--minimized" in sys.argv and QSystemTrayIcon.isSystemTrayAvailable():   # arranque con el sistema: queda en la bandeja
         w.tray.showMessage(APP_NAME, "%s está listo en la bandeja del sistema." % APP_NAME, QSystemTrayIcon.Information, 3000)
     else:
         w.showMaximized()                  # siempre a pantalla completa

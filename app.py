@@ -1,7 +1,16 @@
-"""Jayth - aplicacion de escritorio. Ejecuta: pythonw app.py"""
+"""Jayth - aplicacion de escritorio. Desde el codigo: pythonw app.py (Windows) o python3 app.py (macOS/Linux)."""
 import os, sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+if not getattr(sys, "frozen", False):
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# HTTPS fiable en cualquier equipo: certificados de certifi si el sistema no indica otros
+if not os.environ.get("SSL_CERT_FILE"):
+    try:
+        import certifi
+        os.environ["SSL_CERT_FILE"] = certifi.where()
+    except ImportError:
+        pass
 
 from jayth.desktop import main
 

@@ -1,2 +1,9 @@
-# Unica dependencia: la ventana de escritorio (Qt). El resto usa la biblioteca estandar de Python.
+# Ventana de escritorio (Qt). El resto usa la biblioteca estandar de Python.
 PySide6-Essentials>=6.6
+# Certificados HTTPS propios (la app empaquetada no depende de los del sistema)
+certifi
+# Leer PDF (herramienta read_document)
+pypdf
+# Control del ordenador en macOS y Linux (en Windows se usa la API nativa)
+mss; sys_platform != "win32"
+pynput; sys_platform != "win32"

@@ -1,15 +1,24 @@
-"""Novedades: versiones nuevas de Jayth (GitHub) y de los modelos instalados (Hugging Face)."""
-import os, re, sys, json, time, subprocess, urllib.request
-from . import paths, APP_NAME
-from .provision import pretty_name, get_json
+"""Novedades: versiones nuevas de Jayth (GitHub) y de los modelos instalados (Hugging Face).
+
+Tres formas de instalacion:
+- "frozen": la app empaquetada (instalador .exe, .dmg o AppImage). Se actualiza desde GitHub Releases.
+- "git": una copia clonada del repositorio. Se actualiza con git pull.
+- "zip": instalada desde el codigo con install.ps1. Se vuelve a ejecutar el instalador.
+"""
+import os, re, sys, json, time, shlex, platform, tempfile, subprocess, urllib.request
+from . import paths, osys, APP_NAME, __version__
+from .provision import pretty_name, get_json, download
 
 REPO = "Json-Tuiran/jayth.ai"
-NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+NO_WINDOW = osys.NO_WINDOW
+DETACHED = 0x00000008 if osys.WIN else 0
 
 
 # ---------------------------------------------------------------- Jayth
 def installed():
-    """Version instalada: commit de git (copia clonada) o installed.json (instalada con el instalador)."""
+    """Version instalada: empaquetada, commit de git (copia clonada) o installed.json (instalador desde el codigo)."""
+    if osys.FROZEN:
+        return {"kind": "frozen", "version": __version__}
     git = os.path.join(paths.APP_DIR, ".git")
     if os.path.isdir(git):
         try:
@@ -32,9 +41,41 @@ def latest():
     return {"sha": d["sha"], "date": d["commit"]["committer"]["date"][:10], "message": d["commit"]["message"].splitlines()[0]}
 
 
+def _vtuple(v):
+    return tuple(int(x) for x in re.findall(r"\d+", v or "0")[:3])
+
+
+def asset_pattern():
+    """Nombre del paquete de este sistema dentro de una Release."""
+    arm = platform.machine().lower() in ("arm64", "aarch64")
+    if osys.WIN:
+        return r"^Jayth-Setup-[\d.]+-x64\.exe$"
+    if osys.MAC:
+        return r"^Jayth-[\d.]+-macos-%s\.dmg$" % ("arm64" if arm else "x64")
+    return r"^Jayth-[\d.]+-linux-%s\.AppImage$" % ("aarch64" if arm else "x86_64")
+
+
+def latest_release():
+    rel = get_json("https://api.github.com/repos/%s/releases/latest" % REPO, timeout=12)
+    asset = next((a for a in rel.get("assets", []) if re.match(asset_pattern(), a["name"])), None)
+    dig = (asset or {}).get("digest") or ""
+    return {"version": rel.get("tag_name", "").lstrip("v"), "date": (rel.get("published_at") or "")[:10],
+            "message": (rel.get("name") or rel.get("tag_name") or "").strip(), "notes": rel.get("body") or "",
+            "url": rel.get("html_url"),
+            "asset": {"name": asset["name"], "url": asset["browser_download_url"], "size": asset["size"],
+                      "sha256": dig.split(":", 1)[1] if dig.startswith("sha256:") else ""} if asset else None}
+
+
 def check_app():
-    """Devuelve la version nueva si la hay (dict) o None."""
-    cur, new = installed(), latest()
+    """Devuelve la version nueva si la hay (dict con date y message) o None."""
+    cur = installed()
+    if cur["kind"] == "frozen":
+        new = latest_release()
+        if new["asset"] and _vtuple(new["version"]) > _vtuple(__version__):
+            new["message"] = "%s %s" % (APP_NAME, new["version"]) if not new["message"] else new["message"]
+            return new
+        return None
+    new = latest()
     if cur.get("sha") and cur["sha"] != new["sha"]:
         if cur["kind"] == "git":
             # solo avisar si el commit remoto no esta ya en la copia local (p. ej. trabajo local sin subir)
@@ -45,26 +86,66 @@ def check_app():
     return None
 
 
-def apply_update():
-    """Instala la version nueva. Devuelve (ok, mensaje). Tras ok hay que reiniciar Jayth."""
+def _spawn_script(lines):
+    """Lanza un script de shell desacoplado que espera a que Jayth se cierre (macOS/Linux)."""
+    sh = os.path.join(tempfile.gettempdir(), "jayth_update_%d.sh" % os.getpid())
+    with open(sh, "w") as f:
+        f.write("#!/bin/sh\nwhile kill -0 %d 2>/dev/null; do sleep 0.5; done\n" % os.getpid() + "\n".join(lines) + "\nrm -f \"$0\"\n")
+    os.chmod(sh, 0o755)
+    subprocess.Popen(["/bin/sh", sh], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def apply_update(info=None, progress=None, stop=None):
+    """Instala la version nueva. Devuelve (ok, como): como = "restart" (hay que relanzar), "installer" (el instalador
+    reabre Jayth) o el mensaje de error. Para la app empaquetada descarga el paquete (puede tardar)."""
     cur = installed()
-    py = sys.executable
+    if cur["kind"] == "frozen":
+        info = info or check_app()
+        if not info or not info.get("asset"):
+            return False, "No hay un paquete de %s para este sistema en la última versión." % APP_NAME
+        a = info["asset"]
+        dest = os.path.join(paths.HOME, "updates", a["name"])
+        download(a["url"], dest, a["size"], a["sha256"], progress, stop)
+        if osys.WIN:
+            # Inno Setup: actualiza en silencio, cierra Jayth si sigue abierto y lo vuelve a abrir (/RELAUNCH=1)
+            subprocess.Popen([dest, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/RELAUNCH=1"],
+                             creationflags=DETACHED)
+            return True, "installer"
+        if osys.MAC:
+            app = paths.APP_DIR if paths.APP_DIR.endswith(".app") else "/Applications/Jayth.app"
+            mnt = os.path.join(tempfile.gettempdir(), "jayth_update_mnt")
+            q = shlex.quote
+            _spawn_script(["hdiutil attach -nobrowse -quiet -mountpoint %s %s || exit 1" % (q(mnt), q(dest)),
+                           "rm -rf %s.old; mv %s %s.old && ditto %s/Jayth.app %s && rm -rf %s.old || mv %s.old %s" % (
+                               q(app), q(app), q(app), q(mnt), q(app), q(app), q(app), q(app)),
+                           "hdiutil detach -quiet %s" % q(mnt), "rm -f %s" % q(dest), "open %s" % q(app)])
+            return True, "installer"
+        appimage = os.environ.get("APPIMAGE")
+        if not appimage:
+            return False, "Descargado en %s. Sustituye tu AppImage por este archivo." % dest
+        os.chmod(dest, 0o755)
+        q = shlex.quote
+        _spawn_script(["mv -f %s %s" % (q(dest), q(appimage)), "chmod +x %s" % q(appimage), "nohup %s >/dev/null 2>&1 &" % q(appimage)])
+        return True, "installer"
     if cur["kind"] == "git":
         r = subprocess.run(["git", "-C", paths.APP_DIR, "pull", "--ff-only"], capture_output=True, text=True, creationflags=NO_WINDOW)
         if r.returncode != 0:
             return False, "No se pudo actualizar con git:\n" + (r.stderr or r.stdout)[-800:]
-        subprocess.run([py.replace("pythonw.exe", "python.exe"), "-m", "pip", "install", "-q", "-r", os.path.join(paths.APP_DIR, "requirements.txt")],
+        py = sys.executable.replace("pythonw.exe", "python.exe")
+        subprocess.run([py, "-m", "pip", "install", "-q", "-r", os.path.join(paths.APP_DIR, "requirements.txt")],
                        capture_output=True, creationflags=NO_WINDOW)
         return True, "restart"
+    if not osys.WIN:
+        return False, "Descarga la última versión desde https://github.com/%s/releases" % REPO
     # instalada con el instalador: se vuelve a ejecutar (descarga el codigo nuevo, conserva .venv y datos) y abre Jayth al terminar
     cmd = "$env:JAYTH_REPO='%s'; irm https://raw.githubusercontent.com/%s/main/install.ps1 | iex" % (REPO, REPO)
-    subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd], creationflags=0x00000008 | NO_WINDOW)  # DETACHED
+    subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd], creationflags=DETACHED | NO_WINDOW)
     return True, "installer"
 
 
 def restart():
-    exe = sys.executable.replace("python.exe", "pythonw.exe")
-    subprocess.Popen([exe, os.path.join(paths.APP_DIR, "app.py")], cwd=paths.APP_DIR, creationflags=0x00000008)
+    argv = osys.launch_argv()
+    subprocess.Popen(argv, cwd=paths.APP_DIR, **({"creationflags": DETACHED} if osys.WIN else {"start_new_session": True}))
 
 
 # ---------------------------------------------------------------- modelos

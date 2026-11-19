@@ -5,10 +5,12 @@ import os, re, ctypes
 from PySide6.QtCore import Qt, QRectF, QObject, QEvent
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QPalette, QGuiApplication, QImage
 from PySide6.QtWidgets import QProxyStyle, QStyle, QWidget
-from . import paths
+from . import paths, osys
 
-ICON_DIR = os.path.join(paths.APP_DIR, "assets", "icons")
-LOGO = os.path.join(paths.APP_DIR, "assets", "logo.svg")
+ICON_DIR = os.path.join(paths.ASSETS, "icons")
+LOGO = os.path.join(paths.ASSETS, "logo.svg")
+UI_FONT = osys.ui_font()
+MONO_FONT = osys.mono_font()
 _cache = {}
 
 PALETTES = {
@@ -129,6 +131,7 @@ QLabel#avatar { background: %(acc_bg)s; color: %(acc)s; border-radius: 13px; fon
 QCheckBox { spacing: 8px; }
 QCheckBox::indicator, QRadioButton::indicator { width: 16px; height: 16px; }
 """
+QSS_T = QSS_T.replace("'Segoe UI'", UI_FONT).replace("font-family: Consolas", "font-family: " + MONO_FONT)
 QSS = QSS_T % C
 
 
@@ -145,6 +148,8 @@ class _Style(QProxyStyle):
 
 # ---------------------------------------------------------------- ventanas emergentes con el diseño del programa
 def _dwm(hwnd, attr, val):
+    if not osys.WIN:
+        return
     v = ctypes.c_int(val)
     ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(v), ctypes.sizeof(v))
 

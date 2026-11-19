@@ -1,7 +1,15 @@
-"""Herramientas que el agente puede usar. Solo biblioteca estandar de Python (Windows)."""
+"""Herramientas que el agente puede usar. Biblioteca estandar de Python; el control del PC usa la API de Windows
+directamente y, en macOS y Linux, mss + pynput (ver control_posix)."""
 import os, re, sys, json, time, html, struct, zlib, ctypes, subprocess, threading, fnmatch, base64
 import urllib.request, urllib.parse
-from ctypes import wintypes
+from . import osys
+if osys.WIN:
+    from ctypes import wintypes
+else:
+    class wintypes:      # solo para poder definir las estructuras de Windows; fuera de Windows no se usan
+        WORD, DWORD, LONG, UINT, BOOL = ctypes.c_ushort, ctypes.c_uint32, ctypes.c_int32, ctypes.c_uint, ctypes.c_int
+        HWND, LPARAM = ctypes.c_void_p, ctypes.c_ssize_t
+    from . import control_posix as PX
 
 
 class ToolError(Exception):
@@ -80,9 +88,16 @@ DANGEROUS_CMD = [r"\bRemove-Item\b", r"(^|[\s;|&(])(del|erase|rmdir|rd|rm|ri)\s"
                  r"\bbcdedit\b", r"\bcipher\b.*/w", r"\b(takeown|icacls)\b", r"\bSet-ExecutionPolicy\b",
                  r"-Verb\s+RunAs", r"\bpip3?\s+uninstall\b", r"\bSet-MpPreference\b|\bDisable-\w+", r"\bschtasks\b.*/create",
                  r"\bsc(\.exe)?\s+(delete|config|create|stop)\b", r"\btaskkill\b", r"\bStop-Process\b", r"\bClear-Content\b",
-                 r"\bmove-item\b.*\\windows", r"\bwinget\s+(uninstall|install)\b", r"\bchoco\s+(uninstall|install)\b"]
-PROTECTED_PATHS = ["c:\\windows", "c:\\program files", "c:\\program files (x86)", "c:\\programdata",
-                   os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu").lower()]
+                 r"\bmove-item\b.*\\windows", r"\bwinget\s+(uninstall|install)\b", r"\bchoco\s+(uninstall|install)\b",
+                 # macOS / Linux
+                 r"\bsudo\b|\bdoas\b|(^|[\s;|&(])su(\s|$)", r"\bmkfs(\.\w+)?\b", r"\bdd\s+.*\bof=", r"\b(reboot|halt|poweroff)\b",
+                 r"\bsystemctl\s+(stop|disable|mask|restart|poweroff|reboot)\b", r"\blaunchctl\s+(unload|remove|bootout)\b",
+                 r"(^|[\s;|&(])(kill|pkill|killall)\s", r"\bchmod\s+(-R\s+)?\S+\s+/(\s|$)", r"\bchown\b", r"\bshred\b",
+                 r"\b(apt|apt-get|dnf|yum|pacman|zypper|snap|flatpak)\s+(install|remove|purge|-S|-R)", r"\bbrew\s+(install|uninstall|remove)\b",
+                 r"\bcrontab\s+-r\b", r"\bdefaults\s+(write|delete)\b", r"\bcsrutil\b", r"\bspctl\b", r"\bdiskutil\s+(erase|partition|unmount)",
+                 r"(curl|wget)\b.*\|\s*(sudo\s+)?(ba|z)?sh\b", r">\s*/dev/(sd|nvme|disk)", r"\bfind\b.*\s-delete\b",
+                 r"\bgit\s+(clean\s+-\w*f|reset\s+--hard|push\s+.*(--force|-f\b))"]
+PROTECTED_PATHS = osys.protected_paths()
 
 
 def is_dangerous(name, args, ctx):
@@ -214,14 +229,12 @@ def move_path(a, ctx):
     return "Movido %s -> %s" % (src, dst)
 
 
-@tool("delete_path", "write", "Envía un archivo o carpeta a la papelera de reciclaje (se puede recuperar).", {"path": S("Ruta a borrar")}, ["path"])
+@tool("delete_path", "write", "Envía un archivo o carpeta a la papelera del sistema (se puede recuperar).", {"path": S("Ruta a borrar")}, ["path"])
 def delete_path(a, ctx):
     p = ctx.path(a["path"])
     if not os.path.exists(p):
         raise ToolError("No existe: " + p)
-    ps = "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::%s('%s','OnlyErrorDialogs','SendToRecycleBin')" % (
-        "DeleteDirectory" if os.path.isdir(p) else "DeleteFile", p.replace("'", "''"))
-    subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, creationflags=0x08000000)
+    osys.trash(p)
     if os.path.exists(p):
         raise ToolError("No se pudo enviar a la papelera: " + p)
     return "Enviado a la papelera: " + p
@@ -305,15 +318,22 @@ def search_files(a, ctx):
 
 # ---------------------------------------------------------------- ejecucion
 def _kill_tree(pid):
-    try:
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, creationflags=0x08000000)
-    except Exception:
-        pass
+    osys.kill_tree(pid)
 
 
-@tool("run_command", "exec", "Ejecuta un comando de PowerShell en la carpeta de trabajo y devuelve su salida. Para scripts: `python archivo.py`. "
-      "Con background=true lo deja corriendo (servidores, vigilantes) y devuelve un id para command_output/stop_command.",
-      {"command": S("Comando o script de PowerShell"), "timeout": I("Segundos máximos (por defecto 60, máx. 900)"), "cwd": S("Carpeta donde ejecutar (opcional)"),
+def cmd_env():
+    """Entorno para los comandos del agente: UTF-8 y sin paginadores ni colores que esperen teclado."""
+    env = dict(os.environ)
+    env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "PAGER": "cat", "GIT_PAGER": "cat", "NO_COLOR": "1"})
+    if not osys.WIN:
+        env["TERM"] = "dumb"
+    return env
+
+
+@tool("run_command", "exec", "Ejecuta un comando de la terminal del sistema (%s) en la carpeta de trabajo y devuelve su salida. "
+      "Para scripts: `python archivo.py`. Con background=true lo deja corriendo (servidores, vigilantes) y devuelve un id "
+      "para command_output/stop_command." % osys.shell_name(),
+      {"command": S("Comando o script de %s" % osys.shell_name()), "timeout": I("Segundos máximos (por defecto 60, máx. 900)"), "cwd": S("Carpeta donde ejecutar (opcional)"),
        "background": B("Dejarlo corriendo en segundo plano")}, ["command"])
 def run_command(a, ctx):
     cmd = str(a["command"])
@@ -325,10 +345,8 @@ def run_command(a, ctx):
         pid = harness.bg_start(cmd, cwd)
         time.sleep(2.5)
         return "Iniciado en segundo plano con id %s.\n%s" % (pid, harness.bg_output(pid, 30))
-    prefix = "[Console]::OutputEncoding=[Text.Encoding]::UTF8;$OutputEncoding=[Text.Encoding]::UTF8;$ProgressPreference='SilentlyContinue';"
-    enc = base64.b64encode((prefix + cmd).encode("utf-16-le")).decode()
-    p = subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc],
-                         cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=0x08000000)
+    p = subprocess.Popen(osys.shell_argv(cmd), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         env=cmd_env(), **osys.popen_kwargs())
     chunks = []
 
     def reader():
@@ -355,20 +373,21 @@ def run_command(a, ctx):
     return (out or "(sin salida)") + "\n[código de salida %d]" % p.returncode
 
 
-@tool("open_target", "exec", "Abre un programa, archivo, carpeta o URL con la aplicación predeterminada de Windows (no espera a que termine).",
+@tool("open_target", "exec", "Abre un programa, archivo, carpeta o URL con la aplicación predeterminada del sistema (no espera a que termine).",
       {"target": S("Ruta del programa/archivo, o URL"), "args": S("Argumentos (opcional, solo para programas)")}, ["target"])
 def open_target(a, ctx):
     t = str(a["target"])
     if re.match(r"^[a-z]+://", t, re.I):
-        os.startfile(t)
+        osys.open_path(t)
         return "Abierto: " + t
+    local = ctx.path(t) if os.path.exists(ctx.path(t)) else t
     if a.get("args"):
-        subprocess.Popen('start "" "%s" %s' % (t, a["args"]), shell=True, cwd=ctx.workspace)
+        osys.run_program(local, str(a["args"]))
     else:
         try:
-            os.startfile(ctx.path(t) if os.path.exists(ctx.path(t)) else t)
+            osys.open_path(local)
         except OSError:
-            subprocess.Popen('start "" "%s"' % t, shell=True, cwd=ctx.workspace)
+            osys.run_program(local)
     return "Abierto: " + t
 
 
@@ -601,12 +620,24 @@ def _dpi():
             pass
 
 
+def _px(fn, *a):
+    """Llama al control de macOS/Linux convirtiendo sus errores en errores de herramienta."""
+    try:
+        return fn(*a)
+    except PX.ControlError as e:
+        raise ToolError(str(e))
+
+
 def screen_size():
+    if not osys.WIN:
+        return _px(PX.screen_size)
     _dpi()
     return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
 
 
 def capture(max_w=1024):
+    if not osys.WIN:
+        return _px(PX.capture, max_w)
     W, H = screen_size()
     tw = min(W, max_w)
     th = max(1, round(H * tw / W))
@@ -632,6 +663,8 @@ def capture(max_w=1024):
 
 
 def _cursor():
+    if not osys.WIN:
+        return _px(PX.cursor)
     pt = wintypes.POINT()
     user32.GetCursorPos(ctypes.byref(pt))
     return pt.x, pt.y
@@ -662,18 +695,29 @@ def _mouse(flags, data=0):
     user32.mouse_event(flags, 0, 0, data & 0xFFFFFFFF, 0)
 
 
+def _set_cursor(x, y):
+    if osys.WIN:
+        user32.SetCursorPos(x, y)
+    else:
+        _px(PX.set_cursor, x, y)
+
+
 @tool("click", "control", "Mueve el ratón a (x,y) de la última captura y hace clic.",
       {"x": I("X en la captura"), "y": I("Y en la captura"), "button": S("left (por defecto), right o middle"), "double": B("Doble clic")}, ["x", "y"])
 def click(a, ctx):
     _failsafe()
     x, y = _real(ctx, a["x"], a["y"])
-    user32.SetCursorPos(x, y)
+    _set_cursor(x, y)
     time.sleep(0.08)
-    d, u = {"right": (0x8, 0x10), "middle": (0x20, 0x40)}.get(str(a.get("button") or "left").lower(), (0x2, 0x4))
-    for _ in range(2 if a.get("double") else 1):
-        _mouse(d)
-        _mouse(u)
-        time.sleep(0.06)
+    button = str(a.get("button") or "left").lower()
+    if osys.WIN:
+        d, u = {"right": (0x8, 0x10), "middle": (0x20, 0x40)}.get(button, (0x2, 0x4))
+        for _ in range(2 if a.get("double") else 1):
+            _mouse(d)
+            _mouse(u)
+            time.sleep(0.06)
+    else:
+        _px(PX.click, button, bool(a.get("double")))
     time.sleep(0.4)
     return "Clic %s en (%s,%s)" % (a.get("button") or "left", a["x"], a["y"])
 
@@ -682,7 +726,7 @@ def click(a, ctx):
 def move_mouse(a, ctx):
     _failsafe()
     x, y = _real(ctx, a["x"], a["y"])
-    user32.SetCursorPos(x, y)
+    _set_cursor(x, y)
     return "Ratón en (%s,%s)" % (a["x"], a["y"])
 
 
@@ -692,8 +736,11 @@ def scroll(a, ctx):
     _failsafe()
     if a.get("x") is not None and a.get("y") is not None:
         x, y = _real(ctx, a["x"], a["y"])
-        user32.SetCursorPos(x, y)
-    _mouse(0x800, int(a["amount"]) * 120)
+        _set_cursor(x, y)
+    if osys.WIN:
+        _mouse(0x800, int(a["amount"]) * 120)
+    else:
+        _px(PX.wheel, int(a["amount"]))
     time.sleep(0.3)
     return "Scroll %s" % a["amount"]
 
@@ -708,6 +755,10 @@ def _send_unicode(unit, up):
 def type_text(a, ctx):
     _failsafe()
     txt = str(a["text"])
+    if not osys.WIN:
+        _px(PX.type_text, txt, ctx.stop)
+        time.sleep(0.2)
+        return "Escrito %d caracteres" % len(txt)
     for ch in txt:
         if ctx.stop.is_set():
             break
@@ -739,11 +790,17 @@ def _key(vk, up):
     user32.keybd_event(vk, user32.MapVirtualKeyW(vk, 0), fl, 0)
 
 
-@tool("press_keys", "control", "Pulsa una tecla o combinación, ej. 'enter', 'ctrl+c', 'alt+tab', 'win', 'ctrl+shift+s'.", {"keys": S("Combinación separada por +")}, ["keys"])
+@tool("press_keys", "control", "Pulsa una tecla o combinación, ej. 'enter', 'ctrl+c', 'alt+tab', 'ctrl+shift+s'%s." %
+      (" ('cmd' es la tecla Comando: 'cmd+c' copia)" if osys.MAC else ", 'win'"), {"keys": S("Combinación separada por +")}, ["keys"])
 def press_keys(a, ctx):
     _failsafe()
+    parts = str(a["keys"]).lower().replace(" ", "").split("+")
+    if not osys.WIN:
+        _px(PX.press_combo, parts)
+        time.sleep(0.3)
+        return "Teclas: " + a["keys"]
     codes = []
-    for part in str(a["keys"]).lower().replace(" ", "").split("+"):
+    for part in parts:
         if part in VK:
             codes.append(VK[part])
         elif len(part) == 1:
@@ -759,6 +816,8 @@ def press_keys(a, ctx):
 
 
 def _windows():
+    if not osys.WIN:
+        return _px(PX.windows)
     res = []
     cb_t = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
@@ -784,6 +843,10 @@ def focus_window(a, ctx):
     q = str(a["title"]).lower()
     for hwnd, t in _windows():
         if q in t.lower():
+            if not osys.WIN:
+                _px(PX.focus, hwnd, t)
+                time.sleep(0.4)
+                return "Foco en: " + t
             user32.ShowWindow(hwnd, 9)
             _key(0x12, False), _key(0x12, True)
             user32.SetForegroundWindow(hwnd)

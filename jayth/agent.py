@@ -4,6 +4,7 @@ import os, re, json, time, uuid, base64, socket, threading, datetime, http.clien
 from collections import Counter
 from . import tools as T
 from . import harness as H
+from . import osys
 
 MODES = {
     "readonly": "Solo lectura: no puede escribir, ejecutar ni usar la red.",
@@ -13,8 +14,8 @@ MODES = {
     "auto": "Automático: hace todo sin preguntar (salvo acciones peligrosas).",
 }
 
-WORKFLOW = """Eres Jayth, un agente que trabaja en el ordenador del usuario (Windows, PowerShell) con herramientas reales. Hoy es %s.
-Carpeta de trabajo: %s
+WORKFLOW = """Eres Jayth, un agente que trabaja en el ordenador del usuario (%(os)s, terminal %(shell)s) con herramientas reales. Hoy es %(date)s.
+Carpeta de trabajo: %(ws)s
 
 Cómo trabajas:
 1. Entiende la petición. Si falta un dato importante o hay varias opciones razonables, pregunta con ask_user (con opciones) en lugar de suponer.
@@ -25,11 +26,11 @@ Cómo trabajas:
 6. Termina con un resumen breve: qué hiciste, dónde quedó y cómo comprobarlo.
 
 Herramientas:
-- run_command ejecuta PowerShell (Python está disponible como `python`). Para servidores o procesos largos usa background=true y revisa con command_output.
+- run_command ejecuta %(shell)s (Python está disponible como `%(python)s`). Para servidores o procesos largos usa background=true y revisa con command_output.
 - Documentos Word, Excel, PowerPoint y PDF: read_document. Imágenes del disco: view_image.
 - Programas con interfaz: screenshot -> click / type_text / press_keys -> screenshot para verificar. Las coordenadas son píxeles de la última captura.
 - Web (solo con internet): web_search, web_fetch y download_file.
-- remember: guarda una preferencia duradera cuando el usuario te la diga (p. ej. "usa pnpm", "mis proyectos están en D:\\Trabajo").
+- remember: guarda una preferencia duradera cuando el usuario te la diga (p. ej. "usa pnpm", "mis proyectos están en %(example)s").
 - Si el usuario deniega una acción, no insistas: propón otra vía.
 Responde en el idioma del usuario, claro y sin relleno."""
 
@@ -45,7 +46,8 @@ class LLMError(Exception):
 
 def system_prompt(cfg):
     """Instrucciones del sistema. Se calculan una vez por tarea para que la cache del modelo se reutilice entre pasos."""
-    p = WORKFLOW % (datetime.date.today().isoformat(), cfg["workspace"])
+    p = WORKFLOW % {"os": osys.os_label(), "shell": osys.shell_name(), "date": datetime.date.today().isoformat(), "ws": cfg["workspace"],
+                    "python": "python" if osys.WIN else "python3", "example": "D:\\Trabajo" if osys.WIN else "~/Trabajo"}
     lang = {"es": "español", "en": "inglés", "pt": "portugués", "fr": "francés", "de": "alemán", "it": "italiano"}.get(cfg.get("response_language"))
     if lang:
         p += "\nResponde siempre en %s." % lang

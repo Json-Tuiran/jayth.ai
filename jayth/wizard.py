@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QGrid
                                QButtonGroup, QStackedWidget, QComboBox, QLineEdit, QTableWidget, QTableWidgetItem, QAbstractItemView,
                                QHeaderView, QCheckBox, QSpinBox, QDoubleSpinBox, QFileDialog, QProgressBar, QMessageBox, QPlainTextEdit,
                                QTabWidget, QScrollArea, QFrame)
-from . import core, paths, hardware as HW, provision as P, agent as A
+from . import core, paths, osys, hardware as HW, provision as P, agent as A
 from .theme import C, restyle, icon
 from PySide6.QtCore import QSize
 
@@ -86,7 +86,10 @@ def browse_row(edit, folder=False, filt="Modelos GGUF (*.gguf);;Todos (*.*)", pa
 
 FIT_TXT = {"ok": "✓ cabe", "tight": "⚠ muy justo", "no": "✗ no cabe"}
 FIT_COL = {"ok": C["ok"], "tight": C["warn"], "no": C["bad"]}
-BACKENDS = [("cpu", "Solo CPU (funciona en cualquier PC)"), ("cuda", "GPU NVIDIA (CUDA)"), ("vulkan", "GPU AMD / Intel Arc (Vulkan)")]
+_BACKEND_NAMES = {"cpu": "Solo CPU (funciona en cualquier equipo)", "cuda": "GPU NVIDIA (CUDA)", "vulkan": "GPU AMD / Intel Arc (Vulkan)",
+                  "metal": "GPU de Apple (Metal)"}
+BACKENDS = [(k, _BACKEND_NAMES[k]) for k in ("metal", "cuda", "vulkan", "cpu") if k in P.LLAMA_PATTERNS]
+SERVER_EXE = osys.exe("llama-server")
 
 
 # ---------------------------------------------------------------- asistente
@@ -240,11 +243,11 @@ class SetupWizard(QDialog):
         f.addRow("Usar:", self.backend)
         self.eng_state = lbl("", "muted")
         f.addRow("", self.eng_state)
-        self.chk_own = QCheckBox("Usar un llama-server.exe que ya tengo")
+        self.chk_own = QCheckBox("Usar un %s que ya tengo" % SERVER_EXE)
         self.own_exe = QLineEdit(self.cfg["llama_exe"])
         f.addRow(self.chk_own)
         own_row = QWidget()
-        own_row.setLayout(browse_row(self.own_exe, filt="llama-server.exe (llama-server.exe)", parent=self))
+        own_row.setLayout(browse_row(self.own_exe, filt=("%s (%s)" % (SERVER_EXE, SERVER_EXE)) if osys.WIN else "", parent=self))
         own_row.layout().setContentsMargins(0, 0, 0, 0)
         own_row.setEnabled(False)
         self.chk_own.toggled.connect(own_row.setEnabled)
@@ -455,7 +458,7 @@ class SetupWizard(QDialog):
 
     def _eng_state(self):
         if self.chk_own.isChecked():
-            self.eng_state.setText("Se usará tu llama-server.exe.")
+            self.eng_state.setText("Se usará tu %s." % SERVER_EXE)
         elif self._llama_ok():
             self.eng_state.setText("✓ Ya instalado (%s). No hace falta descargarlo." % (self.cfg["llama_tag"] or "versión local"))
         else:
@@ -465,7 +468,7 @@ class SetupWizard(QDialog):
     def _install(self):
         backend = self.backend.currentData()
         if self.chk_own.isChecked() and not os.path.isfile(self.own_exe.text()):
-            return QMessageBox.warning(self, "Archivo no encontrado", "Elige un llama-server.exe existente.")
+            return QMessageBox.warning(self, "Archivo no encontrado", "Elige un %s existente." % SERVER_EXE)
         job = P.Job()
         if self.chk_own.isChecked():
             exe = self.own_exe.text()
@@ -509,10 +512,10 @@ class SetupWizard(QDialog):
             P.download(a["url"], z, a["size"], a["sha256"], lambda d, t, ph, b=base: pr(b + d, total, ph), st)
             base += a["size"]
             pr(base, total, "descomprimiendo")
-            P.extract_zip(z, target)
+            P.extract_archive(z, target)
         exe = P.find_server(target)
         if not exe:
-            raise RuntimeError("El paquete de llama.cpp no contiene llama-server.exe")
+            raise RuntimeError("El paquete de llama.cpp no contiene %s" % SERVER_EXE)
         res.update(llama_exe=exe, llama_tag=rel["tag"])
         try:
             shutil.rmtree(dl)
@@ -667,7 +670,7 @@ class ModelsDialog(QDialog):
         m = self._sel()
         p = os.path.dirname(m["path"]) if m else core.SET.snapshot()["models_dir"]
         if os.path.isdir(p):
-            os.startfile(p)
+            osys.open_path(p)
 
     def remove(self, delete_files):
         m = self._sel()

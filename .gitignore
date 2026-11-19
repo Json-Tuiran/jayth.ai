@@ -6,3 +6,8 @@ userdata/
 portable.txt
 # descargas a medias
 *.part
+# empaquetado
+build/
+dist/
+*.AppImage
+*.dmg

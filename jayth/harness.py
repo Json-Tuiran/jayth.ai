@@ -1,9 +1,9 @@
 """Infraestructura del arnés del agente: contexto del proyecto, memoria, reparación de JSON, ajustes de muestreo por
 familia de modelo, puntos de restauración (deshacer), procesos en segundo plano, lectura de documentos y cliente MCP."""
-import os, re, json, time, uuid, shutil, zipfile, threading, subprocess, html
-from . import paths
+import os, re, json, time, uuid, shlex, shutil, zipfile, threading, subprocess, html
+from . import paths, osys
 
-NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+NO_WINDOW = osys.NO_WINDOW
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".next", ".idea", ".vscode", "target", ".mypy_cache"}
 
 # ---------------------------------------------------------------- contexto del proyecto
@@ -192,11 +192,10 @@ BG = {}
 
 
 def bg_start(command, cwd):
-    import base64
+    from .tools import cmd_env
     pid = "bg_" + uuid.uuid4().hex[:6]
-    enc = base64.b64encode(("[Console]::OutputEncoding=[Text.Encoding]::UTF8;$ProgressPreference='SilentlyContinue';" + command).encode("utf-16-le")).decode()
-    p = subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc], cwd=cwd,
-                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+    p = subprocess.Popen(osys.shell_argv(command), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         env=cmd_env(), **osys.popen_kwargs())
     rec = {"proc": p, "cmd": command, "lines": [], "started": time.time()}
 
     def reader():
@@ -221,7 +220,7 @@ def bg_stop(pid):
     if not r:
         return False
     if r["proc"].poll() is None:
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(r["proc"].pid)], capture_output=True, creationflags=NO_WINDOW)
+        osys.kill_tree(r["proc"].pid)
     return True
 
 
@@ -288,9 +287,11 @@ class MCPServer:
     def start(self, timeout=25):
         env = dict(os.environ, **self.env)
         cmd = [self.command] + self.args
-        if os.name == "nt" and not os.path.splitext(self.command)[1]:
+        if osys.WIN and not os.path.splitext(self.command)[1]:
             cmd = ["cmd", "/c"] + cmd               # npx, uvx… son .cmd en Windows
-        self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, creationflags=NO_WINDOW)
+        elif not osys.WIN and not shutil.which(self.command) and not os.path.isabs(self.command):
+            cmd = osys.shell_argv(" ".join(shlex.quote(c) for c in cmd))   # npx/uvx instalados con nvm/brew: PATH de la shell de login
+        self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, **osys.popen_kwargs())
         threading.Thread(target=self._reader, daemon=True).start()
         self.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "Jayth", "version": "0.1"}}, timeout)
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
@@ -342,7 +343,7 @@ class MCPServer:
 
     def stop(self):
         if self.proc and self.proc.poll() is None:
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(self.proc.pid)], capture_output=True, creationflags=NO_WINDOW)
+            osys.kill_tree(self.proc.pid)
 
 
 MCP = {}            # nombre -> MCPServer en marcha
