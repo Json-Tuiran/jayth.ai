@@ -1,0 +1,2 @@
+# Unica dependencia: la ventana de escritorio (Qt). El resto usa la biblioteca estandar de Python.
+PySide6-Essentials>=6.6
