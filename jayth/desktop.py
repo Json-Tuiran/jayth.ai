@@ -278,10 +278,24 @@ STEP = {  # herramienta: (infinitivo, pasado, objeto)
     "press_keys": ("pulsar", "Pulsó", lambda a: str(a.get("keys", ""))),
     "list_windows": ("listar las ventanas", "Listó las ventanas", lambda a: ""),
     "focus_window": ("activar la ventana", "Activó la ventana", lambda a: "«%s»" % _q(a.get("title"), 40)),
+    "multi_edit": ("editar", "Editó", lambda a: "%s (%d cambios)" % (_b(a.get("path")), len(a.get("edits") or []))),
+    "move_path": ("mover", "Movió", lambda a: "%s → %s" % (_b(a.get("source")), _b(a.get("dest")))),
+    "delete_path": ("enviar a la papelera", "Envió a la papelera", lambda a: _b(a.get("path"))),
+    "command_output": ("revisar la salida de", "Revisó la salida de", lambda a: str(a.get("id"))),
+    "stop_command": ("detener", "Detuvo", lambda a: str(a.get("id"))),
+    "read_document": ("leer el documento", "Leyó el documento", lambda a: _b(a.get("path"))),
+    "view_image": ("ver la imagen", "Vio la imagen", lambda a: _b(a.get("path"))),
+    "remember": ("recordar", "Recordó", lambda a: "«%s»" % _q(a.get("fact"), 50)),
 }
 
 
 def describe(name, args, phase):
+    if name.startswith("mcp__"):           # herramienta de un conector MCP: «Usó servidor › herramienta»
+        parts = name.split("__")
+        srv, tool = (parts[1].replace("_", " "), parts[2].replace("_", " ")) if len(parts) > 2 else (name, "")
+        return {"pending": "Quiere usar %s › %s" % (srv, tool), "run": "Usando %s › %s…" % (srv, tool)}.get(phase, "Usó %s › %s" % (srv, tool))
+    if name == "run_command" and (args or {}).get("background") and phase != "pending":
+        return ("Inició en segundo plano %s" if phase != "run" else "Iniciando en segundo plano %s…") % _q((args or {}).get("command", ""))
     inf, past, obj = STEP.get(name, (name, name, lambda a: ""))
     try:
         o = obj(args or {})
@@ -299,6 +313,9 @@ def diff_badge(name, a):
         return "+%d" % (str(a.get("content", "")).count("\n") + 1), ""
     if name == "edit_file":
         return "+%d" % (str(a.get("new", "")).count("\n") + 1), "−%d" % (str(a.get("old", "")).count("\n") + 1)
+    if name == "multi_edit":
+        e = [x for x in (a.get("edits") or []) if isinstance(x, dict)]
+        return "+%d" % sum(str(x.get("new", "")).count("\n") + 1 for x in e), "−%d" % sum(str(x.get("old", "")).count("\n") + 1 for x in e)
     return "", ""
 
 
@@ -332,9 +349,12 @@ class StepRow(QWidget):
                 h.addWidget(l)
         if ev.get("danger"):
             h.addWidget(pix_label("est_aviso", C["warn"], 14))
-        tn = QLabel(ev["name"])
+        tn = QLabel(ev["name"] if not ev["name"].startswith("mcp__") else "MCP")
         tn.setObjectName("faint")
         h.addWidget(tn)
+        self.b_undo = tbtn("acc_refrescar", "Deshacer este cambio (restaura los archivos)", size=13)
+        self.b_undo.hide()
+        h.addWidget(self.b_undo)
         self.chev = QLabel("›")
         self.chev.setStyleSheet("color:%s; font-size:12pt" % C["faint"])
         h.addWidget(self.chev)
@@ -428,6 +448,11 @@ class StepRow(QWidget):
         self.details.hide()
         self._set("run" if decision in ("allow", "allow_category") else "denied")
 
+    def undone(self):
+        self.b_undo.hide()
+        self.title.setText(self.title.text() + "  · deshecho")
+        self.title.setStyleSheet("color:%s; text-decoration: line-through" % C["faint"])
+
     def result(self, ok, text, image):
         self._set("ok" if ok else "err")
         if text:
@@ -505,9 +530,15 @@ class AssistantBlock(QWidget):
         self.b_copy = tbtn("acc_copiar", "Copiar respuesta", self.copy, size=15)
         self.b_regen = tbtn("acc_refrescar", "Regenerar respuesta", size=15)
         self.b_report = tbtn("est_aviso", "Informar de un problema con esta respuesta", self.report, size=15)
+        self.b_undo_all = QPushButton("Deshacer cambios")
+        self.b_undo_all.setProperty("kind", "flat")
+        self.b_undo_all.setIcon(icon("acc_refrescar", C["mut"], 13))
+        self.b_undo_all.setToolTip("Restaura todos los archivos que el agente cambió en esta respuesta")
+        self.b_undo_all.hide()
         ah.addWidget(self.b_copy)
         ah.addWidget(self.b_regen)
         ah.addWidget(self.b_report)
+        ah.addWidget(self.b_undo_all)
         ah.addStretch(1)
         self.stats = QLabel()
         self.stats.setObjectName("stats")
@@ -578,11 +609,132 @@ def user_bubble(ev, compact=False):
     v.setContentsMargins(14, 9, 14, 9)
     for n in ev.get("images") or []:
         v.addWidget(ImageLabel(os.path.join(paths.IMG_DIR, n), 240, 160))
+    for fname in ev.get("files") or []:
+        fl = QHBoxLayout()
+        fl.addWidget(pix_label("acc_nuevo", C["acc"], 14))
+        fl.addWidget(lbl(fname, "muted"), 1)
+        v.addLayout(fl)
     t = lbl(ev["text"])
     t.setStyleSheet("font-size:10.5pt")
     v.addWidget(t)
     h.addWidget(box)
     return wrap
+
+
+class PlanPanel(QFrame):
+    """Lista de tareas que mantiene el agente (update_plan), fija sobre el cuadro de mensaje."""
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("planBox")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(12, 8, 12, 8)
+        v.setSpacing(4)
+        head = Clickable()
+        head.setCursor(Qt.PointingHandCursor)
+        hh = QHBoxLayout(head)
+        hh.setContentsMargins(0, 0, 0, 0)
+        hh.addWidget(pix_label("ui_check", C["acc"], 14))
+        self.title = QLabel()
+        self.title.setStyleSheet("font-weight:600")
+        hh.addWidget(self.title, 1)
+        self.chev = QLabel("⌄")
+        self.chev.setStyleSheet("color:%s" % C["faint"])
+        hh.addWidget(self.chev)
+        head.clicked.connect(self.toggle)
+        v.addWidget(head)
+        self.body = QWidget()
+        self.bl = QVBoxLayout(self.body)
+        self.bl.setContentsMargins(22, 2, 0, 2)
+        self.bl.setSpacing(3)
+        v.addWidget(self.body)
+        self.hide()
+
+    def toggle(self):
+        self.body.setVisible(not self.body.isVisible())
+        self.chev.setText("⌄" if self.body.isVisible() else "›")
+
+    def set_items(self, items, live=True):
+        while self.bl.count():
+            it = self.bl.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        if not items:
+            return self.hide()
+        done = sum(1 for i in items if i.get("status") == "completed")
+        self.title.setText("Plan · %d de %d" % (done, len(items)))
+        for i in items:
+            st = i.get("status", "pending")
+            row = QWidget()
+            r = QHBoxLayout(row)
+            r.setContentsMargins(0, 0, 0, 0)
+            if st == "in_progress":
+                sp = Spinner(size=12)
+                if live:
+                    sp.start()
+                r.addWidget(sp)
+            else:
+                r.addWidget(pix_label("ui_check", C["ok"], 12) if st == "completed" else QLabel("○"))
+            t = lbl(i.get("content", ""))
+            t.setStyleSheet("color:%s;%s" % (C["faint"] if st == "completed" else C["tx"], " text-decoration: line-through;" if st == "completed" else
+                                              " font-weight:600;" if st == "in_progress" else ""))
+            r.addWidget(t, 1)
+            self.bl.addWidget(row)
+        self.show()
+        self.body.setVisible(done < len(items))
+        self.chev.setText("⌄" if self.body.isVisible() else "›")
+
+
+class QuestionCard(QFrame):
+    """El agente pregunta (ask_user): opciones como botones y respuesta libre."""
+
+    def __init__(self, ev, on_answer, live=True):
+        super().__init__()
+        self.setObjectName("stepsBox")
+        self.setProperty("pending", live)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(14, 12, 14, 12)
+        v.setSpacing(8)
+        hh = QHBoxLayout()
+        hh.addWidget(pix_label("ui_ayuda", C["acc"], 16), 0, Qt.AlignTop)
+        q = lbl(ev["question"])
+        q.setStyleSheet("font-weight:600; font-size:10.5pt")
+        hh.addWidget(q, 1)
+        v.addLayout(hh)
+        self.inputs = QWidget()
+        il = QVBoxLayout(self.inputs)
+        il.setContentsMargins(24, 0, 0, 0)
+        row = QHBoxLayout()
+        for o in ev.get("options") or []:
+            b = btn(o)
+            b.clicked.connect(lambda _=False, o=o: self._send(o, on_answer))
+            row.addWidget(b)
+        row.addStretch(1)
+        il.addLayout(row)
+        r2 = QHBoxLayout()
+        self.free = QLineEdit()
+        self.free.setPlaceholderText("Otra respuesta…")
+        self.free.returnPressed.connect(lambda: self.free.text().strip() and self._send(self.free.text().strip(), on_answer))
+        r2.addWidget(self.free, 1)
+        r2.addWidget(btn("Responder", "primary", lambda: self.free.text().strip() and self._send(self.free.text().strip(), on_answer)))
+        il.addLayout(r2)
+        v.addWidget(self.inputs)
+        self.answer_lbl = lbl("", "muted")
+        self.answer_lbl.hide()
+        v.addWidget(self.answer_lbl)
+        self.inputs.setVisible(live)
+        self.id = ev["id"]
+
+    def _send(self, text, cb):
+        self.inputs.setEnabled(False)
+        cb(self.id, text)
+
+    def answered(self, text):
+        self.inputs.hide()
+        self.setProperty("pending", False)
+        restyle(self)
+        self.answer_lbl.setText(("Tu respuesta: " + text) if text else "Sin respuesta")
+        self.answer_lbl.show()
 
 
 CHAT_SUGGESTIONS = [("acc_examinar", "Ordena mi carpeta de Descargas por tipo de archivo"),
@@ -748,6 +900,8 @@ class ChatPanel(QWidget):
         self.ban_btn = btn("Encender modelo", "primary", self.main.toggle_llm)
         bl.addWidget(self.ban_btn)
         iv.addWidget(self.banner)
+        self.plan_panel = PlanPanel()
+        iv.addWidget(self.plan_panel)
         self.box = QFrame()
         self.box.setObjectName("composerBox")
         bv = QVBoxLayout(self.box)
@@ -768,9 +922,11 @@ class ChatPanel(QWidget):
         plus.setFixedSize(28, 28)
         plus.setPopupMode(QToolButton.InstantPopup)
         pm = QMenu(self)
+        pm.addAction(icon("acc_nuevo"), "Adjuntar archivos o documentos…", self.attach_files)
         pm.addAction(icon("uij_imagen"), "Adjuntar imagen…", self.attach)
         pm.addAction(icon("vista_captura"), "Adjuntar captura de pantalla", self.attach_screenshot)
         plus.setMenu(pm)
+        plus.setToolTip("Adjuntar archivos, documentos, imágenes o una captura")
         row.addWidget(plus)
         self.mode_chip = QToolButton()
         self.mode_chip.setObjectName("chip")
@@ -856,11 +1012,14 @@ class ChatPanel(QWidget):
         self.waiting = 0
         self.busy = False
         self.stick = True
+        self.questions = {}
+        self.turn_undo = False
         self.clear()
         s = self.session()
         self.empty = None
         if not s or not s.events:
             self.empty = self.add(self._empty_state())
+        self.plan_panel.set_items((s.data.get("plan") if s else None) or [], live=False)
         self.sync()
         self.changed.emit()
 
@@ -935,7 +1094,10 @@ class ChatPanel(QWidget):
                     s += " · %.1f tok/s" % ev["tps"]
                 if ev.get("finish") == "length":
                     s += " · cortado por límite"
+                if ev.get("ctx_used") and ev.get("ctx_max"):
+                    s += " · contexto %.1fk de %dk" % (ev["ctx_used"] / 1000.0, ev["ctx_max"] // 1000)
                 self.cur.stats.setText(s)
+                self.cur.stats.setToolTip("Memoria de la conversación usada por el modelo. Al acercarse al límite, Jayth resume lo antiguo.")
         elif t == "assistant_end":
             if self.cur is None and ev["text"]:
                 self.cur = self.add(AssistantBlock(ev["ts"]))
@@ -949,6 +1111,39 @@ class ChatPanel(QWidget):
                     self.cur.b_regen.clicked.connect(self.regenerate)
                     self.steps = None
                 self.cur = None
+        elif t == "tool_call" and ev["name"] == "update_plan":
+            pass                                        # se muestra en el panel del plan (evento «plan»)
+        elif t == "plan":
+            self.plan_panel.set_items(ev.get("items") or [], live=getattr(self, "_live", False))
+        elif t == "question":
+            card = QuestionCard(ev, self.answer, live=getattr(self, "_live", False) or self.busy)
+            self.questions[ev["id"]] = card
+            self.add(card)
+            self.steps = None
+            if card.inputs.isVisible():
+                self.waiting += 1
+                self.sync()
+                self.main.notify_pending("tiene una pregunta: " + ev["question"], ev["ts"])
+        elif t == "answer":
+            q = self.questions.get(ev["id"])
+            if q:
+                if q.inputs.isVisible():
+                    self.waiting = max(0, self.waiting - 1)
+                q.answered(ev.get("text", ""))
+                self.sync()
+        elif t == "undo":
+            for cid in ev.get("ids") or []:
+                if cid in self.rows:
+                    self.rows[cid].undone()
+            self.add(note("Cambios deshechos: %s" % ", ".join(os.path.basename(f) for f in ev.get("files") or [])))
+            self.steps = None
+        elif t == "compacted":
+            self.add(note("Resumí la parte antigua de la conversación para que el modelo no la olvide ni se quede sin memoria."))
+            self.steps = None
+        elif t == "plan_ready":
+            if getattr(self, "_live", False):
+                self.add(self._plan_ready_card())
+                self.steps = None
         elif t == "tool_call":
             row = StepRow(ev, self.decide)
             self.rows[ev["id"]] = row
@@ -972,7 +1167,15 @@ class ChatPanel(QWidget):
             r = self.rows.get(ev["id"])
             if r:
                 r.result(ev["ok"], ev.get("text") or "", ev.get("image"))
-                if ev["ok"] and r.ev["name"] in ("write_file", "edit_file") and ev["ts"] > time.time() - 10:
+                if ev.get("undo") and ev["ok"]:
+                    from . import harness
+                    if harness.has_snapshot(self.sid, ev["id"]):
+                        r.b_undo.show()
+                        if not getattr(r, "_undo_wired", False):
+                            r._undo_wired = True
+                            r.b_undo.clicked.connect(lambda _=False, cid=ev["id"]: self.undo(cid))
+                        self.turn_undo = True
+                if ev["ok"] and r.ev["name"] in ("write_file", "edit_file", "multi_edit") and ev["ts"] > time.time() - 10:
                     p = str((r.ev.get("args") or {}).get("path", ""))
                     if p:
                         self.file_written.emit(os.path.normpath(p if os.path.isabs(p) else os.path.join(self.workspace(), p)))
@@ -988,8 +1191,69 @@ class ChatPanel(QWidget):
             for b in self.blocks:
                 b.actions.show()
                 b.b_regen.hide()
+                b.b_undo_all.hide()
             if self.blocks:
                 self.blocks[-1].b_regen.show()      # solo la ultima respuesta se puede regenerar
+                if self.turn_undo:
+                    last = self.blocks[-1]
+                    last.b_undo_all.show()
+                    if not getattr(last, "_undo_wired", False):
+                        last._undo_wired = True
+                        last.b_undo_all.clicked.connect(self.undo_turn)
+            self.turn_undo = False
+            for q in self.questions.values():
+                if q.inputs.isVisible():
+                    q.answered("")
+
+    # ---- plan, preguntas y deshacer
+    def _plan_ready_card(self):
+        f = QFrame()
+        f.setObjectName("noteBox")
+        h = QHBoxLayout(f)
+        h.setContentsMargins(14, 10, 10, 10)
+        h.addWidget(pix_label("ui_check", C["acc"], 16))
+        h.addWidget(lbl("Plan listo. Revísalo y, si te convence, ejecútalo."), 1)
+        h.addWidget(btn("Seguir ajustando", cb=lambda: self.input.setFocus()))
+        h.addWidget(btn("Ejecutar el plan", "primary", lambda: self.execute_plan(f), "hub_lanzar"))
+        return f
+
+    def execute_plan(self, card=None):
+        if self.busy or not self.session():
+            return
+        mode = getattr(self, "exec_mode", "ask")
+        core.SET.update({"mode": mode})
+        self.main.sync()
+        if card is not None:
+            card.hide()
+        self.session().send("Adelante: ejecuta el plan aprobado paso a paso, actualizando la lista de tareas.")
+        self.busy = True
+        self.sync()
+
+    def answer(self, cid, text):
+        s = self.session()
+        if s:
+            s.answer(cid, text)
+
+    def undo(self, cid):
+        s = self.session()
+        if s and s.run is None:
+            files = s.undo(cid)
+            if files:
+                self.main.toast("Restaurado: %s" % ", ".join(os.path.basename(f) for f in files), icon_name="acc_refrescar", color=C["ok"])
+                for f in files:
+                    self.file_written.emit(f)
+        elif s:
+            self.main.toast("Espera a que el agente termine para deshacer.", icon_name="est_aviso", color=C["warn"])
+
+    def undo_turn(self):
+        s = self.session()
+        if not s or s.run is not None:
+            return
+        files = s.undo_turn()
+        if files:
+            self.main.toast("Deshechos %d cambios de archivos." % len(files), icon_name="acc_refrescar", color=C["ok"])
+            for f in files:
+                self.file_written.emit(f)
 
     def _stale(self):
         for r in self.rows.values():
@@ -1014,17 +1278,19 @@ class ChatPanel(QWidget):
 
     def send(self):
         text = self.input.toPlainText().strip()
-        if self.busy or (not text and not self.pending_imgs):
+        files = list(getattr(self, "pending_files", []))
+        if self.busy or (not text and not self.pending_imgs and not files):
             return
         if not core.SET.ready():
             return self.main.setup()
         if not self.session():
             self.open_session(core.new_session(self.project_id).id)
-        err = self.session().send(text, list(self.pending_imgs))
+        err = self.session().send(text, list(self.pending_imgs), files)
         if err:
             return QMessageBox.information(self, APP_NAME, err)
         self.input.clear()
         self.pending_imgs = []
+        self.pending_files = []
         self._render_thumbs()
         self.busy = True
         self.stick = True
@@ -1052,6 +1318,17 @@ class ChatPanel(QWidget):
         files, _ = QFileDialog.getOpenFileNames(self, "Adjuntar imágenes", os.path.expanduser("~"), "Imágenes (*.png *.jpg *.jpeg *.webp *.gif)")
         for f in files:
             self._add_image(src=f)
+
+    def attach_files(self):
+        """Documentos y archivos de texto o código: su contenido se incluye en el mensaje."""
+        files, _ = QFileDialog.getOpenFileNames(self, "Adjuntar archivos", self.workspace(),
+                                                "Documentos y texto (*.txt *.md *.py *.js *.ts *.json *.csv *.html *.css *.xml *.yml *.yaml *.log "
+                                                "*.docx *.xlsx *.pptx *.pdf *.ps1 *.bat *.ini *.toml *.sql *.c *.cpp *.h *.cs *.java *.go *.rs);;Todos (*.*)")
+        imgs = [f for f in files if os.path.splitext(f)[1].lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif")]
+        for f in imgs:
+            self._add_image(src=f)
+        self.pending_files = list(getattr(self, "pending_files", [])) + [os.path.normpath(f) for f in files if f not in imgs]
+        self._render_thumbs()
 
     def attach_screenshot(self):
         win = self.window()
@@ -1082,10 +1359,21 @@ class ChatPanel(QWidget):
             h.addWidget(im)
             h.addWidget(tbtn("ui_cerrar", "Quitar", lambda _=False, n=n: (self.pending_imgs.remove(n), self._render_thumbs()), size=12), 0, Qt.AlignTop)
             self.thumbs.insertWidget(self.thumbs.count() - 1, w)
+        for f in getattr(self, "pending_files", []):
+            w = QFrame()
+            w.setObjectName("noteBox")
+            h = QHBoxLayout(w)
+            h.setContentsMargins(8, 4, 2, 4)
+            h.setSpacing(4)
+            h.addWidget(pix_label("acc_nuevo", C["acc"], 13))
+            h.addWidget(QLabel(os.path.basename(f)))
+            h.addWidget(tbtn("ui_cerrar", "Quitar", lambda _=False, f=f: (self.pending_files.remove(f), self._render_thumbs()), size=11))
+            w.setToolTip(f)
+            self.thumbs.insertWidget(self.thumbs.count() - 1, w)
         self._sync_send()
 
     def _sync_send(self):
-        has = bool(self.input.toPlainText().strip() or self.pending_imgs)
+        has = bool(self.input.toPlainText().strip() or self.pending_imgs or getattr(self, "pending_files", []))
         self.send_btn.setEnabled(self.busy or has)
         self.send_btn.setIcon(icon("trans_detener" if self.busy else "lista_subir", C["on_send"] if (self.busy or has) else C["faint"], 14 if self.busy else 16))
         self.send_btn.setToolTip("Detener" if self.busy else "Enviar (Enter)")
@@ -1109,6 +1397,8 @@ class ChatPanel(QWidget):
             self.ban_btn.setVisible(not ext)
         self.mode_chip.setText(MODE_LABEL.get(cfg["mode"], cfg["mode"]))
         self.mode_chip.setToolTip(A.MODES.get(cfg["mode"], ""))
+        if cfg["mode"] not in ("plan", "readonly"):
+            self.exec_mode = cfg["mode"]          # al aprobar un plan se vuelve a este modo
         if cfg["mode"] in self.mode_actions:
             self.mode_actions[cfg["mode"]].setChecked(True)
         self.think_chip.blockSignals(True)
@@ -1272,6 +1562,22 @@ class Main(QMainWindow):
         QTimer.singleShot(9000, self.check_news)                                   # novedades al poco de abrir…
         self.news_t = QTimer(self, interval=6 * 3600 * 1000, timeout=self.check_news)   # …y cada 6 horas
         self.news_t.start()
+        QTimer.singleShot(1500, self.sync_mcp)
+
+    def sync_mcp(self):
+        """Arranca los conectores MCP configurados (en segundo plano) y avisa si alguno falla."""
+        from . import harness
+        servers = core.SET.snapshot().get("mcp_servers") or []
+        if not servers and not harness.MCP:
+            return
+
+        def done(st):
+            if isinstance(st, Exception):
+                return
+            bad = {n: e for n, e in st.items() if e}
+            if bad:
+                self.toast("No se pudo conectar: %s" % "; ".join("%s (%s)" % (n, e[:80]) for n, e in bad.items()), icon_name="est_aviso", color=C["warn"])
+        run_bg(lambda: harness.mcp_sync(servers), done)
         QShortcut(QKeySequence("Ctrl+N"), self, activated=self.new_conversation)
         QShortcut(QKeySequence("Ctrl+K"), self, activated=self.focus_search)
         QShortcut(QKeySequence("Ctrl+Shift+S"), self, activated=self.toggle_sidebar)

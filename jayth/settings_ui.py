@@ -283,6 +283,27 @@ class SettingsDialog(QDialog):
         self.field(v, "response_language", "Idioma de las respuestas", "choice", choices=LANGS)
         self.field(v, "custom_instructions", "Instrucciones adicionales para el agente", "area",
                    placeholder="Ej.: Antes de borrar o mover archivos, explícame qué vas a hacer.")
+        self._section(v, "Memoria")
+        v.addWidget(lbl("Lo que %s recuerda de ti entre conversaciones (lo guarda cuando le dices algo duradero, como «uso pnpm»). "
+                        "Puedes editarlo o borrarlo." % APP_NAME, "faint"))
+        from . import harness
+        self.mem = QPlainTextEdit(harness.memory_text(20000))
+        self.mem.setPlaceholderText("- Prefiero respuestas cortas\n- Mis proyectos están en D:\\Trabajo")
+        self.mem.setFixedHeight(120)
+        self.mem.textChanged.connect(lambda: self._debounced("__memory__", lambda: self._save_memory(self.mem.toPlainText())))
+        v.addWidget(self.mem)
+        r = QHBoxLayout()
+        r.addWidget(btn("Borrar la memoria", "danger", lambda: self.mem.setPlainText("")))
+        r.addStretch(1)
+        v.addLayout(r)
+        v.addWidget(lbl("En los proyectos, %s también lee AGENTS.md, JAYTH.md o CLAUDE.md de la carpeta: escribe ahí las normas del proyecto." % APP_NAME, "faint"))
+
+    def _save_memory(self, text):
+        from . import harness
+        os.makedirs(os.path.dirname(harness.MEMORY), exist_ok=True)
+        with open(harness.MEMORY, "w", encoding="utf-8") as f:
+            f.write(text.strip() + ("\n" if text.strip() else ""))
+        return None
 
     def p_models(self, v):
         cfg = core.SET.snapshot()
@@ -327,6 +348,9 @@ class SettingsDialog(QDialog):
 
     def p_generation(self, v):
         self.field(v, "thinking", "Pensar a fondo por defecto (mejores respuestas, más lento)", "bool")
+        self.field(v, "sampling", "Parámetros de muestreo", "choice",
+                   choices=[("Recomendados para el modelo activo (automático)", "auto"), ("Personalizados (los de abajo)", "custom")],
+                   help="Automático usa los valores que publica cada laboratorio (Qwen, Gemma, Llama, Mistral, DeepSeek…) según si piensa o no.")
         self.field(v, "temperature", "Temperatura", "float", min=0, max=2, help="Más alta = más creativa y variada; más baja = más precisa y estable.")
         self.field(v, "max_tokens", "Longitud máxima de cada respuesta (tokens)", "int", min=64, max=65536)
         self._section(v, "Muestreo avanzado")
@@ -429,6 +453,86 @@ class SettingsDialog(QDialog):
                    choices=[("Automático (DuckDuckGo; si lo bloquea, Wikipedia)", "auto"), ("Brave Search (necesita clave)", "brave"), ("SearXNG (tu propio buscador)", "searxng")])
         self.field(v, "brave_key", "Clave de Brave Search", "secret", help="Gratis en api.search.brave.com para uso personal.")
         self.field(v, "searxng_url", "URL de SearXNG", "text", placeholder="http://127.0.0.1:8888")
+        self._section(v, "Conectores MCP")
+        v.addWidget(lbl("Amplían lo que puede hacer el agente con herramientas externas (GitHub, bases de datos, navegador, Notion…) mediante el "
+                        "estándar Model Context Protocol. Cada conector es un programa que se arranca en tu equipo.", "faint"))
+        self.mcp_box = QVBoxLayout()
+        v.addLayout(self.mcp_box)
+        self._mcp_render()
+        f = QFrame()
+        f.setObjectName("noteBox")
+        g = QGridLayout(f)
+        g.setContentsMargins(12, 10, 12, 10)
+        self.mcp_name = QLineEdit()
+        self.mcp_name.setPlaceholderText("Nombre (p. ej. Archivos)")
+        self.mcp_cmd = QLineEdit()
+        self.mcp_cmd.setPlaceholderText("Comando (p. ej. npx)")
+        self.mcp_args = QLineEdit()
+        self.mcp_args.setPlaceholderText("Argumentos (p. ej. -y @modelcontextprotocol/server-filesystem C:\\Users\\tú\\Documents)")
+        g.addWidget(QLabel("Añadir conector"), 0, 0, 1, 2)
+        g.addWidget(self.mcp_name, 1, 0)
+        g.addWidget(self.mcp_cmd, 1, 1)
+        g.addWidget(self.mcp_args, 2, 0, 1, 2)
+        self.mcp_res = lbl("", "faint")
+        g.addWidget(self.mcp_res, 3, 0)
+        g.addWidget(btn("Añadir y probar", "primary", self._mcp_add, "acc_anadir"), 3, 1, Qt.AlignRight)
+        v.addWidget(f)
+
+    def _mcp_render(self):
+        from . import harness
+        while self.mcp_box.count():
+            it = self.mcp_box.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        for s in core.SET.snapshot().get("mcp_servers") or []:
+            row = QFrame()
+            row.setObjectName("noteBox")
+            h = QHBoxLayout(row)
+            h.setContentsMargins(12, 6, 6, 6)
+            srv = harness.MCP.get(s["name"])
+            state = ("● %d herramientas" % len(srv.tools)) if srv else "○ sin conectar"
+            h.addWidget(lbl("<b>%s</b>  <span style='color:%s'>%s</span><br><span style='color:%s'>%s %s</span>" % (
+                s["name"], C["ok"] if srv else C["faint"], state, C["faint"], s["command"], " ".join(s.get("args") or []))), 1)
+            cb = QCheckBox("Activo")
+            cb.setChecked(s.get("enabled", True))
+            cb.toggled.connect(lambda on, n=s["name"]: self._mcp_update(n, enabled=on))
+            h.addWidget(cb)
+            h.addWidget(btn("Quitar", "danger", lambda _=False, n=s["name"]: self._mcp_update(n, remove=True)))
+            self.mcp_box.addWidget(row)
+
+    def _mcp_update(self, name, enabled=None, remove=False):
+        from . import harness
+        servers = [dict(s) for s in core.SET.snapshot().get("mcp_servers") or [] if not (remove and s["name"] == name)]
+        for s in servers:
+            if s["name"] == name and enabled is not None:
+                s["enabled"] = enabled
+        core.SET.update({"mcp_servers": servers})
+        run_bg(lambda: harness.mcp_sync(servers), lambda r: self._mcp_render())
+
+    def _mcp_add(self):
+        import shlex
+        from . import harness
+        name, cmd = self.mcp_name.text().strip(), self.mcp_cmd.text().strip()
+        if not name or not cmd:
+            return self.mcp_res.setText("Escribe un nombre y un comando.")
+        try:
+            args = shlex.split(self.mcp_args.text(), posix=False)
+        except ValueError:
+            args = self.mcp_args.text().split()
+        servers = [s for s in core.SET.snapshot().get("mcp_servers") or [] if s["name"] != name] + [{"name": name, "command": cmd, "args": args, "enabled": True}]
+        core.SET.update({"mcp_servers": servers})
+        self.mcp_res.setText("Conectando… (la primera vez npx/uvx pueden tardar en descargar el conector)")
+
+        def done(st):
+            if isinstance(st, Exception):
+                self.mcp_res.setText("✗ %s" % st)
+            elif st.get(name):
+                self.mcp_res.setText("✗ No se pudo conectar: %s" % st[name][:160])
+            else:
+                self.mcp_res.setText("✓ Conectado")
+                self.mcp_name.clear(), self.mcp_cmd.clear(), self.mcp_args.clear()
+            self._mcp_render()
+        run_bg(lambda: harness.mcp_sync(servers), done)
 
     def _toggle_tool(self, name, on):
         off = set(core.SET.snapshot()["tools_disabled"])

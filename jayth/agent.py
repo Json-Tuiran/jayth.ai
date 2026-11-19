@@ -1,56 +1,90 @@
-"""Bucle del agente: habla con llama-server (API OpenAI), ejecuta herramientas y pide aprobacion."""
+"""Bucle del agente (el «arnés»): habla con el modelo (API compatible con OpenAI), ejecuta herramientas con permisos,
+mantiene el contexto bajo control y aprovecha al máximo modelos locales pequeños y lentos."""
 import os, re, json, time, uuid, base64, socket, threading, datetime, http.client, urllib.parse
+from collections import Counter
 from . import tools as T
+from . import harness as H
 
 MODES = {
     "readonly": "Solo lectura: no puede escribir, ejecutar ni usar la red.",
+    "plan": "Planificar: investiga y propone un plan; no cambia nada hasta que lo apruebes.",
     "ask": "Preguntar: lee solo; todo lo demás pide tu aprobación.",
     "edits": "Editar archivos: escribe libremente; ejecutar, red y control piden aprobación.",
     "auto": "Automático: hace todo sin preguntar (salvo acciones peligrosas).",
 }
+
+WORKFLOW = """Eres Jayth, un agente que trabaja en el ordenador del usuario (Windows, PowerShell) con herramientas reales. Hoy es %s.
+Carpeta de trabajo: %s
+
+Cómo trabajas:
+1. Entiende la petición. Si falta un dato importante o hay varias opciones razonables, pregunta con ask_user (con opciones) en lugar de suponer.
+2. En tareas de varios pasos, crea una lista con update_plan y actualízala al avanzar (solo una tarea in_progress a la vez).
+3. Investiga antes de cambiar: list_dir, search_files y read_file. Nunca inventes rutas, contenidos ni resultados.
+4. Cambia con precisión: edit_file o multi_edit para modificar (copia el fragmento exacto de read_file); write_file solo para archivos nuevos o reescrituras completas.
+5. Verifica: ejecuta las pruebas, el script o el comando que corresponda y lee los errores. Si algo falla, analiza la causa antes de reintentar; no repitas una acción que ya falló.
+6. Termina con un resumen breve: qué hiciste, dónde quedó y cómo comprobarlo.
+
+Herramientas:
+- run_command ejecuta PowerShell (Python está disponible como `python`). Para servidores o procesos largos usa background=true y revisa con command_output.
+- Documentos Word, Excel, PowerPoint y PDF: read_document. Imágenes del disco: view_image.
+- Programas con interfaz: screenshot -> click / type_text / press_keys -> screenshot para verificar. Las coordenadas son píxeles de la última captura.
+- Web (solo con internet): web_search, web_fetch y download_file.
+- remember: guarda una preferencia duradera cuando el usuario te la diga (p. ej. "usa pnpm", "mis proyectos están en D:\\Trabajo").
+- Si el usuario deniega una acción, no insistas: propón otra vía.
+Responde en el idioma del usuario, claro y sin relleno."""
+
+PLAN_MODE = """
+
+MODO PLANIFICAR: no modifiques nada; solo investiga (lectura). Cuando entiendas la tarea, crea el plan con update_plan (todas las tareas pending)
+y explica en pocas líneas el enfoque, los archivos que tocarás y los riesgos. El usuario lo aprobará antes de ejecutarlo."""
 
 
 class LLMError(Exception):
     pass
 
 
-def system_prompt(settings):
-    p = """Eres un agente que trabaja en el ordenador local del usuario (Windows 11, PowerShell). Hoy es %s.
-Carpeta de trabajo: %s
-Reglas:
-- Usa las herramientas para actuar; nunca inventes resultados ni rutas. Da pasos cortos y comprueba cada resultado.
-- Lee un archivo antes de editarlo; para cambios pequeños usa edit_file.
-- run_command ejecuta PowerShell. Python está disponible como `python`.
-- Para programas con interfaz: screenshot -> actuar (click, type_text, press_keys) -> screenshot para verificar. Las coordenadas son píxeles de la última captura.
-- web_search y web_fetch solo funcionan con internet; si fallan, dilo y continúa sin ellos.
-- Si el usuario deniega una acción, no insistas: propón otra vía o pregunta.
-- Responde en el idioma del usuario, de forma breve. Al terminar, resume qué hiciste y dónde quedaron los archivos.""" % (
-        datetime.date.today().isoformat(), settings["workspace"])
-    lang = {"es": "español", "en": "inglés", "pt": "portugués", "fr": "francés", "de": "alemán", "it": "italiano"}.get(settings.get("response_language"))
+def system_prompt(cfg):
+    """Instrucciones del sistema. Se calculan una vez por tarea para que la cache del modelo se reutilice entre pasos."""
+    p = WORKFLOW % (datetime.date.today().isoformat(), cfg["workspace"])
+    lang = {"es": "español", "en": "inglés", "pt": "portugués", "fr": "francés", "de": "alemán", "it": "italiano"}.get(cfg.get("response_language"))
     if lang:
-        p += "\n- Responde siempre en %s." % lang
-    if not settings.get("web_access", True):
-        p += "\n- No tienes acceso a internet en esta sesión."
-    if settings.get("user_name"):
-        p += "\n\nEl usuario se llama %s." % settings["user_name"]
-    if settings.get("about_me"):
-        p += "\n\nLo que el usuario quiere que sepas de él:\n" + settings["about_me"]
-    if settings.get("response_style"):
-        p += "\n\nCómo quiere que respondas:\n" + settings["response_style"]
-    if settings.get("custom_instructions"):
-        p += "\n\nInstrucciones del usuario:\n" + settings["custom_instructions"]
+        p += "\nResponde siempre en %s." % lang
+    if not cfg.get("web_access", True):
+        p += "\nNo tienes acceso a internet en esta sesión."
+    if cfg.get("mode") == "plan":
+        p += PLAN_MODE
+    if cfg.get("user_name"):
+        p += "\n\nEl usuario se llama %s." % cfg["user_name"]
+    if cfg.get("about_me"):
+        p += "\n\n## Sobre el usuario\n" + cfg["about_me"]
+    if cfg.get("response_style"):
+        p += "\n\n## Cómo quiere que respondas\n" + cfg["response_style"]
+    mem = H.memory_text()
+    if mem:
+        p += "\n\n## Memoria (lo que el usuario te pidió recordar)\n" + mem
+    ctx = H.context_files(cfg["workspace"])
+    if ctx:
+        p += "\n\n## Instrucciones del proyecto\n" + ctx
+    if cfg.get("_project"):
+        p += "\n\n## Estructura de la carpeta del proyecto\n" + H.repo_map(cfg["workspace"])
+    if cfg.get("custom_instructions"):
+        p += "\n\n## Instrucciones adicionales\n" + cfg["custom_instructions"]
     return p
 
 
 def tool_schemas(cfg):
-    """Herramientas que se ofrecen al modelo segun el modo y los ajustes (la misma lista sirve para el precalentamiento)."""
+    """Herramientas que se ofrecen al modelo según el modo y los ajustes (la misma lista sirve para el precalentamiento)."""
     off = set(cfg.get("tools_disabled") or [])
     if not cfg.get("web_access", True):
         off |= {n for n, t in T.TOOLS.items() if t["category"] == "net"}
     if not cfg.get("computer_control", True):
         off |= {n for n, t in T.TOOLS.items() if t["category"] == "control"}
-    cats = {"read"} if cfg.get("mode") == "readonly" else None
-    return [s for s in T.schemas(cats) if s["function"]["name"] not in off]
+    mode = cfg.get("mode")
+    cats = {"read", "agent"} if mode == "readonly" else {"read", "agent", "net"} if mode == "plan" else None
+    out = [s for s in T.schemas(cats) if s["function"]["name"] not in off]
+    if mode not in ("readonly", "plan"):
+        out += H.mcp_schemas()
+    return out
 
 
 def coerce(args, schema):
@@ -63,6 +97,8 @@ def coerce(args, schema):
                 v = int(float(v))
             elif t == "boolean" and isinstance(v, str):
                 v = v.strip().lower() in ("true", "1", "yes", "si", "sí")
+            elif t == "array" and isinstance(v, str):
+                v = json.loads(v)
         except (TypeError, ValueError):
             pass
         out[k] = v
@@ -76,10 +112,10 @@ def parse_text_tool_calls(text):
         body = m.group(1).strip()
         name, args = None, {}
         try:
-            j = json.loads(body)
+            j = H.repair_json(body)
             name, args = j.get("name"), j.get("arguments", {})
             if isinstance(args, str):
-                args = json.loads(args)
+                args = H.repair_json(args)
         except Exception:
             fm = re.search(r"<function=([^>\s]+)>(.*?)</function>", body, re.S)
             if fm:
@@ -157,17 +193,33 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
 
 class Run:
     def __init__(self, session, settings, emit, images_dir):
-        self.s = session            # dict con 'messages' y 'allowed'
+        self.s = session            # dict con 'messages', 'allowed', 'plan'…
         self.cfg = settings
         self.emit = emit
         self.images_dir = images_dir
         self.stop = threading.Event()
         self.pending = {}           # tool_call_id -> {event, decision}
         self.holder = {}
+        self.sid = settings.get("_sid", "sin_sesion")
         self.ctx = T.Ctx(settings["workspace"], self.stop, images_dir, int(settings["max_tool_output"]),
                          {"brave_key": settings.get("brave_key"), "search_provider": settings.get("search_provider", "auto"),
                           "searxng_url": settings.get("searxng_url", ""), "command_timeout": int(settings.get("command_timeout", 60))})
         self._buf, self._last = {"kind": None, "text": ""}, 0.0
+        self.calls_seen = Counter()
+        self.fails_seen = Counter()
+        self.truncated = False
+        self.system = system_prompt(settings)          # fijo durante toda la tarea (cache de prompt)
+        self.tools = tool_schemas(settings)
+        self.sampling = self._sampling()
+
+    def _sampling(self):
+        c = self.cfg
+        base = {"temperature": float(c["temperature"]), "top_p": float(c["top_p"]), "top_k": int(c["top_k"]), "min_p": float(c.get("min_p", 0))}
+        if c.get("sampling", "auto") == "auto":
+            rec = H.sampling_for(c.get("_model_title", ""), bool(c.get("thinking")))
+            if rec:
+                base.update(rec)
+        return base
 
     # ---- control externo
     def request_stop(self):
@@ -216,16 +268,22 @@ class Run:
             c = m.get("content")
             if isinstance(c, list):
                 for p in c:
-                    n += 700 if p.get("type") == "image_url" else len(p.get("text", "")) / 3
+                    n += 700 if p.get("type") in ("image_url", "image_ref") else len(p.get("text", "")) / 3.2
             else:
-                n += len(c or "") / 3
+                n += len(c or "") / 3.2
             if m.get("tool_calls"):
-                n += len(json.dumps(m["tool_calls"], ensure_ascii=False)) / 3
+                n += len(json.dumps(m["tool_calls"], ensure_ascii=False)) / 3.2
             n += 6
-        return n
+        return n * float(self.s.get("_ratio", 1.0))    # calibrado con los tokens reales que informa el servidor
 
-    def _to_llm(self):
-        msgs = self.s["messages"]
+    def _fixed_tokens(self):
+        return (len(self.system) + len(json.dumps(self.tools, ensure_ascii=False))) / 3.2 * float(self.s.get("_ratio", 1.0))
+
+    def _budget(self):
+        return int(self.cfg["n_ctx"]) - int(self.cfg["max_tokens"]) - self._fixed_tokens() - 300
+
+    def _to_llm(self, msgs=None):
+        msgs = self.s["messages"] if msgs is None else msgs
         refs = [(i, j) for i, m in enumerate(msgs) if isinstance(m.get("content"), list)
                 for j, p in enumerate(m["content"]) if p.get("type") == "image_ref"]
         keep = set(refs[-int(self.cfg["keep_images"]):]) if self.cfg.get("vision") and self.cfg["keep_images"] else set()
@@ -249,8 +307,48 @@ class Run:
             out.append({k: v for k, v in m.items() if not k.startswith("_")})   # claves internas (_auto) no van al modelo
         return out
 
+    def _maybe_compact(self, base, key):
+        """Si la conversacion se acerca al limite, resume la parte antigua con el propio modelo (en vez de olvidarla)."""
+        msgs = self.s["messages"]
+        budget = self._budget()
+        if self._estimate(msgs) <= 0.85 * budget:
+            return
+        last_user = max((i for i, m in enumerate(msgs) if m["role"] == "user" and not m.get("_auto")), default=0)
+        old, recent = msgs[:last_user], msgs[last_user:]
+        if len(old) < 4:
+            return
+        lines = []
+        for m in old:
+            c = m.get("content")
+            text = c if isinstance(c, str) else " ".join(p.get("text", "") for p in c if p.get("type") == "text")
+            if m.get("tool_calls"):
+                text += " [acciones: %s]" % ", ".join(tc["function"]["name"] for tc in m["tool_calls"])
+            if m["role"] == "tool":
+                text = text[:400]
+            lines.append("%s: %s" % ({"user": "Usuario", "assistant": "Agente", "tool": "Resultado"}.get(m["role"], m["role"]), text[:2500]))
+        transcript = "\n".join(lines)[-24000:]
+        payload = {"model": "local", "stream": True, "max_tokens": 700, "temperature": 0.2, "cache_prompt": False,
+                   "messages": [{"role": "system", "content": "Resume conversaciones de trabajo de forma fiel y compacta."},
+                                {"role": "user", "content": "Resume esta conversación entre un usuario y su agente para poder continuarla. Incluye: objetivo, "
+                                                            "decisiones, archivos creados o modificados (con rutas), comandos importantes, problemas pendientes y "
+                                                            "preferencias del usuario. Máximo 250 palabras.\n\n" + transcript}]}
+        if self.cfg.get("llm_mode") == "external":
+            payload["model"] = self.cfg.get("external_model") or "local"
+            payload.pop("cache_prompt")
+        self.emit({"t": "info", "text": "La conversación es larga: estoy resumiendo la parte antigua para liberar memoria del modelo…"})
+        try:
+            res = llm_stream(base, key, payload, self.holder, lambda k, t: None)
+            summary = res["content"].strip()
+        except Exception:
+            summary = ""
+        if not summary:
+            return
+        self.s["messages"] = [{"role": "user", "_auto": True, "content": "[Resumen de la conversación anterior]\n" + summary},
+                              {"role": "assistant", "content": "Entendido. Continúo con ese contexto."}] + recent
+        self.emit({"t": "compacted", "text": summary})
+
     def _fit(self, msgs):
-        budget = int(self.cfg["n_ctx"]) - int(self.cfg["max_tokens"]) - 1500   # margen para el sistema y herramientas
+        budget = self._budget()
         if self._estimate(msgs) <= budget:
             return msgs
         msgs = [dict(m) for m in msgs]
@@ -259,22 +357,34 @@ class Run:
                 m["content"] = m["content"][:300] + "\n...[recortado para ahorrar contexto]"
                 if self._estimate(msgs) <= budget:
                     return msgs
-        while self._estimate(msgs) > budget and len(msgs) > 2:   # 2) descartar lo mas antiguo
+        while self._estimate(msgs) > budget and len(msgs) > 2:   # 2) ultimo recurso: descartar lo mas antiguo
             msgs.pop(0)
             while msgs and msgs[0]["role"] != "user":
                 msgs.pop(0)
         return msgs
 
     # ---- herramientas
+    def _tool(self, name):
+        if name.startswith("mcp__"):
+            srv, real = H.mcp_resolve(name)
+            if not srv:
+                return None
+            schema = next((t.get("inputSchema") for t in srv.tools if t["name"] == real), None) or {}
+            return {"name": name, "category": "mcp", "parameters": schema,
+                    "fn": lambda a, ctx, srv=srv, real=real: srv.call(real, a)}
+        return T.TOOLS.get(name)
+
     def _needs_approval(self, tool, name, args):
         mode, cat = self.cfg["mode"], tool["category"]
-        if mode == "readonly" and cat != "read":
-            return "blocked"
         if name in (self.cfg.get("tools_disabled") or []):
+            return "blocked"
+        if mode == "readonly" and cat not in ("read", "agent"):
+            return "blocked"
+        if mode == "plan" and cat not in ("read", "agent", "net"):
             return "blocked"
         if T.is_dangerous(name, args, self.ctx):
             return "pending"
-        if cat == "read" or cat in self.s.setdefault("allowed", []) or mode == "auto" or (mode == "edits" and cat == "write"):
+        if cat in ("read", "agent") or cat in self.s.setdefault("allowed", []) or mode == "auto" or (mode == "edits" and cat == "write"):
             return "auto"
         if name == "run_command":   # comandos que el usuario marco como seguros (p. ej. "git status", "npm test")
             cmd = str(args.get("command", "")).strip().lower()
@@ -282,54 +392,96 @@ class Run:
                 return "auto"
         return "pending"
 
+    def _wait(self, cid):
+        ev = {"event": threading.Event(), "decision": None}
+        self.pending[cid] = ev
+        while not ev["event"].wait(0.3):
+            if self.stop.is_set():
+                break
+        self.pending.pop(cid, None)
+        return ev["decision"]
+
+    def _files_of(self, name, args):
+        if name == "move_path":
+            return [self.ctx.path(args.get("source", "")), self.ctx.path(args.get("dest", ""))]
+        if args.get("path"):
+            return [self.ctx.path(args["path"])]
+        return []
+
     def _exec(self, call):
+        """Ejecuta una llamada. Devuelve (ok, texto, imagen, extra)."""
         f = call["function"]
         name, raw = f["name"], f.get("arguments") or "{}"
         cid = call["id"]
-        tool = T.TOOLS.get(name)
+        tool = self._tool(name)
         try:
-            args = json.loads(raw) if isinstance(raw, str) else dict(raw)
-            if not isinstance(args, dict):
-                raise ValueError("los argumentos deben ser un objeto JSON")
+            args = H.repair_json(raw)
         except ValueError as e:
             self.emit({"t": "tool_call", "id": cid, "name": name, "args": {"_raw": str(raw)[:500]}, "category": "read", "approval": "auto"})
-            return False, "Argumentos JSON inválidos: %s" % e, None
+            if self.truncated:
+                return False, ("Tu respuesta se cortó por el límite de longitud y los argumentos quedaron incompletos. Divide el trabajo: "
+                               "escribe el archivo en partes (write_file con la primera parte y luego multi_edit/edit_file para añadir el resto)."), None, {}
+            return False, "Argumentos JSON inválidos (%s). Envía un objeto JSON válido con los parámetros de la herramienta." % e, None, {}
         if tool is None:
             self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": "read", "approval": "auto"})
-            return False, "Herramienta desconocida: %s. Disponibles: %s" % (name, ", ".join(T.TOOLS)), None
+            return False, "Herramienta desconocida: %s. Usa una de las disponibles." % name, None, {}
         args = coerce(args, tool["parameters"])
+        sig = name + json.dumps(args, sort_keys=True, ensure_ascii=False)[:2000]
+        self.calls_seen[sig] += 1
+        if self.fails_seen[sig] >= 2 or self.calls_seen[sig] >= 4:
+            self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": tool["category"], "approval": "auto"})
+            return False, ("Ya intentaste exactamente esta misma acción varias veces. No la repitas: cambia de enfoque, revisa la causa del fallo "
+                           "o pregunta al usuario con ask_user."), None, {}
+        # --- herramientas del propio agente
+        if name == "ask_user":
+            opts = [str(o) for o in (args.get("options") or [])][:6]
+            self.emit({"t": "question", "id": cid, "question": str(args.get("question", "")), "options": opts})
+            d = self._wait(cid)
+            if not d or not d.startswith("answer:"):
+                self.emit({"t": "answer", "id": cid, "text": ""})
+                return False, "El usuario no respondió (detuvo la tarea).", None, {}
+            ans = d[7:]
+            self.emit({"t": "answer", "id": cid, "text": ans})
+            return True, "Respuesta del usuario: " + ans, None, {}
         approval = self._needs_approval(tool, name, args)
         self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": tool["category"], "approval": approval,
                    "danger": T.is_dangerous(name, args, self.ctx)})
         if approval == "blocked":
-            return False, "Bloqueado: el modo actual es solo lectura.", None
+            why = "el modo Planificar solo permite investigar" if self.cfg["mode"] == "plan" else "el modo actual es solo lectura o la herramienta está desactivada"
+            return False, "Bloqueado: %s." % why, None, {}
         if approval == "pending":
-            ev = {"event": threading.Event(), "decision": None}
-            self.pending[cid] = ev
-            while not ev["event"].wait(0.3):
-                if self.stop.is_set():
-                    break
-            self.pending.pop(cid, None)
-            d = ev["decision"]
+            d = self._wait(cid)
             if self.stop.is_set() and d is None:
                 self.emit({"t": "approval", "id": cid, "decision": "cancel"})
-                return False, "Cancelado por el usuario.", None
+                return False, "Cancelado por el usuario.", None, {}
             self.emit({"t": "approval", "id": cid, "decision": d})
             if d == "allow_category":
                 self.s.setdefault("allowed", []).append(tool["category"])
             elif d != "allow":
-                return False, "El usuario denegó esta acción.%s" % (" Motivo: " + d[5:] if d and d.startswith("deny:") and len(d) > 5 else ""), None
+                return False, "El usuario denegó esta acción.%s" % (" Motivo: " + d[5:] if d and d.startswith("deny:") and len(d) > 5 else ""), None, {}
+        extra = {}
+        if name in T.WRITE_TOOLS:
+            try:
+                H.snapshot(self.sid, cid, self._files_of(name, args))
+                extra["undo"] = True
+            except Exception:
+                pass
         try:
             r = tool["fn"](args, self.ctx)
+            if name == "update_plan":
+                self.s["plan"] = [{"content": str(i.get("content", "")), "status": str(i.get("status", "pending"))} for i in args.get("items") or []]
+                self.emit({"t": "plan", "items": self.s["plan"]})
             if isinstance(r, dict):
-                return True, T.clip(r["text"], self.ctx.max_out), r.get("image")
-            return True, T.clip(str(r), self.ctx.max_out), None
+                return True, T.clip(r["text"], self.ctx.max_out), r.get("image"), extra
+            return True, T.clip(str(r), self.ctx.max_out), None, extra
         except T.Abort:
             raise
         except T.ToolError as e:
-            return False, str(e), None
+            self.fails_seen[sig] += 1
+            return False, str(e), None, {}
         except Exception as e:
-            return False, "%s: %s" % (type(e).__name__, e), None
+            self.fails_seen[sig] += 1
+            return False, "%s: %s" % (type(e).__name__, e), None, {}
 
     def _repair(self):
         """Si se corto a mitad, toda llamada a herramienta debe tener su respuesta para que el historial sea valido."""
@@ -344,30 +496,36 @@ class Run:
                 break
 
     # ---- bucle principal
-    def run(self, text, image_names=()):
+    def run(self, text, image_names=(), attachments=""):
         msgs = self.s["messages"]
-        content = text if not image_names else [{"type": "text", "text": text}] + [{"type": "image_ref", "name": n} for n in image_names]
+        body = text + (("\n\n" + attachments) if attachments else "")
+        content = body if not image_names else [{"type": "text", "text": body}] + [{"type": "image_ref", "name": n} for n in image_names]
         msgs.append({"role": "user", "content": content})
-        self.emit({"t": "user", "text": text, "images": list(image_names)})
+        self.emit({"t": "user", "text": text, "images": list(image_names), "files": [l[4:].strip() for l in attachments.splitlines() if l.startswith("### ")]})
+        external = self.cfg.get("llm_mode") == "external"
+        base = self.cfg["external_url"].rstrip("/") if external else "http://127.0.0.1:%d/v1" % int(self.cfg["llm_port"])
+        key = self.cfg.get("external_key") if external else ""
         try:
             for step in range(int(self.cfg["max_steps"])):
                 if self.stop.is_set():
                     break
+                self._maybe_compact(base, key)
+                msgs = self.s["messages"]
                 self.emit({"t": "turn_start", "step": step + 1})
-                external = self.cfg.get("llm_mode") == "external"
-                base = self.cfg["external_url"].rstrip("/") if external else "http://127.0.0.1:%d/v1" % int(self.cfg["llm_port"])
+                sent = self._fit(self._to_llm())
                 payload = {"model": (self.cfg.get("external_model") or "local") if external else "local", "stream": True,
-                           "messages": [{"role": "system", "content": system_prompt(self.cfg)}] + self._fit(self._to_llm()),
-                           "temperature": float(self.cfg["temperature"]), "top_p": float(self.cfg["top_p"]), "max_tokens": int(self.cfg["max_tokens"])}
+                           "stream_options": {"include_usage": True},
+                           "messages": [{"role": "system", "content": self.system}] + sent,
+                           "temperature": self.sampling["temperature"], "top_p": self.sampling["top_p"], "max_tokens": int(self.cfg["max_tokens"])}
                 if not external:   # parametros propios de llama.cpp (una API estricta podria rechazarlos)
-                    payload.update({"top_k": int(self.cfg["top_k"]), "cache_prompt": True, "min_p": float(self.cfg.get("min_p", 0)),
+                    payload.update({"top_k": self.sampling["top_k"], "cache_prompt": True, "min_p": self.sampling["min_p"],
                                     "repeat_penalty": float(self.cfg.get("repeat_penalty", 1.0)),
                                     "chat_template_kwargs": {"enable_thinking": bool(self.cfg["thinking"])}})
                     if int(self.cfg.get("seed", -1)) >= 0:
                         payload["seed"] = int(self.cfg["seed"])
-                payload["tools"] = tool_schemas(self.cfg)
+                payload["tools"] = self.tools
                 try:
-                    res = llm_stream(base, self.cfg.get("external_key") if external else "", payload, self.holder, self._delta)
+                    res = llm_stream(base, key, payload, self.holder, self._delta)
                 except (ConnectionRefusedError, socket.timeout, OSError) as e:
                     self._flush()
                     if self.stop.is_set():
@@ -388,6 +546,13 @@ class Run:
                 self._flush()
                 if self.stop.is_set():
                     break
+                # calibrar la estimacion de tokens con lo que realmente conto el servidor
+                real = (res.get("usage") or {}).get("prompt_tokens")
+                if real:
+                    est = (self._estimate(sent) / float(self.s.get("_ratio", 1.0))) + self._fixed_tokens() / float(self.s.get("_ratio", 1.0))
+                    if est > 50:
+                        self.s["_ratio"] = round(max(0.5, min(3.0, 0.5 * float(self.s.get("_ratio", 1.0)) + 0.5 * real / est)), 3)
+                self.truncated = res["finish"] == "length"
                 # ids propios y unicos: algunos servidores repiten ids (p. ej. "call_0") entre turnos
                 calls = [{"id": "call_" + uuid.uuid4().hex[:12], "type": "function",
                           "function": {"name": c["name"], "arguments": c["args"] or "{}"}} for c in res["tool_calls"] if c["name"]]
@@ -396,7 +561,8 @@ class Run:
                     calls, text_out = parse_text_tool_calls(text_out)
                 tm = res.get("timings") or {}
                 self.emit({"t": "stats", "prompt_n": tm.get("prompt_n"), "prompt_ms": tm.get("prompt_ms"), "gen_n": tm.get("predicted_n"),
-                           "tps": tm.get("predicted_per_second"), "finish": res["finish"]})
+                           "tps": tm.get("predicted_per_second"), "finish": res["finish"],
+                           "ctx_used": (res.get("usage") or {}).get("prompt_tokens"), "ctx_max": int(self.cfg["n_ctx"])})
                 am = {"role": "assistant", "content": text_out}
                 if calls:
                     am["tool_calls"] = calls
@@ -404,25 +570,25 @@ class Run:
                 self.emit({"t": "assistant_end", "text": text_out})
                 if not calls:
                     if not text_out.strip():
-                        self.emit({"t": "info", "text": "El modelo no escribió respuesta" + (" (se alcanzó el límite de tokens; sube «máx. tokens» o desactiva el pensamiento)." if res["finish"] == "length" else ".")})
+                        self.emit({"t": "info", "text": "El modelo no escribió respuesta" + (" (se alcanzó el límite de tokens; sube «longitud máxima» o desactiva el pensamiento)." if res["finish"] == "length" else ".")})
                     break
                 images = []
-                for i, call in enumerate(calls):
+                for call in calls:
                     if self.stop.is_set():
                         msgs.append({"role": "tool", "tool_call_id": call["id"], "content": "Cancelado por el usuario."})
                         continue
-                    ok, out, img = self._exec(call)
+                    ok, out, img, extra = self._exec(call)
                     name = None
                     if img:
                         name = uuid.uuid4().hex[:12] + ".png"
                         with open(os.path.join(self.images_dir, name), "wb") as f:
                             f.write(img)
                         images.append(name)
-                    self.emit({"t": "tool_result", "id": call["id"], "ok": ok, "text": out, "image": name})
+                    self.emit(dict({"t": "tool_result", "id": call["id"], "ok": ok, "text": out, "image": name}, **extra))
                     msgs.append({"role": "tool", "tool_call_id": call["id"], "content": out if ok else "ERROR: " + out})
                 if images:
                     msgs.append({"role": "user", "_auto": True,
-                                 "content": [{"type": "text", "text": "Captura de pantalla resultante:"}] + [{"type": "image_ref", "name": n} for n in images]})
+                                 "content": [{"type": "text", "text": "Imagen resultante:"}] + [{"type": "image_ref", "name": n} for n in images]})
                 if self.stop.is_set():
                     break
             else:
@@ -437,4 +603,6 @@ class Run:
             self._repair()
             if self.stop.is_set():
                 self.emit({"t": "info", "text": "Detenido."})
+            if self.cfg.get("mode") == "plan" and self.s.get("plan") and not self.stop.is_set():
+                self.emit({"t": "plan_ready"})
             self.emit({"t": "turn_end"})

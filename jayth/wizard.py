@@ -23,8 +23,12 @@ def run_bg(fn, cb):
     _bridges.append(b)
 
     def finish(r):
-        _bridges.remove(b)
-        cb(r)
+        if b in _bridges:
+            _bridges.remove(b)
+        try:
+            cb(r)
+        except RuntimeError:          # la ventana que esperaba el resultado ya se cerró
+            pass
     b.done.connect(finish)
 
     def work():
@@ -32,7 +36,10 @@ def run_bg(fn, cb):
             r = fn()
         except Exception as e:
             r = e
-        b.done.emit(r)
+        try:
+            b.done.emit(r)
+        except RuntimeError:          # la aplicación se está cerrando
+            pass
     threading.Thread(target=work, daemon=True).start()
 
 

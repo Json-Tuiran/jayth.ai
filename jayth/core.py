@@ -37,6 +37,9 @@ DEFAULTS = {
     "min_p": 0.0,
     "repeat_penalty": 1.0,
     "seed": -1,
+    "sampling": "auto",          # auto = valores recomendados para la familia del modelo | custom = los de abajo
+    # conectores MCP: [{name, command, args:[...], env:{}, enabled}]
+    "mcp_servers": [],
     # proyectos del modo Code
     "projects": [],
     "active_project": "",
@@ -274,32 +277,78 @@ class Session:
         except Exception:
             pass
 
-    def send(self, text, images=()):
-        """Lanza el agente en un hilo. Devuelve None o un mensaje de error."""
+    def send(self, text, images=(), files=(), mode=None):
+        """Lanza el agente en un hilo. files: rutas de documentos adjuntos (su texto se incluye en el mensaje).
+        Devuelve None o un mensaje de error."""
         if self.run is not None:
             return "El agente sigue trabajando en esta conversación."
         cfg = SET.snapshot()
+        if mode:
+            cfg["mode"] = mode
         proj = project(cfg, self.data.get("project"))
         if proj:   # en un proyecto el agente trabaja dentro de su carpeta y sigue sus instrucciones
             cfg["workspace"] = proj["path"]
+            cfg["_project"] = True
             extra = "Trabajas en el proyecto «%s» (carpeta %s). Las rutas relativas son relativas a esa carpeta." % (proj["name"], proj["path"])
             if proj.get("instructions"):
                 extra += "\nInstrucciones del proyecto:\n" + proj["instructions"]
             cfg["custom_instructions"] = (cfg["custom_instructions"] + "\n\n" + extra).strip()
             os.makedirs(proj["path"], exist_ok=True)
+        cfg["_sid"] = self.id
+        cfg["_model_title"] = model_title(active_model(cfg)) if cfg["llm_mode"] == "local" else (cfg.get("external_model") or "")
+        attach = attachments_text(files)
+        if cfg["mode"] == "plan":
+            self.data["plan"] = []
         run = A.Run(self.data, cfg, self.add_event, paths.IMG_DIR)
         self.run = run
         if self.title == DEFAULT_TITLE:
-            self.title = (text or "Imagen")[:48]
+            self.title = (text or "Archivo adjunto")[:48]
 
         def go():
             try:
-                run.run(text or "(imagen adjunta)", list(images))
+                run.run(text or "(adjuntos)", list(images), attach)
             finally:
                 self.run = None
                 self.save()
         threading.Thread(target=go, daemon=True).start()
         return None
+
+    def answer(self, cid, text):
+        """Respuesta del usuario a una pregunta del agente (ask_user)."""
+        return bool(self.run and self.run.resolve(cid, "answer:" + text))
+
+    def _note(self, text):
+        """Deja constancia para el modelo (sin mostrarlo como mensaje del usuario)."""
+        self.data["messages"].append({"role": "user", "_auto": True, "content": "(Nota del sistema: %s)" % text})
+        self.data["messages"].append({"role": "assistant", "content": "Entendido."})
+
+    def undo(self, cid):
+        """Deshace los cambios de archivos de una accion del agente."""
+        from . import harness
+        if self.run is not None:
+            return None
+        files = harness.undo(self.id, cid)
+        if files:
+            self.add_event({"t": "undo", "ids": [cid], "files": files})
+            self._note("el usuario deshizo tus cambios en: %s" % ", ".join(files))
+            self.save()
+        return files
+
+    def undo_turn(self):
+        """Deshace todos los cambios de archivos de la ultima respuesta (desde el ultimo mensaje del usuario)."""
+        from . import harness
+        if self.run is not None:
+            return None
+        last = self.last_user()
+        ids = [e["id"] for e in self.events[last["i"]:] if e["t"] == "tool_result" and e.get("undo") and harness.has_snapshot(self.id, e["id"])] if last else []
+        files = []
+        for cid in reversed(ids):
+            files += harness.undo(self.id, cid)
+        if files:
+            self.add_event({"t": "undo", "ids": ids, "files": sorted(set(files))})
+            self._note("el usuario deshizo todos tus cambios de la última respuesta en: %s" % ", ".join(sorted(set(files))))
+            self.save()
+        return files
 
     def last_user(self):
         """Ultimo mensaje escrito por el usuario (evento 'user'), o None."""
@@ -522,7 +571,35 @@ LLM_MGR = LLM()
 
 
 def shutdown():
+    from . import harness
     for s in SESSIONS.values():
         if s.run:
             s.run.request_stop()
     LLM_MGR.stop()
+    harness.bg_stop_all()
+    harness.mcp_stop_all()
+
+
+TEXT_LIMIT = 40000
+
+
+def attachments_text(files):
+    """Texto de los documentos adjuntos para incluirlo en el mensaje (con su nombre como encabezado)."""
+    from . import harness
+    out = []
+    for p in files or []:
+        name = os.path.basename(p)
+        try:
+            if os.path.splitext(p)[1].lower() in (".docx", ".docm", ".pptx", ".xlsx", ".xlsm", ".pdf"):
+                txt = harness.read_document(p, TEXT_LIMIT)
+            else:
+                with open(p, "rb") as f:
+                    raw = f.read(TEXT_LIMIT * 2)
+                if b"\0" in raw[:4096]:
+                    txt = "(archivo binario: no se puede leer como texto; ruta %s)" % p
+                else:
+                    txt = raw.decode("utf-8", "replace")[:TEXT_LIMIT]
+        except Exception as e:
+            txt = "(no se pudo leer: %s)" % e
+        out.append("### %s\nRuta: %s\n```\n%s\n```" % (name, p, txt))
+    return "\n\n".join(out)

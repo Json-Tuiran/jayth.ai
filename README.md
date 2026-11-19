@@ -13,6 +13,14 @@ y **tú apruebas cada acción**.
 - **Sin nube:** después de descargar el modelo funciona sin internet. Las herramientas web solo se usan si hay conexión.
 - **Control total:** modos de permiso, botones Permitir/Denegar por acción, botón Detener y failsafe del ratón.
 - **Dos modos:** Chat para cualquier tarea y **Jayth Code** para proyectos (árbol de archivos, editor, terminal y agente).
+- **Un arnés pensado para sacar lo máximo de cada modelo, incluso local:**
+  - lista de tareas visible (`update_plan`), preguntas con opciones (`ask_user`) y modo **Planificar** (propone, tú apruebas, ejecuta);
+  - lee `AGENTS.md` / `JAYTH.md` / `CLAUDE.md` del proyecto, conoce su estructura y recuerda tus preferencias (memoria);
+  - ediciones precisas y tolerantes (`edit_file`, `multi_edit`), mover y papelera, comandos en segundo plano, Word/Excel/PowerPoint/PDF e imágenes;
+  - **Deshacer** cualquier cambio de archivos (por acción o por respuesta completa);
+  - repara JSON mal formado, frena acciones repetidas, resume el contexto al llenarse y cuenta los tokens reales;
+  - muestreo recomendado por familia de modelo (Qwen, Gemma, Llama, Mistral, DeepSeek…) y precalentamiento de la caché;
+  - **conectores MCP** (Model Context Protocol) para añadir herramientas externas.
 - **Siempre al día:** avisa de versiones nuevas de Jayth (y se actualiza con un clic) y de versiones nuevas de tus modelos.
 - **Comentarios:** informa de errores o sugiere mejoras desde la app; revisas el texto antes de enviarlo.
 

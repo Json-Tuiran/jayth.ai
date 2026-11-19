@@ -121,6 +121,7 @@ QFrame#errBox { background: %(bad_bg)s; border: 1px solid %(bad)s; border-radius
 QFrame#banner { background: %(warn_bg)s; border: 1px solid %(warn)s; border-radius: 10px; }
 QFrame#banner QLabel { color: %(warn)s; }
 QFrame#toast { background: %(panel2)s; border: 1px solid %(line)s; border-radius: 12px; }
+QFrame#planBox { background: %(panel)s; border: 1px solid %(line)s; border-radius: 12px; }
 QLabel#badgeWarn { color: %(warn)s; font-size: 9pt; }
 QLabel#badge { color: %(acc)s; background: %(acc_bg)s; border-radius: 8px; padding: 1px 7px; font-size: 8.5pt; }
 QLabel#status[kind="ok"] { color: %(ok)s; } QLabel#status[kind="bad"] { color: %(bad)s; } QLabel#status[kind="run"] { color: %(warn)s; }

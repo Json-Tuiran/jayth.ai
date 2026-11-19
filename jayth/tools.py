@@ -14,7 +14,9 @@ class Abort(Exception):
 
 MAX_OUT = 10000
 TOOLS = {}
-CATEGORIES = {"read": "Lectura", "write": "Escritura", "exec": "Ejecución", "net": "Red", "control": "Control del PC"}
+CATEGORIES = {"read": "Lectura", "write": "Escritura", "exec": "Ejecución", "net": "Red", "control": "Control del PC",
+              "agent": "Agente", "mcp": "Conector"}
+WRITE_TOOLS = {"write_file", "edit_file", "multi_edit", "move_path", "delete_path"}   # crean punto de restauracion
 
 
 def clip(s, n=MAX_OUT):
@@ -89,9 +91,11 @@ def is_dangerous(name, args, ctx):
         if name == "run_command":
             cmd = str(args.get("command", ""))
             return any(re.search(p, cmd, re.I) for p in DANGEROUS_CMD)
-        if name in ("write_file", "edit_file", "download_file"):
-            p = ctx.path(args.get("path") or args.get("dest") or "x").lower()
-            return any(p.startswith(x) for x in PROTECTED_PATHS)
+        if name == "delete_path":
+            return True                         # borrar siempre se confirma
+        if name in ("write_file", "edit_file", "multi_edit", "download_file", "move_path"):
+            ps = [args.get("path") or args.get("dest") or args.get("source") or "x"] + ([args["dest"]] if args.get("dest") else [])
+            return any(ctx.path(p).lower().startswith(x) for p in ps for x in PROTECTED_PATHS)
         if name == "open_target":
             return bool(args.get("args"))
     except Exception:
@@ -132,25 +136,95 @@ def write_file(a, ctx):
     return "Escrito %s (%d bytes)" % (p, len(data.encode("utf-8")))
 
 
-@tool("edit_file", "write", "Reemplaza texto exacto dentro de un archivo. 'old' debe existir y ser único salvo replace_all.",
-      {"path": S("Ruta del archivo"), "old": S("Texto exacto a reemplazar"), "new": S("Texto nuevo"), "replace_all": B("Reemplazar todas las apariciones")},
-      ["path", "old", "new"])
-def edit_file(a, ctx):
-    p = ctx.path(a["path"])
+def _apply_edit(text, old, new, replace_all=False):
+    """Reemplazo exacto; si falla, tolera diferencias de espacios al final de linea y saltos CRLF (frecuentes en modelos locales)."""
+    n = text.count(old)
+    if n == 0:
+        norm = lambda s: "\n".join(l.rstrip() for l in s.replace("\r\n", "\n").split("\n"))
+        nt, no = norm(text), norm(old)
+        k = nt.count(no) if no.strip() else 0
+        if k == 1 or (k > 1 and replace_all):
+            crlf = "\r\n" in text
+            out = nt.replace(no, new.replace("\r\n", "\n")) if replace_all else nt.replace(no, new.replace("\r\n", "\n"), 1)
+            return (out.replace("\n", "\r\n") if crlf else out), k
+        import difflib
+        first = old.strip().splitlines()[0] if old.strip() else ""
+        near = difflib.get_close_matches(first.strip(), [l.strip() for l in text.splitlines()], n=2, cutoff=0.6)
+        hint = (" Líneas parecidas en el archivo: %s" % " | ".join(near)) if near else ""
+        raise ToolError("No se encontró el texto 'old'. Vuelve a leer el archivo (read_file) y copia el fragmento exacto." + hint)
+    if n > 1 and not replace_all:
+        raise ToolError("'old' aparece %d veces; añade líneas de contexto para que sea único, o usa replace_all." % n)
+    return (text.replace(old, new) if replace_all else text.replace(old, new, 1)), (n if replace_all else 1)
+
+
+def _read_text(p):
     if not os.path.isfile(p):
         raise ToolError("No existe el archivo: " + p)
     with open(p, "r", encoding="utf-8", errors="replace", newline="") as f:
-        text = f.read()
-    old, new = str(a["old"]), str(a["new"])
-    n = text.count(old)
-    if n == 0:
-        raise ToolError("No se encontró el texto 'old' en el archivo. Lee el archivo y copia el texto exacto.")
-    if n > 1 and not a.get("replace_all"):
-        raise ToolError("'old' aparece %d veces; añade más contexto o usa replace_all." % n)
-    text = text.replace(old, new) if a.get("replace_all") else text.replace(old, new, 1)
+        return f.read()
+
+
+def _write_text(p, text):
     with open(p, "w", encoding="utf-8", newline="") as f:
         f.write(text)
-    return "Editado %s (%d reemplazo%s)" % (p, n if a.get("replace_all") else 1, "s" if n > 1 and a.get("replace_all") else "")
+
+
+@tool("edit_file", "write", "Reemplaza un fragmento de un archivo. 'old' debe aparecer una vez (añade contexto) salvo replace_all.",
+      {"path": S("Ruta del archivo"), "old": S("Texto a reemplazar (cópialo del archivo)"), "new": S("Texto nuevo"), "replace_all": B("Reemplazar todas las apariciones")},
+      ["path", "old", "new"])
+def edit_file(a, ctx):
+    p = ctx.path(a["path"])
+    text, n = _apply_edit(_read_text(p), str(a["old"]), str(a["new"]), bool(a.get("replace_all")))
+    _write_text(p, text)
+    return "Editado %s (%d reemplazo%s)" % (p, n, "s" if n > 1 else "")
+
+
+@tool("multi_edit", "write", "Varios reemplazos en un mismo archivo de una vez (todos o ninguno). Más eficiente que varios edit_file.",
+      {"path": S("Ruta del archivo"), "edits": {"type": "array", "description": "Lista de {old, new, replace_all}",
+                                               "items": {"type": "object", "properties": {"old": S("Texto a reemplazar"), "new": S("Texto nuevo"),
+                                                                                          "replace_all": B("Todas las apariciones")}, "required": ["old", "new"]}}},
+      ["path", "edits"])
+def multi_edit(a, ctx):
+    p = ctx.path(a["path"])
+    text = _read_text(p)
+    edits = a.get("edits") or []
+    if isinstance(edits, str):
+        edits = json.loads(edits)
+    total = 0
+    for i, e in enumerate(edits, 1):
+        try:
+            text, n = _apply_edit(text, str(e["old"]), str(e["new"]), bool(e.get("replace_all")))
+        except ToolError as err:
+            raise ToolError("Edición %d de %d: %s (no se aplicó ningún cambio)" % (i, len(edits), err))
+        total += n
+    _write_text(p, text)
+    return "Editado %s (%d ediciones, %d reemplazos)" % (p, len(edits), total)
+
+
+@tool("move_path", "write", "Mueve o renombra un archivo o carpeta.", {"source": S("Ruta actual"), "dest": S("Ruta nueva")}, ["source", "dest"])
+def move_path(a, ctx):
+    src, dst = ctx.path(a["source"]), ctx.path(a["dest"])
+    if not os.path.exists(src):
+        raise ToolError("No existe: " + src)
+    if os.path.exists(dst):
+        raise ToolError("Ya existe el destino: " + dst)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    import shutil
+    shutil.move(src, dst)
+    return "Movido %s -> %s" % (src, dst)
+
+
+@tool("delete_path", "write", "Envía un archivo o carpeta a la papelera de reciclaje (se puede recuperar).", {"path": S("Ruta a borrar")}, ["path"])
+def delete_path(a, ctx):
+    p = ctx.path(a["path"])
+    if not os.path.exists(p):
+        raise ToolError("No existe: " + p)
+    ps = "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::%s('%s','OnlyErrorDialogs','SendToRecycleBin')" % (
+        "DeleteDirectory" if os.path.isdir(p) else "DeleteFile", p.replace("'", "''"))
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, creationflags=0x08000000)
+    if os.path.exists(p):
+        raise ToolError("No se pudo enviar a la papelera: " + p)
+    return "Enviado a la papelera: " + p
 
 
 @tool("list_dir", "read", "Lista el contenido de una carpeta.",
@@ -237,13 +311,20 @@ def _kill_tree(pid):
         pass
 
 
-@tool("run_command", "exec", "Ejecuta un comando de PowerShell (Windows) en la carpeta de trabajo y devuelve su salida. Para scripts: `python archivo.py`.",
-      {"command": S("Comando o script de PowerShell"), "timeout": I("Segundos máximos (por defecto 60, máx. 900)"), "cwd": S("Carpeta donde ejecutar (opcional)")}, ["command"])
+@tool("run_command", "exec", "Ejecuta un comando de PowerShell en la carpeta de trabajo y devuelve su salida. Para scripts: `python archivo.py`. "
+      "Con background=true lo deja corriendo (servidores, vigilantes) y devuelve un id para command_output/stop_command.",
+      {"command": S("Comando o script de PowerShell"), "timeout": I("Segundos máximos (por defecto 60, máx. 900)"), "cwd": S("Carpeta donde ejecutar (opcional)"),
+       "background": B("Dejarlo corriendo en segundo plano")}, ["command"])
 def run_command(a, ctx):
     cmd = str(a["command"])
     timeout = min(max(int(a.get("timeout") or (ctx.extras or {}).get("command_timeout") or 60), 1), 900)
     cwd = ctx.path(a["cwd"]) if a.get("cwd") else ctx.workspace
     os.makedirs(cwd, exist_ok=True)
+    if a.get("background"):
+        from . import harness
+        pid = harness.bg_start(cmd, cwd)
+        time.sleep(2.5)
+        return "Iniciado en segundo plano con id %s.\n%s" % (pid, harness.bg_output(pid, 30))
     prefix = "[Console]::OutputEncoding=[Text.Encoding]::UTF8;$OutputEncoding=[Text.Encoding]::UTF8;$ProgressPreference='SilentlyContinue';"
     enc = base64.b64encode((prefix + cmd).encode("utf-16-le")).decode()
     p = subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc],
@@ -709,3 +790,75 @@ def focus_window(a, ctx):
             time.sleep(0.4)
             return "Foco en: " + t
     raise ToolError("No hay ventana con ese título.")
+
+
+# ---------------------------------------------------------------- procesos en segundo plano
+@tool("command_output", "read", "Muestra la salida reciente de un comando lanzado con background=true.",
+      {"id": S("Id devuelto por run_command (bg_…)"), "lines": I("Últimas líneas (por defecto 60)")}, ["id"])
+def command_output(a, ctx):
+    from . import harness
+    out = harness.bg_output(str(a["id"]), int(a.get("lines") or 60))
+    if out is None:
+        raise ToolError("No hay ningún proceso en segundo plano con id %s." % a["id"])
+    return clip(out, ctx.max_out)
+
+
+@tool("stop_command", "exec", "Detiene un comando lanzado en segundo plano.", {"id": S("Id del proceso (bg_…)")}, ["id"])
+def stop_command(a, ctx):
+    from . import harness
+    if not harness.bg_stop(str(a["id"])):
+        raise ToolError("No hay ningún proceso con id %s." % a["id"])
+    return "Detenido %s" % a["id"]
+
+
+# ---------------------------------------------------------------- documentos e imagenes del disco
+@tool("read_document", "read", "Extrae el texto de documentos Word (.docx), Excel (.xlsx), PowerPoint (.pptx) o PDF.",
+      {"path": S("Ruta del documento")}, ["path"])
+def read_document(a, ctx):
+    from . import harness
+    p = ctx.path(a["path"])
+    if not os.path.isfile(p):
+        raise ToolError("No existe el archivo: " + p)
+    try:
+        return clip(harness.read_document(p), ctx.max_out) or "(documento sin texto)"
+    except RuntimeError as e:
+        raise ToolError(str(e))
+
+
+@tool("view_image", "read", "Abre una imagen del disco (png, jpg, webp…) para verla (requiere un modelo con visión).",
+      {"path": S("Ruta de la imagen")}, ["path"])
+def view_image(a, ctx):
+    p = ctx.path(a["path"])
+    if not os.path.isfile(p):
+        raise ToolError("No existe la imagen: " + p)
+    if os.path.getsize(p) > 12_000_000:
+        raise ToolError("La imagen es demasiado grande (más de 12 MB).")
+    with open(p, "rb") as f:
+        return {"text": "Imagen %s (%d KB)" % (os.path.basename(p), os.path.getsize(p) // 1024), "image": f.read()}
+
+
+# ---------------------------------------------------------------- herramientas del propio agente (las gestiona el bucle)
+@tool("update_plan", "agent", "Crea o actualiza tu lista de tareas para trabajos de varios pasos (el usuario la ve). "
+      "Mantén una sola tarea in_progress y marca completed al terminar cada una.",
+      {"items": {"type": "array", "description": "Lista completa de tareas",
+                 "items": {"type": "object", "properties": {"content": S("Tarea breve"), "status": S("pending | in_progress | completed")},
+                           "required": ["content", "status"]}}}, ["items"])
+def update_plan(a, ctx):
+    items = a.get("items") or []
+    done = sum(1 for i in items if i.get("status") == "completed")
+    return "Plan actualizado (%d de %d completadas)." % (done, len(items))
+
+
+@tool("ask_user", "agent", "Pregunta al usuario cuando falta información o hay que elegir entre opciones. Espera su respuesta.",
+      {"question": S("Pregunta breve"), "options": {"type": "array", "items": {"type": "string"}, "description": "Opciones sugeridas (opcional)"}},
+      ["question"])
+def ask_user(a, ctx):
+    return "(la respuesta la gestiona el agente)"
+
+
+@tool("remember", "agent", "Guarda un dato duradero sobre el usuario o sus preferencias para futuras conversaciones (p. ej. 'usa pnpm').",
+      {"fact": S("Dato breve a recordar")}, ["fact"])
+def remember(a, ctx):
+    from . import harness
+    harness.remember(str(a["fact"]))
+    return "Guardado en la memoria."
