@@ -26,9 +26,31 @@ Reglas:
 - Si el usuario deniega una acción, no insistas: propón otra vía o pregunta.
 - Responde en el idioma del usuario, de forma breve. Al terminar, resume qué hiciste y dónde quedaron los archivos.""" % (
         datetime.date.today().isoformat(), settings["workspace"])
+    lang = {"es": "español", "en": "inglés", "pt": "portugués", "fr": "francés", "de": "alemán", "it": "italiano"}.get(settings.get("response_language"))
+    if lang:
+        p += "\n- Responde siempre en %s." % lang
+    if not settings.get("web_access", True):
+        p += "\n- No tienes acceso a internet en esta sesión."
+    if settings.get("user_name"):
+        p += "\n\nEl usuario se llama %s." % settings["user_name"]
+    if settings.get("about_me"):
+        p += "\n\nLo que el usuario quiere que sepas de él:\n" + settings["about_me"]
+    if settings.get("response_style"):
+        p += "\n\nCómo quiere que respondas:\n" + settings["response_style"]
     if settings.get("custom_instructions"):
         p += "\n\nInstrucciones del usuario:\n" + settings["custom_instructions"]
     return p
+
+
+def tool_schemas(cfg):
+    """Herramientas que se ofrecen al modelo segun el modo y los ajustes (la misma lista sirve para el precalentamiento)."""
+    off = set(cfg.get("tools_disabled") or [])
+    if not cfg.get("web_access", True):
+        off |= {n for n, t in T.TOOLS.items() if t["category"] == "net"}
+    if not cfg.get("computer_control", True):
+        off |= {n for n, t in T.TOOLS.items() if t["category"] == "control"}
+    cats = {"read"} if cfg.get("mode") == "readonly" else None
+    return [s for s in T.schemas(cats) if s["function"]["name"] not in off]
 
 
 def coerce(args, schema):
@@ -142,7 +164,9 @@ class Run:
         self.stop = threading.Event()
         self.pending = {}           # tool_call_id -> {event, decision}
         self.holder = {}
-        self.ctx = T.Ctx(settings["workspace"], self.stop, images_dir, int(settings["max_tool_output"]), {"brave_key": settings.get("brave_key")})
+        self.ctx = T.Ctx(settings["workspace"], self.stop, images_dir, int(settings["max_tool_output"]),
+                         {"brave_key": settings.get("brave_key"), "search_provider": settings.get("search_provider", "auto"),
+                          "searxng_url": settings.get("searxng_url", ""), "command_timeout": int(settings.get("command_timeout", 60))})
         self._buf, self._last = {"kind": None, "text": ""}, 0.0
 
     # ---- control externo
@@ -246,10 +270,16 @@ class Run:
         mode, cat = self.cfg["mode"], tool["category"]
         if mode == "readonly" and cat != "read":
             return "blocked"
+        if name in (self.cfg.get("tools_disabled") or []):
+            return "blocked"
         if T.is_dangerous(name, args, self.ctx):
             return "pending"
         if cat == "read" or cat in self.s.setdefault("allowed", []) or mode == "auto" or (mode == "edits" and cat == "write"):
             return "auto"
+        if name == "run_command":   # comandos que el usuario marco como seguros (p. ej. "git status", "npm test")
+            cmd = str(args.get("command", "")).strip().lower()
+            if any(p.strip() and cmd.startswith(p.strip().lower()) for p in self.cfg.get("auto_allow_commands") or []) and not any(c in cmd for c in ";|&`$("):
+                return "auto"
         return "pending"
 
     def _exec(self, call):
@@ -330,10 +360,12 @@ class Run:
                            "messages": [{"role": "system", "content": system_prompt(self.cfg)}] + self._fit(self._to_llm()),
                            "temperature": float(self.cfg["temperature"]), "top_p": float(self.cfg["top_p"]), "max_tokens": int(self.cfg["max_tokens"])}
                 if not external:   # parametros propios de llama.cpp (una API estricta podria rechazarlos)
-                    payload.update({"top_k": int(self.cfg["top_k"]), "cache_prompt": True,
+                    payload.update({"top_k": int(self.cfg["top_k"]), "cache_prompt": True, "min_p": float(self.cfg.get("min_p", 0)),
+                                    "repeat_penalty": float(self.cfg.get("repeat_penalty", 1.0)),
                                     "chat_template_kwargs": {"enable_thinking": bool(self.cfg["thinking"])}})
-                allowed = None if self.cfg["mode"] != "readonly" else {"read"}
-                payload["tools"] = T.schemas(allowed)
+                    if int(self.cfg.get("seed", -1)) >= 0:
+                        payload["seed"] = int(self.cfg["seed"])
+                payload["tools"] = tool_schemas(self.cfg)
                 try:
                     res = llm_stream(base, self.cfg.get("external_key") if external else "", payload, self.holder, self._delta)
                 except (ConnectionRefusedError, socket.timeout, OSError) as e:

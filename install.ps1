@@ -2,7 +2,7 @@
   Instalador de Jayth (Windows 10/11, 64 bits).
 
   Desde GitHub (una sola linea en PowerShell):
-      irm https://raw.githubusercontent.com/Json-Tuiran/agentes-en-local/main/install.ps1 | iex
+      irm https://raw.githubusercontent.com/Json-Tuiran/jayth.ai/main/install.ps1 | iex
 
   Desde una copia local (git clone o zip descomprimido):
       doble clic en install.bat   (o: powershell -ExecutionPolicy Bypass -File install.ps1)
@@ -16,7 +16,7 @@
   No necesita permisos de administrador.
 #>
 param(
-    [string]$Repo = $(if ($env:JAYTH_REPO) { $env:JAYTH_REPO } else { "Json-Tuiran/agentes-en-local" }),
+    [string]$Repo = $(if ($env:JAYTH_REPO) { $env:JAYTH_REPO } else { "Json-Tuiran/jayth.ai" }),
     [string]$Branch = "main",
     [string]$InstallDir = "$env:LOCALAPPDATA\Programs\Jayth",
     [switch]$NoShortcut,

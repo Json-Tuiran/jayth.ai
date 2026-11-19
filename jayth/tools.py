@@ -241,7 +241,7 @@ def _kill_tree(pid):
       {"command": S("Comando o script de PowerShell"), "timeout": I("Segundos máximos (por defecto 60, máx. 900)"), "cwd": S("Carpeta donde ejecutar (opcional)")}, ["command"])
 def run_command(a, ctx):
     cmd = str(a["command"])
-    timeout = min(max(int(a.get("timeout") or 60), 1), 900)
+    timeout = min(max(int(a.get("timeout") or (ctx.extras or {}).get("command_timeout") or 60), 1), 900)
     cwd = ctx.path(a["cwd"]) if a.get("cwd") else ctx.workspace
     os.makedirs(cwd, exist_ok=True)
     prefix = "[Console]::OutputEncoding=[Text.Encoding]::UTF8;$OutputEncoding=[Text.Encoding]::UTF8;$ProgressPreference='SilentlyContinue';"
@@ -353,6 +353,21 @@ def _search_brave(q, mx, key):
     return "\n".join("%d. %s\n   %s\n   %s" % (i, r.get("title", ""), r.get("url", ""), html_to_text(r.get("description", ""))) for i, r in enumerate(res[:mx], 1))
 
 
+def _search_searxng(q, mx, base):
+    """SearXNG: buscador libre que se puede alojar en casa (formato JSON activado)."""
+    url = base.rstrip("/") + "/search?" + urllib.parse.urlencode({"q": q, "format": "json"})
+    raw, _, _, _ = _http_get(url)
+    try:
+        res = json.loads(raw.decode("utf-8")).get("results", [])
+    except ValueError:
+        raise ToolError("SearXNG no devolvió JSON: activa 'json' en search.formats de su configuración.")
+    return "\n".join("%d. %s\n   %s\n   %s" % (i, r.get("title", ""), r.get("url", ""), _strip(r.get("content", ""))) for i, r in enumerate(res[:mx], 1))
+
+
+def _strip(s):
+    return html_to_text(s or "")
+
+
 def _search_wikipedia(q, mx):
     out = []
     for lang in ("es", "en"):
@@ -371,8 +386,12 @@ def _search_wikipedia(q, mx):
       {"query": S("Texto de búsqueda"), "max_results": I("Resultados (por defecto 6)")}, ["query"])
 def web_search(a, ctx):
     mx = int(a.get("max_results") or 6)
-    key = (ctx.extras or {}).get("brave_key")
-    if key:
+    ex = ctx.extras or {}
+    prov = ex.get("search_provider", "auto")
+    if prov == "searxng" and ex.get("searxng_url"):
+        return _search_searxng(a["query"], mx, ex["searxng_url"]) or "Sin resultados."
+    key = ex.get("brave_key")
+    if key and prov in ("auto", "brave"):
         return _search_brave(a["query"], mx, key) or "Sin resultados."
     raw, _, _, _ = _http_get("https://html.duckduckgo.com/html/", data=urllib.parse.urlencode({"q": a["query"]}).encode())
     page = raw.decode("utf-8", errors="replace")

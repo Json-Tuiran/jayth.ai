@@ -2,7 +2,7 @@
 - Chat: conversaciones para cualquier tarea.
 - Code: proyectos con arbol de archivos, editor, terminal y el agente trabajando dentro de la carpeta del proyecto."""
 import os, sys, json, uuid, time, shutil, threading, ctypes, datetime
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QSize, QPoint
 from PySide6.QtGui import QPixmap, QImage, QKeySequence, QShortcut, QGuiApplication, QActionGroup
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
                                QListWidget, QListWidgetItem, QScrollArea, QFrame, QPlainTextEdit, QFileDialog, QMessageBox, QMenu,
@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
 from . import APP_NAME, core, paths, agent as A, tools as T
 from . import theme
 from .theme import C, restyle, make_icon, icon, pix
-from .wizard import SetupWizard, ModelsDialog, SettingsDialog, btn, lbl, set_icon
+from .wizard import SetupWizard, ModelsDialog, btn, lbl, set_icon
+from .settings_ui import SettingsDialog
 from .codeview import EditorTabs, FileTree, Terminal, ProjectDialog
 
 MODE_LABEL = {k: v.split(":")[0] for k, v in A.MODES.items()}
@@ -694,8 +695,13 @@ class ChatPanel(QWidget):
             hint.setAlignment(Qt.AlignCenter)
             hint.setWordWrap(True)
             iv.addWidget(hint)
-        v.addWidget(inner, 0, Qt.AlignHCenter if not self.compact else Qt.Alignment())
-        inner.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        # centrado y ocupando todo el ancho disponible hasta el maximo (antes la alineacion lo encogia)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addStretch(1)
+        row.addWidget(inner, 1000)
+        row.addStretch(1)
+        v.addLayout(row)
         return wrap
 
     # ---- conversacion
@@ -1267,12 +1273,13 @@ class Main(QMainWindow):
         self.side_stack.addWidget(kw)
         sv.addWidget(self.side_stack, 1)
         sv.addWidget(hline())
-        foot = Clickable()
+        # perfil: generico (sin datos de nadie) y con un menu util, como en las apps de escritorio habituales
+        foot = QPushButton()
+        foot.setObjectName("nav")
         foot.setCursor(Qt.PointingHandCursor)
-        foot.setToolTip("Ajustes")
-        foot.clicked.connect(self.settings)
+        foot.setToolTip("Tu perfil y ajustes")
         fh = QHBoxLayout(foot)
-        fh.setContentsMargins(4, 8, 4, 2)
+        fh.setContentsMargins(6, 6, 6, 6)
         self.avatar = QLabel()
         self.avatar.setObjectName("avatar")
         self.avatar.setFixedSize(26, 26)
@@ -1280,7 +1287,18 @@ class Main(QMainWindow):
         fh.addWidget(self.avatar)
         self.user_lbl = QLabel()
         fh.addWidget(self.user_lbl, 1)
-        fh.addWidget(pix_label("acc_ajustes", C["mut"], 16))
+        fh.addWidget(pix_label("ui_menu_horizontal", C["mut"], 14))
+        foot.setMinimumHeight(42)
+        pm = QMenu(self)
+        pm.addAction(icon("acc_ajustes"), "Ajustes", lambda: self.settings("General"))
+        pm.addAction(icon("mat_comentario"), "Personalización", lambda: self.settings("Personalización"))
+        pm.addAction(icon("ia_controlador"), "Modelos", self.models)
+        pm.addSeparator()
+        pm.addAction(icon("inp_teclado"), "Atajos de teclado", lambda: self.settings("Atajos de teclado"))
+        pm.addAction(icon("est_info"), "Acerca de %s" % APP_NAME, lambda: self.settings("Acerca de"))
+        pm.addSeparator()
+        pm.addAction(icon("ui_cerrar"), "Salir", self.quit_app)
+        foot.clicked.connect(lambda: pm.exec(foot.mapToGlobal(QPoint(0, 0)) - QPoint(0, pm.sizeHint().height() + 4)))   # se abre hacia arriba
         sv.addWidget(foot)
         return self.side
 
@@ -1330,18 +1348,22 @@ class Main(QMainWindow):
         m.addAction(icon("acc_abrir_externo"), "Mostrar", self._show)
         m.addAction(icon("trans_detener"), "Detener agente", lambda: (self.chat.stop(), self.code.chat.stop()))
         m.addSeparator()
-        m.addAction(icon("ui_cerrar"), "Salir", self.close)
+        m.addAction(icon("ui_cerrar"), "Salir", self.quit_app)
         self.tray.setContextMenu(m)
         self.tray.activated.connect(lambda r: r == QSystemTrayIcon.Trigger and self._show())
         self.tray.show()
 
     def _show(self):
-        self.showNormal()
+        self.showMaximized()
         self.raise_()
         self.activateWindow()
 
+    def quit_app(self):
+        self._quitting = True
+        self.close()
+
     def notify_pending(self, text, ts):
-        if not self.isActiveWindow() and ts > time.time() - 10:
+        if core.SET.snapshot().get("notifications", True) and not self.isActiveWindow() and ts > time.time() - 10:
             self.tray.showMessage(APP_NAME, "El agente espera tu aprobación: " + text, QSystemTrayIcon.Information, 6000)
 
     # ---- modos
@@ -1565,6 +1587,19 @@ class Main(QMainWindow):
     def _got_status(self, st):
         self._polling = False
         self.llm = st
+        cfg = core.SET.snapshot()
+        mine = core.LLM_MGR.mine()
+        # precalentamiento: en cuanto el modelo propio esta listo, procesar instrucciones y herramientas en segundo plano
+        if st.get("state") == "ready" and mine and cfg["warmup"] and not core.LLM_MGR.warm and cfg["llm_mode"] == "local":
+            threading.Thread(target=core.LLM_MGR.warmup, daemon=True).start()
+        # apagar el modelo tras un tiempo sin uso (libera memoria)
+        idle = int(cfg.get("idle_unload") or 0)
+        if idle and mine and st.get("state") == "ready" and not any(s.run for s in core.SESSIONS.values()) \
+                and time.time() - core.LAST_USE[0] > idle * 60:
+            core.LLM_MGR.stop()
+            self.llm = {"state": "off"}
+            if cfg.get("notifications", True):
+                self.tray.showMessage(APP_NAME, "Apagué el modelo tras %d minutos sin uso para liberar memoria." % idle, QSystemTrayIcon.Information, 5000)
         self.sync()
 
     def sync(self):
@@ -1575,6 +1610,8 @@ class Main(QMainWindow):
         name = ("Externo · " + (cfg["external_model"] or cfg["external_url"])) if ext else (m["name"] if m else "Sin modelo")
         self.model_btn.setText(name + "  ⌄")
         col, txt = {"ready": (C["ok"], "Listo" + (" · externo" if ext else " · local")), "loading": (C["warn"], "Cargando…")}.get(st, (C["faint"], "Apagado"))
+        if st == "ready" and self.llm.get("warm") == "warming":
+            col, txt = C["warn"], "Preparando el agente…"
         self.status_lbl.setText("<span style='color:%s'>●</span> <span style='color:%s'>%s</span>" % (col, C["mut"], txt))
         panel = self.current_panel()
         s = panel.session()
@@ -1584,9 +1621,14 @@ class Main(QMainWindow):
             self.title.setText(s.title if s and s.events else ("" if self.mode == "chat" else CODE_NAME))
         self.b_folder.setToolTip("Carpeta de trabajo: %s" % panel.workspace())
         self.b_term.setVisible(self.mode == "code" and self.code.project is not None)
-        un = cfg.get("user_name", "").strip() or os.environ.get("USERNAME", "Tú")
-        self.user_lbl.setText(un)
-        self.avatar.setText("".join(p[0] for p in un.split()[:2]).upper() or "?")
+        un = (cfg.get("user_name") or "").strip()     # nunca se usa el usuario de Windows: el perfil es generico
+        self.user_lbl.setText(un or "Tu perfil")
+        if un:
+            self.avatar.setPixmap(QPixmap())
+            self.avatar.setText("".join(p[0] for p in un.split()[:2]).upper())
+        else:
+            self.avatar.setText("")
+            self.avatar.setPixmap(pix("ia_controlador", C["acc"], 15))
         waiting = self.chat.waiting + self.code.chat.waiting
         self.setWindowTitle(("● Esperando tu aprobación · " if waiting else "") + (CODE_NAME if self.mode == "code" else APP_NAME))
         for p in (self.chat, self.code.chat):
@@ -1619,10 +1661,11 @@ class Main(QMainWindow):
         self.poll()
         self.sync()
 
-    def settings(self):
-        before = core.SET.snapshot()["theme"]
-        SettingsDialog(self).exec()
-        if core.SET.snapshot()["theme"] != before:
+    def settings(self, page="General"):
+        b = core.SET.snapshot()
+        SettingsDialog(self, page).exec()
+        a = core.SET.snapshot()
+        if (a["theme"], a["font_scale"]) != (b["theme"], b["font_scale"]):
             return self._swap_window()
         self.poll()
         self.sync()
@@ -1632,7 +1675,8 @@ class Main(QMainWindow):
 
     def _swap_window(self):
         """Aplica un tema nuevo recreando la ventana (los iconos se tiñen al crearse)."""
-        theme.apply(QApplication.instance(), core.SET.snapshot()["theme"])
+        cfg = core.SET.snapshot()
+        theme.apply(QApplication.instance(), cfg["theme"], cfg["font_scale"])
         chat_sid, code_sid = self.chat.sid, self.code.chat.sid
         self.code.term.stop()
         w = Main()
@@ -1650,6 +1694,12 @@ class Main(QMainWindow):
     def closeEvent(self, e):
         if self._swapping:
             return e.accept()
+        if core.SET.snapshot().get("close_to_tray") and not getattr(self, "_quitting", False):
+            self.hide()       # sigue funcionando en la bandeja; «Salir» del menú la cierra de verdad
+            if not getattr(self, "_tray_told", False):
+                self._tray_told = True
+                self.tray.showMessage(APP_NAME, "%s sigue funcionando aquí. Para cerrarlo, usa «Salir»." % APP_NAME, QSystemTrayIcon.Information, 4000)
+            return e.ignore()
         if self.code.tabs.has_dirty():
             r = QMessageBox.question(self, "Cambios sin guardar", "Hay archivos con cambios sin guardar. ¿Guardarlos antes de salir?",
                                      QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
@@ -1670,10 +1720,22 @@ class Main(QMainWindow):
 
 
 def _dark_titlebar(w):
+    """Barra de titulo con los colores del tema (Windows 11), sin el color de acento del sistema."""
     try:
         hwnd = int(w.winId())
-        v = ctypes.c_int(1 if theme.MODE == "dark" else 0)
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(v), ctypes.sizeof(v))
+        dwm = ctypes.windll.dwmapi
+
+        def setattr_(attr, val):
+            v = ctypes.c_int(val)
+            dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(v), ctypes.sizeof(v))
+
+        def colorref(hexcol):
+            h = hexcol.lstrip("#")
+            return int(h[4:6], 16) << 16 | int(h[2:4], 16) << 8 | int(h[0:2], 16)   # COLORREF = 0x00BBGGRR
+        setattr_(20, 1 if theme.MODE == "dark" else 0)       # DWMWA_USE_IMMERSIVE_DARK_MODE
+        setattr_(35, colorref(C["side"]))                     # DWMWA_CAPTION_COLOR
+        setattr_(36, colorref(C["tx"]))                       # DWMWA_TEXT_COLOR
+        setattr_(34, colorref(C["side"]))                     # DWMWA_BORDER_COLOR
     except Exception:
         pass
 
@@ -1686,16 +1748,24 @@ def main():
             pass
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
-    theme.apply(app, core.SET.snapshot()["theme"])
+    cfg = core.SET.snapshot()
+    theme.apply(app, cfg["theme"], cfg["font_scale"])
     app.setWindowIcon(make_icon())
     app.setQuitOnLastWindowClosed(False)
     core.load_sessions()
     w = Main()
     app._main = w
     _dark_titlebar(w)
-    w.show()
+    if "--minimized" in sys.argv:          # arranque con Windows: queda en la bandeja
+        w.tray.showMessage(APP_NAME, "%s está listo en la bandeja del sistema." % APP_NAME, QSystemTrayIcon.Information, 3000)
+    else:
+        w.showMaximized()                  # siempre a pantalla completa
+    if core.SET.load_error:
+        QTimer.singleShot(500, lambda: QMessageBox.warning(w, APP_NAME, core.SET.load_error))
     if not core.SET.ready() and "--no-wizard" not in sys.argv:
         QTimer.singleShot(300, w.setup)
-    elif "--start-llm" in sys.argv:
+    elif (cfg["autostart_llm"] or "--start-llm" in sys.argv) and cfg["llm_mode"] == "local":
         core.LLM_MGR.start()
+        w.llm = {"state": "loading"}
+        w.sync()
     sys.exit(app.exec())

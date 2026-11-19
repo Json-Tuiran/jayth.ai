@@ -24,13 +24,34 @@ DEFAULTS = {
     "threads": max(1, (os.cpu_count() or 2) // 2),
     "llm_port": 8080,
     "n_ctx": 16384,
+    "gpu_layers": -1,            # -1 = automatico (--fit); 0 = solo CPU; N = capas en la GPU
+    "batch_size": 512,
+    "flash_attn": "auto",        # auto | on | off
+    "cache_type": "f16",         # f16 | q8_0 | q4_0 (contexto comprimido: menos memoria)
+    "mmap": True,
+    "mlock": False,
+    "warmup": True,              # precalentar instrucciones y herramientas al encender el modelo
+    "autostart_llm": False,
+    "idle_unload": 0,            # minutos sin uso para apagar el modelo (0 = nunca)
+    # generacion
+    "min_p": 0.0,
+    "repeat_penalty": 1.0,
+    "seed": -1,
     # proyectos del modo Code
     "projects": [],
     "active_project": "",
     "app_mode": "chat",          # chat | code (ultimo modo usado)
     # interfaz
     "theme": "system",           # system | dark | light
+    "font_scale": 100,
     "user_name": "",
+    "start_with_windows": False,
+    "close_to_tray": False,
+    "notifications": True,
+    # personalizacion
+    "about_me": "",
+    "response_style": "",
+    "response_language": "auto",
     # agente
     "workspace": paths.WORKSPACE_DEFAULT,
     "mode": "ask",               # readonly | ask | edits | auto
@@ -43,9 +64,20 @@ DEFAULTS = {
     "vision": True,
     "keep_images": 1,
     "max_tool_output": 8000,
+    "command_timeout": 60,
+    "auto_allow_commands": [],   # prefijos de comandos que se permiten sin preguntar (p. ej. "git status")
+    "tools_disabled": [],
+    "web_access": True,
+    "computer_control": True,
+    "search_provider": "auto",   # auto (DuckDuckGo + Wikipedia) | brave | searxng
     "brave_key": "",
+    "searxng_url": "",
     "custom_instructions": "",
 }
+
+# Ajustes que solo se aplican al reiniciar el motor
+RESTART_KEYS = {"threads", "n_ctx", "gpu_layers", "batch_size", "flash_attn", "cache_type", "mmap", "mlock", "llm_port", "vision", "backend", "llama_exe"}
+LAST_USE = [time.time()]   # ultima actividad del agente (para apagar el modelo por inactividad)
 
 
 # ---------------------------------------------------------------- ajustes
@@ -54,11 +86,23 @@ class Settings:
         self.path = os.path.join(paths.DATA, "settings.json")
         self.lock = threading.Lock()
         self.v = dict(DEFAULTS)
-        try:
-            with open(self.path, "r", encoding="utf-8") as f:
-                self.v.update({k: x for k, x in json.load(f).items() if k in DEFAULTS})
-        except Exception:
-            pass
+        self.load_error = ""
+        if os.path.isfile(self.path):
+            for attempt in range(3):          # otro proceso podria estar escribiendolo en ese instante
+                try:
+                    with open(self.path, "r", encoding="utf-8-sig") as f:
+                        self.v.update({k: x for k, x in json.load(f).items() if k in DEFAULTS})
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        # no empezar de cero en silencio: conservar una copia del archivo danado
+                        bak = self.path + ".danado-%d.json" % int(time.time())
+                        try:
+                            os.replace(self.path, bak)
+                        except OSError:
+                            pass
+                        self.load_error = "No se pudieron leer tus ajustes (%s). Se guardó una copia en %s." % (e, bak)
+                    time.sleep(0.3)
         old_ws = os.path.join(os.path.dirname(paths.WORKSPACE_DEFAULT), "AgenteLocal")
         if os.path.normcase(os.path.normpath(self.v["workspace"])) == os.path.normcase(old_ws):
             self.v["workspace"] = paths.WORKSPACE_DEFAULT   # carpeta del nombre provisional anterior (Documentos\AgenteLocal)
@@ -187,6 +231,7 @@ class Session:
         return {"id": self.id, "title": self.title, "created": self.created, "updated": self.updated, "busy": self.run is not None}
 
     def add_event(self, ev):
+        LAST_USE[0] = time.time()
         with self.cond:
             ev["i"] = len(self.events)
             ev["ts"] = round(time.time(), 2)
@@ -352,7 +397,7 @@ class LLM:
         h = self._health(int(cfg["llm_port"]))
         mine = self.proc is not None and self.proc.poll() is None
         if h == 200:
-            return {"state": "ready", "external": not mine}
+            return {"state": "ready", "external": not mine, "warm": self.warm}
         if h == 503 or (mine and h is None):
             return {"state": "loading"}
         if self.proc is not None and self.proc.poll() not in (None, 0):
@@ -373,12 +418,49 @@ class LLM:
         cfg = cfg or SET.snapshot()
         m = active_model(cfg) or {}
         cmd = [cfg["llama_exe"], "-m", m.get("path", ""), "--host", "127.0.0.1", "--port", str(cfg["llm_port"]),
-               "-t", str(cfg["threads"]), "-c", str(cfg["n_ctx"]), "--jinja", "--no-warmup"]
+               "-t", str(cfg["threads"]), "-c", str(cfg["n_ctx"]), "--jinja", "--no-warmup",
+               "-np", "1",                       # una sola ranura: todo el contexto disponible y la cache de prompt siempre se reutiliza
+               "-b", str(cfg["batch_size"])]
         if cfg["backend"] in ("cuda", "vulkan"):
-            cmd += ["--fit", "on"]          # reparte capas entre GPU y RAM segun la memoria disponible
+            if int(cfg["gpu_layers"]) >= 0:
+                cmd += ["-ngl", str(cfg["gpu_layers"])]
+            else:
+                cmd += ["--fit", "on"]          # reparte capas entre GPU y RAM segun la memoria disponible
+        fa = cfg["flash_attn"]
+        if cfg["cache_type"] != "f16":
+            cmd += ["-ctk", cfg["cache_type"], "-ctv", cfg["cache_type"]]
+            fa = "on"                           # la cache V comprimida requiere flash attention
+        if fa in ("on", "off"):
+            cmd += ["-fa", fa]
+        if not cfg["mmap"]:
+            cmd += ["--no-mmap"]
+        if cfg["mlock"]:
+            cmd += ["--mlock"]
         if cfg["vision"] and m.get("mmproj") and os.path.isfile(m["mmproj"]):
             cmd += ["--mmproj", m["mmproj"]]
         return cmd
+
+    # --- precalentamiento: procesa una vez las instrucciones y herramientas fijas para que el primer mensaje sea rapido
+    warm = ""          # "" | "warming" | "warm"
+
+    def warmup(self):
+        if self.warm:
+            return
+        self.warm = "warming"
+        try:
+            cfg = SET.snapshot()
+            payload = {"model": "local", "stream": False, "max_tokens": 1, "cache_prompt": True, "temperature": 0,
+                       "messages": [{"role": "system", "content": A.system_prompt(cfg)}, {"role": "user", "content": "hola"}],
+                       "tools": A.tool_schemas(cfg), "chat_template_kwargs": {"enable_thinking": bool(cfg["thinking"])}}
+            c = http.client.HTTPConnection("127.0.0.1", int(cfg["llm_port"]), timeout=10)
+            c.connect()
+            c.sock.settimeout(None)
+            c.request("POST", "/v1/chat/completions", json.dumps(payload).encode("utf-8"), {"Content-Type": "application/json"})
+            c.getresponse().read()
+            c.close()
+            self.warm = "warm"
+        except Exception:
+            self.warm = ""
 
     def start(self):
         cfg = SET.snapshot()
@@ -404,6 +486,10 @@ class LLM:
         if self.proc is not None and self.proc.poll() is None:
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(self.proc.pid)], capture_output=True, creationflags=NO_WINDOW)
         self.proc = None
+        self.warm = ""
+
+    def mine(self):
+        return self.proc is not None and self.proc.poll() is None
 
     def tail(self, n=60):
         try:

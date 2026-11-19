@@ -16,7 +16,7 @@ y **tú apruebas cada acción**.
 **Opción 1: una línea** (PowerShell, sin permisos de administrador):
 
 ```powershell
-irm https://raw.githubusercontent.com/Json-Tuiran/agentes-en-local/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Json-Tuiran/jayth.ai/main/install.ps1 | iex
 ```
 
 **Opción 2: desde una copia local:** descarga o clona el repositorio y haz doble clic en `install.bat`.

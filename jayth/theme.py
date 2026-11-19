@@ -20,6 +20,7 @@ PALETTES = {
 }
 C = dict(PALETTES["dark"])
 MODE = "dark"
+SCALE = [1.0]
 
 QSS_T = """
 * { font-family: 'Segoe UI'; font-size: 10pt; color: %(tx)s; }
@@ -122,13 +123,16 @@ def resolve(name):
     return "dark"
 
 
-def apply(app, name="system"):
-    """Aplica el tema (system | dark | light): paleta de Qt, hoja de estilos y colores de iconos."""
+def apply(app, name="system", scale=100):
+    """Aplica el tema (system | dark | light) y el tamaño de texto (% ): paleta de Qt, hoja de estilos y colores de iconos."""
     global QSS, MODE
+    import re
     MODE = resolve(name)
     C.clear()
     C.update(PALETTES[MODE])
-    QSS = QSS_T % C
+    f = max(0.7, min(1.6, (scale or 100) / 100.0))
+    QSS = re.sub(r"(\d+(?:\.\d+)?)pt", lambda m: "%.1fpt" % (float(m.group(1)) * f), QSS_T % C)
+    SCALE[0] = f
     _cache.clear()
     app.setStyle("Fusion")
     pal = QPalette()
