@@ -222,7 +222,7 @@ class Run:
                     else:
                         parts.append({"type": "text", "text": "[imagen anterior omitida para ahorrar contexto]"})
                 m = dict(m, content=parts)
-            out.append(m)
+            out.append({k: v for k, v in m.items() if not k.startswith("_")})   # claves internas (_auto) no van al modelo
         return out
 
     def _fit(self, msgs):
@@ -389,7 +389,8 @@ class Run:
                     self.emit({"t": "tool_result", "id": call["id"], "ok": ok, "text": out, "image": name})
                     msgs.append({"role": "tool", "tool_call_id": call["id"], "content": out if ok else "ERROR: " + out})
                 if images:
-                    msgs.append({"role": "user", "content": [{"type": "text", "text": "Captura de pantalla resultante:"}] + [{"type": "image_ref", "name": n} for n in images]})
+                    msgs.append({"role": "user", "_auto": True,
+                                 "content": [{"type": "text", "text": "Captura de pantalla resultante:"}] + [{"type": "image_ref", "name": n} for n in images]})
                 if self.stop.is_set():
                     break
             else:

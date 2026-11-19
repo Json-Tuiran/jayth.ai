@@ -24,6 +24,9 @@ DEFAULTS = {
     "threads": max(1, (os.cpu_count() or 2) // 2),
     "llm_port": 8080,
     "n_ctx": 16384,
+    # interfaz
+    "theme": "system",           # system | dark | light
+    "user_name": "",
     # agente
     "workspace": paths.WORKSPACE_DEFAULT,
     "mode": "ask",               # readonly | ask | edits | auto
@@ -193,6 +196,42 @@ class Session:
                 self.save()
         threading.Thread(target=go, daemon=True).start()
         return None
+
+    def last_user(self):
+        """Ultimo mensaje escrito por el usuario (evento 'user'), o None."""
+        for ev in reversed(self.events):
+            if ev["t"] == "user":
+                return ev
+        return None
+
+    def regenerate(self):
+        """Descarta la ultima respuesta y vuelve a enviar el ultimo mensaje del usuario."""
+        if self.run is not None:
+            return "El agente sigue trabajando en esta conversación."
+        ev = self.last_user()
+        if not ev:
+            return "No hay ningún mensaje que regenerar."
+        msgs = self.data["messages"]
+        idx = max((i for i, m in enumerate(msgs) if m["role"] == "user" and not m.get("_auto")), default=None)
+        if idx is not None:
+            del msgs[idx:]
+        with self.cond:
+            del self.events[ev["i"]:]
+            try:
+                with open(self.epath, "w", encoding="utf-8") as f:
+                    for e in self.events:
+                        f.write(json.dumps(e, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+        return self.send(ev["text"], ev.get("images") or [])
+
+    def search_text(self):
+        """Texto de la conversacion para el buscador (titulo + mensajes)."""
+        parts = [self.title]
+        for e in self.events:
+            if e["t"] in ("user", "assistant_end"):
+                parts.append(e.get("text") or "")
+        return "\n".join(parts).lower()
 
     def delete(self):
         if self.run:

@@ -688,7 +688,8 @@ class ModelsDialog(QDialog):
 # ---------------------------------------------------------------- ajustes
 class SettingsDialog(QDialog):
     FIELDS = {
-        "General": [("workspace", "Carpeta de trabajo", "dir"), ("custom_instructions", "Instrucciones personalizadas", "area"),
+        "General": [("user_name", "Tu nombre", "text"), ("theme", "Tema", "theme"), ("workspace", "Carpeta de trabajo", "dir"),
+                    ("custom_instructions", "Instrucciones personalizadas", "area"),
                     ("brave_key", "Clave de Brave Search (búsqueda web completa)", "secret"), ("vision", "Enviar capturas e imágenes al modelo", "bool")],
         "Modelo": [("llm_mode", "Proveedor", "provider"), ("external_url", "URL externa (/v1)", "text"), ("external_model", "Modelo externo", "text"),
                    ("external_key", "Clave API externa", "secret"), ("threads", "Hilos de CPU", "int"), ("n_ctx", "Contexto (tokens)", "int"),
@@ -731,10 +732,12 @@ class SettingsDialog(QDialog):
                     e.setSingleStep(0.05)
                     e.setValue(float(val))
                     f.addRow(label + ":", e)
-                elif kind == "provider":
+                elif kind in ("provider", "theme"):
                     e = QComboBox()
-                    e.addItem("Local (llama.cpp en este equipo)", "local")
-                    e.addItem("Servidor externo compatible con OpenAI", "external")
+                    opts = ([("Local (llama.cpp en este equipo)", "local"), ("Servidor externo compatible con OpenAI", "external")] if kind == "provider"
+                            else [("Según el sistema", "system"), ("Oscuro", "dark"), ("Claro", "light")])
+                    for t, d in opts:
+                        e.addItem(t, d)
                     e.setCurrentIndex(max(0, e.findData(val)))
                     f.addRow(label + ":", e)
                 else:
@@ -784,7 +787,7 @@ class SettingsDialog(QDialog):
                 out[k] = e.toPlainText()
             elif kind in ("int", "float"):
                 out[k] = e.value()
-            elif kind == "provider":
+            elif kind in ("provider", "theme"):
                 out[k] = e.currentData()
             else:
                 out[k] = e.text()
