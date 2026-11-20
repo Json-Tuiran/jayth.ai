@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Ventana rápida: un atajo global abre una barrita flotante para preguntar a Jayth desde cualquier programa,
 con la opción de adjuntar una captura de lo que había en pantalla en ese momento."""
 import sys, threading, ctypes

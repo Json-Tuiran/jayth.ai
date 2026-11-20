@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Piezas de interfaz que se adaptan a cualquier ancho (el panel del agente puede ser muy estrecho).
 
 - TextView: texto (Markdown, HTML o plano) que se parte donde haga falta, tambien codigo, rutas y URL sin espacios;

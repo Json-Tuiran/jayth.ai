@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Análisis de datos: ejecutar Python con pandas y matplotlib y recoger los gráficos que produzca.
 
 El agente escribe un script; Jayth lo ejecuta en la carpeta de trabajo con un Python que tenga pandas y matplotlib:

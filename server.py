@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Interfaz web opcional de Jayth (la principal es la app de escritorio: app.py).
 Solo escucha en 127.0.0.1 y exige un token distinto en cada arranque."""
 import os, sys, re, json, uuid, base64, atexit, secrets, threading, argparse, webbrowser

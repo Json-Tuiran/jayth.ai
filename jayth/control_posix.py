@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Control del ordenador en macOS y Linux (en Windows se usa la API nativa desde tools.py).
 
 Captura con mss (X11 y macOS) o con la utilidad del sistema; ratón y teclado con pynput; ventanas con

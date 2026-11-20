@@ -34,7 +34,8 @@ if WIN:
     vi = VSVersionInfo(
         ffi=FixedFileInfo(filevers=nums, prodvers=nums),
         kids=[StringFileInfo([StringTable("040904B0", [
-            StringStruct("CompanyName", "Jayth"), StringStruct("FileDescription", "Jayth"),
+            StringStruct("CompanyName", "Ing. Jeison Tuiran"), StringStruct("FileDescription", "Jayth"),
+            StringStruct("LegalCopyright", "Copyright (C) 2026 Ing. Jeison Tuiran · GPL-3.0"),
             StringStruct("FileVersion", VERSION), StringStruct("InternalName", "Jayth"),
             StringStruct("OriginalFilename", "Jayth.exe"), StringStruct("ProductName", "Jayth"),
             StringStruct("ProductVersion", VERSION)])]),
@@ -47,7 +48,9 @@ if WIN:
 a = Analysis(
     [os.path.join(ROOT, "app.py")],
     pathex=[ROOT],
-    datas=[(ASSETS, "assets")],
+    datas=[(ASSETS, "assets"),
+           # la GPL-3.0 exige entregar la licencia con el programa; la marca y la firma, para que se sepan sus condiciones
+           (os.path.join(ROOT, "LICENSE"), "."), (os.path.join(ROOT, "MARCA.md"), ".")],
     hiddenimports=hidden,
     # dependencias opcionales que pypdf/mss/Qt arrastran si estan instaladas y Jayth no usa
     excludes=["tkinter", "unittest", "test", "pydoc_data", "lib2to3", "numpy", "PIL", "cryptography", "scipy", "matplotlib",
@@ -99,6 +102,7 @@ if MAC:
             "CFBundleDisplayName": "Jayth",
             "CFBundleShortVersionString": VERSION,
             "CFBundleVersion": VERSION,
+            "NSHumanReadableCopyright": "Copyright (C) 2026 Ing. Jeison Tuiran · GPL-3.0",
             "LSMinimumSystemVersion": "11.0",
             "NSHighResolutionCapable": True,
             "LSApplicationCategoryType": "public.app-category.developer-tools",

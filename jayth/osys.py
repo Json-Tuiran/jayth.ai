@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Todo lo que cambia entre Windows, macOS y Linux, en un solo sitio: carpetas, terminal, abrir archivos,
 papelera, procesos, inicio con el sistema y fuentes."""
 import os, sys, shlex, shutil, signal, subprocess, platform

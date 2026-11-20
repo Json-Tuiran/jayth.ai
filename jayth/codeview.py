@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Piezas del modo Jayth Code: editor con resaltado, pestañas, arbol de archivos, terminal y dialogo de proyecto."""
 import os, re, json, time, uuid
 from PySide6.QtCore import Qt, QRect, QSize, Signal, QFileSystemWatcher, QProcess, QDir, QModelIndex, QTimer, QUrl

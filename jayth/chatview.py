@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Cómo se ve el trabajo del agente en el chat.
 
 - Actividad animada: un icono con un arco que gira y un texto con un brillo que lo recorre («Pensando…»,

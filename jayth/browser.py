@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Navegador integrado: un panel de Jayth (Qt WebEngine) que pueden usar el usuario y el agente.
 
 - El agente lo maneja con herramientas (browser_open, browser_read, browser_click, browser_type, browser_nav,

@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Creacion de documentos de oficina sin dependencias: Word (.docx), Excel (.xlsx), PowerPoint (.pptx) y PDF.
 
 El contenido llega en Markdown sencillo (lo que mejor escriben los modelos pequenos):

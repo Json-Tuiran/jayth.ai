@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Voz: dictar el mensaje con el micrófono y escuchar las respuestas en voz alta. Todo en este equipo.
 
 - Escuchar: voces del sistema (Qt TextToSpeech: SAPI/WinRT en Windows, AVSpeech en macOS, speech-dispatcher en Linux).

@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Proveedores de modelos por API: servicios en la nube (OpenAI, Claude, Gemini, OpenRouter…) o servidores propios
 (Ollama, LM Studio, uno de la empresa) con formato compatible con OpenAI. Se pueden guardar varios y elegir sus
 modelos desde el mismo menú que los modelos locales. Las claves se guardan solo en este equipo."""

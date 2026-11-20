@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Configuración de artefacto para SignPath (se pega en el proyecto «jayth» de SignPath, en Artifact configurations).
+     El paquete que sube GitHub Actions es un .zip con el instalador y el .zip portátil de Windows:
+     se firma el instalador y, dentro del portátil, Jayth.exe. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="Jayth-Setup-*-x64.exe" max-matches="1">
+      <authenticode-sign/>
+    </pe-file>
+    <zip-file path="Jayth-*-windows-x64-portable.zip" max-matches="1">
+      <pe-file path="Jayth/Jayth.exe">
+        <authenticode-sign/>
+      </pe-file>
+    </zip-file>
+  </zip-file>
+</artifact-configuration>

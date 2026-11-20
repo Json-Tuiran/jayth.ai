@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Rutas de la aplicacion. Nada depende de una unidad o carpeta concreta de un equipo.
 
 - Codigo: la carpeta donde este instalado el programa (APP_DIR). Empaquetado, es la carpeta del ejecutable

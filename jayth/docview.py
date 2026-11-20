@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Vistas de lectura del editor de Jayth Code.
 
 - Markdown formateado (títulos, listas, tablas, código, imágenes relativas) en una columna cómoda de leer.

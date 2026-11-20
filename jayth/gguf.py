@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Lectura de los metadatos de un archivo GGUF (solo la cabecera: no carga el modelo).
 
 Se usa para saber qué sabe hacer un modelo ya instalado sin internet: su plantilla de conversación

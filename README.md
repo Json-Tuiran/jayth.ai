@@ -6,6 +6,8 @@ Aplicación de escritorio para **Windows, macOS y Linux** que convierte **cualqu
 agente que programa, crea archivos, ejecuta comandos y programas, usa la web y controla el ordenador. Todo ocurre en tu
 equipo y **tú apruebas cada acción**.
 
+Creado por **Ing. Jeison Tuiran** · Software libre con licencia [GPL-3.0](LICENSE) · [Política de marca](MARCA.md)
+
 ## ⬇️ Descargar
 
 | Sistema | Descarga directa (última versión) |
@@ -156,6 +158,23 @@ Para compilar a mano en cada sistema (con `pip install -r requirements.txt pyins
 | Linux | `bash packaging/linux/build_appimage.sh` | `.AppImage` y `.tar.gz` |
 
 Cada script comprueba el paquete antes de terminar (`Jayth --selftest`).
+
+## Licencia y autoría
+
+**Jayth** fue creado por **Ing. Jeison Tuiran**, que conserva los derechos de autor (Copyright (C) 2026 Ing. Jeison Tuiran).
+
+Es software libre con la licencia **[GNU GPL-3.0](LICENSE)**:
+- **Puedes** usarlo gratis para lo que quieras, estudiar el código, modificarlo y compartirlo.
+- **Si compartes una versión modificada**, tiene que seguir siendo libre: con su código fuente, con la misma licencia
+  GPL-3.0 y conservando el aviso de autor. No se puede convertir Jayth, ni una parte de él, en un programa cerrado.
+- **El nombre «Jayth», su logotipo y sus iconos** son la marca del proyecto: una versión modificada debe llevar otro
+  nombre y otro logo, y no puede presentarse como oficial. Detalles en la [política de marca](MARCA.md).
+
+Las contribuciones al repositorio se aceptan bajo la misma licencia GPL-3.0.
+
+**Firma del código:** los paquetes de Windows se firmarán con
+[SignPath](https://about.signpath.io/) (certificado de [SignPath Foundation](https://signpath.org/)); ver la
+[política de firma](CODE_SIGNING_POLICY.md).
 
 ## Estructura
 

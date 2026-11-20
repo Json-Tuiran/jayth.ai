@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Lienzo: panel junto a la conversación donde el agente muestra lo que crea (páginas web, documentos, dibujos, código).
 
 - Vista previa en vivo y vista del código, con historial de versiones (cada corrección del agente es una versión).

@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Enviar comentarios (errores, sugerencias, preguntas). No hay servidor: se abre una incidencia prellenada en
 GitHub y la persona revisa exactamente qué se envía antes de publicarla. Nada sale del equipo sin su clic."""
 import os, sys, platform, webbrowser, urllib.parse

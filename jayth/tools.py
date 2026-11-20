@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Herramientas que el agente puede usar. Biblioteca estandar de Python; el control del PC usa la API de Windows
 directamente y, en macOS y Linux, mss + pynput (ver control_posix)."""
 import os, re, sys, json, time, html, struct, zlib, ctypes, subprocess, threading, fnmatch, base64

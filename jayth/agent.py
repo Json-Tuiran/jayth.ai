@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Bucle del agente (el «arnés»): habla con el modelo (API compatible con OpenAI), ejecuta herramientas con permisos,
 mantiene el contexto bajo control y aprovecha al máximo modelos locales pequeños y lentos."""
 import os, re, json, time, uuid, base64, socket, threading, datetime, http.client, urllib.parse

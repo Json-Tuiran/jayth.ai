@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Modelos en otros formatos ademas de GGUF.
 
 - Formato original de Hugging Face (safetensors o PyTorch .bin, en una carpeta local o descargado): se convierte a GGUF

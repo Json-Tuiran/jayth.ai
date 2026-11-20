@@ -10,11 +10,16 @@ on:
 
 permissions:
   contents: write
+  actions: read             # SignPath lee el paquete sin firmar de los artefactos de esta ejecución
 
 jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    env:
+      # firma de Windows con SignPath: se activa sola al configurar el secreto SIGNPATH_API_TOKEN y la variable
+      # SIGNPATH_ORGANIZATION_ID del repositorio (ver packaging/FIRMA.md); sin ellos, los paquetes salen sin firmar
+      SIGNPATH_ON: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -63,6 +68,40 @@ jobs:
       - name: Compilar (Linux)
         if: runner.os == 'Linux'
         run: bash packaging/linux/build_appimage.sh
+
+      # ---- firma de Windows (SignPath): se sube el paquete sin firmar, SignPath lo firma (tras aprobarlo el responsable)
+      #      y se sustituye en dist/ por el firmado
+      - name: Paquete sin firmar (Windows)
+        id: sin_firmar
+        if: runner.os == 'Windows' && env.SIGNPATH_ON == 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: jayth-windows-x64-sin-firmar
+          if-no-files-found: error
+          path: |
+            dist/*.exe
+            dist/*.zip
+
+      - name: Firmar con SignPath (Windows)
+        if: runner.os == 'Windows' && env.SIGNPATH_ON == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'jayth' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG || 'initial' }}
+          github-artifact-id: ${{ steps.sin_firmar.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: dist-firmado
+
+      - name: Usar los paquetes firmados (Windows)
+        if: runner.os == 'Windows' && env.SIGNPATH_ON == 'true'
+        shell: pwsh
+        run: |
+          Copy-Item dist-firmado\* dist\ -Force
+          Get-AuthenticodeSignature dist\*.exe | Format-Table Status, SignerCertificate, Path -AutoSize
 
       - uses: actions/upload-artifact@v5
         with:

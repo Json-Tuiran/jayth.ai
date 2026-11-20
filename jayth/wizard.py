@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Asistente de configuracion, gestor de modelos y ajustes (ventanas de dialogo)."""
 import os, re, time, shutil, threading, urllib.request
 from PySide6.QtCore import Qt, QTimer, Signal, QObject

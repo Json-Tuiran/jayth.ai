@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Ventana de tareas programadas: lista con su próxima ejecución y formulario para crearlas o cambiarlas."""
 import datetime
 from PySide6.QtCore import Qt, QTime, QDate

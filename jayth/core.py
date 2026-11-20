@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Nucleo compartido por la app de escritorio y la interfaz web: ajustes, conversaciones y el proceso del modelo."""
 import os, re, json, time, uuid, threading, subprocess, http.client
 from . import paths, osys

@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Ventana de Ajustes con secciones (los cambios se guardan al instante)."""
 import os, re, sys, json, subprocess, threading, webbrowser, urllib.request, datetime
 from PySide6.QtCore import Qt, QTimer, QSize
@@ -811,8 +813,18 @@ class SettingsDialog(QDialog):
         n.setStyleSheet("font-size:18pt; font-weight:700")
         tl.addWidget(n)
         tl.addWidget(lbl("Agente de IA local para tu escritorio · versión %s" % __version__, "muted"))
+        tl.addWidget(lbl("Creado por Ing. Jeison Tuiran", "muted"))
         head.addLayout(tl, 1)
         v.addLayout(head)
+        lic = lbl("Software libre con licencia GNU GPL-3.0 · Copyright (C) 2026 Ing. Jeison Tuiran.\nEl nombre «Jayth» y su logotipo son la marca "
+                  "del proyecto: las versiones modificadas deben llevar otro nombre.", "faint")
+        lic.setWordWrap(True)
+        v.addWidget(lic)
+        r = QHBoxLayout()
+        r.addWidget(btn("Ver la licencia", cb=lambda: webbrowser.open("https://github.com/%s/blob/main/LICENSE" % REPO), ico="est_info"))
+        r.addWidget(btn("Política de marca", cb=lambda: webbrowser.open("https://github.com/%s/blob/main/MARCA.md" % REPO), ico="est_info"))
+        r.addStretch(1)
+        v.addLayout(r)
         commit = local_commit()
         v.addWidget(lbl("Código: %s%s\nMotor: llama.cpp %s\nDatos: %s" % (paths.APP_DIR, (" · " + commit[:7]) if commit else "", cfg["llama_tag"] or "—", paths.HOME), "faint"))
         self.upd = lbl("", "muted")

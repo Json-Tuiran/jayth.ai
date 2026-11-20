@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Asistentes y habilidades.
 
 - Asistente: un «perfil» de Jayth con nombre, instrucciones propias y archivos de referencia (como los GPTs, Gems o

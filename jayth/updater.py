@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Novedades: versiones nuevas de Jayth (GitHub) y de los modelos instalados (Hugging Face).
 
 Tres formas de instalacion:

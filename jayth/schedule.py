@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Tareas programadas: encargos que Jayth ejecuta solo a su hora («cada mañana resúmeme las noticias», «el viernes
 revisa esta carpeta») y avisa al terminar. Funcionan mientras Jayth esté abierto (también en la bandeja del sistema);
 si a la hora prevista estaba cerrado, la tarea se ejecuta al abrirlo.

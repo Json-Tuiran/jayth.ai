@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Infraestructura del arnés del agente: contexto del proyecto, memoria, reparación de JSON, ajustes de muestreo por
 familia de modelo, puntos de restauración (deshacer), procesos en segundo plano, lectura de documentos y cliente MCP."""
 import os, re, json, time, uuid, shlex, shutil, zipfile, threading, subprocess, html

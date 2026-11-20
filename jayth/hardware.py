@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Deteccion del hardware y recomendacion de cuantizacion / motor en Windows, macOS y Linux."""
 import os, re, shutil, ctypes, platform, subprocess
 from . import osys

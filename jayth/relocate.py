@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Modelos que cambiaron de sitio: Jayth los encuentra y los vuelve a enlazar solo.
 
 Casos que cubre: el archivo se cortó y se pegó en otra carpeta del mismo disco o de otro; se movió toda la carpeta de

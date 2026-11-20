@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Señales visibles de que el agente está actuando.
 
 - ControlOverlay: mientras el agente usa el ratón y el teclado, un brillo animado recorre los bordes de la pantalla,

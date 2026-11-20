@@ -1,3 +1,5 @@
+# Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
+# SPDX-License-Identifier: GPL-3.0-only
 """Identidad visual de Jayth: carbón verdoso con el verde solo como acento (basado en el sistema de diseño
 de Reality Engine, con verdes más sutiles), en claro y oscuro. Incluye el logo, los iconos teñibles,
 tooltips propios y el pulido de ventanas emergentes (esquinas redondeadas y sombra nativas de Windows 11)."""
