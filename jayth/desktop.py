@@ -3824,6 +3824,8 @@ def main():
     app.setApplicationName(APP_NAME)
     app.setDesktopFileName("jayth")        # Linux: enlaza la ventana con jayth.desktop (icono correcto en el dock/panel)
     install_spanish(app)
+    from .widgets import install_screen_fit
+    install_screen_fit(app)                  # ningún diálogo más grande que la pantalla
     cfg = core.SET.snapshot()
     theme.apply(app, cfg["theme"], cfg["font_scale"])
     app.setWindowIcon(make_icon())

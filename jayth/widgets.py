@@ -10,8 +10,65 @@ from PySide6.QtCore import Qt, QSize, QRect, QPoint, Signal, QTimer
 from PySide6.QtGui import (QTextOption, QTextCursor, QColor, QTextFormat, QDesktopServices, QPainter, QLinearGradient, QTextCharFormat,
                            QTextFrameFormat)
 from PySide6.QtWidgets import (QTextBrowser, QFrame, QLayout, QSizePolicy, QHBoxLayout, QLabel, QWidget, QAbstractScrollArea, QApplication,
-                               QToolButton, QPushButton, QStyledItemDelegate)
+                               QToolButton, QPushButton, QStyledItemDelegate, QScrollArea, QDialog)
+from PySide6.QtCore import QObject, QEvent
 from .theme import C, pix
+
+
+# ---------------------------------------------------------------- ventanas que caben en la pantalla
+def _screen_of(win, parent=None):
+    from PySide6.QtGui import QGuiApplication, QCursor
+    ref = parent if parent is not None else win.parentWidget()
+    scr = ref.screen() if ref is not None else None
+    return scr or QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+
+
+def fit_to_screen(win, w, h, parent=None):
+    """Tamaño deseado, pero nunca mayor que la pantalla (en portátiles de 768 px de alto las ventanas se salían)."""
+    g = _screen_of(win, parent).availableGeometry()
+    win.resize(min(w, g.width() - 24), min(h, g.height() - 48))
+
+
+def scrollable(widget):
+    """Envuelve una zona para que se desplace en vertical si no cabe (sin marco y sin barra horizontal)."""
+    sa = QScrollArea()
+    sa.setWidgetResizable(True)
+    sa.setFrameShape(QFrame.NoFrame)
+    sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    sa.setObjectName("pageScroll")
+    sa.viewport().setAutoFillBackground(False)
+    widget.setAutoFillBackground(False)
+    sa.setWidget(widget)
+    return sa
+
+
+class ScreenFit(QObject):
+    """Para toda la aplicación: al mostrarse un diálogo más grande que la pantalla, se encoge y se centra."""
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.Show and isinstance(obj, QDialog) and obj.isWindow():
+            g = _screen_of(obj).availableGeometry()
+            fr = obj.frameGeometry()
+            extra_h, extra_w = fr.height() - obj.height(), fr.width() - obj.width()
+            w = min(obj.width(), g.width() - extra_w - 8)
+            h = min(obj.height(), g.height() - extra_h - 8)
+            if (w, h) != (obj.width(), obj.height()):
+                obj.resize(max(w, 200), max(h, 150))
+                fr = obj.frameGeometry()
+            if not g.contains(fr):           # que no quede ningún borde fuera (el título tampoco)
+                x = min(max(fr.x(), g.x()), g.right() - fr.width() + 1)
+                y = min(max(fr.y(), g.y()), g.bottom() - fr.height() + 1)
+                obj.move(max(x, g.x()), max(y, g.y()))
+        return False
+
+
+_FIT = []
+
+
+def install_screen_fit(app):
+    if not _FIT:
+        _FIT.append(ScreenFit(app))
+        app.installEventFilter(_FIT[0])
 
 
 class ElideDelegate(QStyledItemDelegate):

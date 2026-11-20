@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QGrid
                                QTabWidget, QScrollArea, QFrame)
 from . import core, paths, osys, hardware as HW, provision as P, agent as A, convert as CV
 from .theme import C, restyle, icon
+from .widgets import fit_to_screen, scrollable
 from PySide6.QtCore import QSize
 
 # ---------------------------------------------------------------- utilidades
@@ -100,7 +101,7 @@ class SetupWizard(QDialog):
         super().__init__(parent)
         self.preset_repo = repo           # p. ej. al pulsar «Ver» en el aviso de un modelo nuevo
         self.setWindowTitle("Asistente de configuración")
-        self.resize(940, 720)
+        fit_to_screen(self, 940, 720, parent)
         self.cfg = core.SET.snapshot()
         self.hw = None
         self.info = None
@@ -109,7 +110,8 @@ class SetupWizard(QDialog):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(22, 18, 22, 16)
         self.stack = QStackedWidget()
-        lay.addWidget(self.stack, 1)
+        # las páginas se desplazan si no caben (pantallas de poca altura); los botones de abajo siempre quedan a la vista
+        lay.addWidget(scrollable(self.stack), 1)
         nav = QHBoxLayout()
         self.b_cancel = btn("Cancelar", cb=self.reject)
         self.b_back = btn("Atrás", cb=self.back)
