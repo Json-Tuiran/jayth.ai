@@ -63,6 +63,8 @@ DEFAULTS = {
     "model_news": True,          # avisar cuando se publiquen versiones nuevas de tus modelos
     "model_news_seen": [],
     # personalizacion
+    "assistants": [],            # asistentes propios: {id, name, instructions, files}
+    "skills_disabled": [],       # habilidades apagadas (por su id de carpeta)
     "memory_enabled": True,      # usar y guardar la memoria entre conversaciones
     "about_me": "",
     "response_style": "",
@@ -325,6 +327,11 @@ class Session:
                 extra += "\nInstrucciones del proyecto:\n" + proj["instructions"]
             cfg["custom_instructions"] = (cfg["custom_instructions"] + "\n\n" + extra).strip()
             os.makedirs(proj["path"], exist_ok=True)
+        if self.data.get("assistant"):       # la conversación usa un asistente: sus instrucciones y archivos de referencia
+            from . import assistants as AS
+            a = AS.get(self.data["assistant"], cfg)
+            if a:
+                cfg["custom_instructions"] = (cfg["custom_instructions"] + "\n\n" + AS.instructions_for(a)).strip()
         cfg["_sid"] = self.id
         cfg["_temp"] = self.temp
         cfg["_model_title"] = model_title(active_model(cfg)) if cfg["llm_mode"] == "local" else (cfg.get("external_model") or "")

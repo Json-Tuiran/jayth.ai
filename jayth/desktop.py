@@ -326,6 +326,7 @@ STEP = {  # herramienta: (infinitivo, pasado, objeto)
     "view_image": ("ver la imagen", "Vio la imagen", lambda a: _b(a.get("path"))),
     "remember": ("recordar", "Recordó", lambda a: "«%s»" % _q(a.get("fact"), 50)),
     "forget": ("olvidar", "Olvidó", lambda a: "«%s»" % _q(a.get("text"), 50)),
+    "use_skill": ("usar la habilidad", "Usó la habilidad", lambda a: "«%s»" % _q(a.get("name"), 50)),
 }
 
 
@@ -1256,6 +1257,9 @@ class ChatPanel(QWidget):
         pm.addAction(icon("acc_nuevo"), "Adjuntar archivos o documentos…", self.attach_files)
         pm.addAction(icon("uij_imagen"), "Adjuntar imagen…", self.attach)
         pm.addAction(icon("vista_captura"), "Adjuntar captura de pantalla", self.attach_screenshot)
+        pm.addSeparator()
+        self.assist_menu = pm.addMenu(icon("ia_controlador"), "Usar un asistente")
+        self.assist_menu.aboutToShow.connect(self._fill_assist_menu)
         plus.setMenu(pm)
         plus.setToolTip("Adjuntar archivos, documentos, imágenes o una captura")
         row.addWidget(plus)
@@ -1357,6 +1361,7 @@ class ChatPanel(QWidget):
                 old.run.request_stop()
             core.SESSIONS.pop(old.id, None)
         self.temp_next = False
+        self.assistant_next = None
         self.sid = sid
         self.ev_i = 0
         self.cur = None
@@ -1686,7 +1691,11 @@ class ChatPanel(QWidget):
             return self.main.setup()
         if not self.session():
             temp = bool(getattr(self, "temp_next", False))
-            self.open_session(core.new_session(self.project_id, temp=temp).id)
+            aid = getattr(self, "assistant_next", None)
+            ns = core.new_session(self.project_id, temp=temp)
+            if aid:
+                ns.data["assistant"] = aid
+            self.open_session(ns.id)
             if temp:
                 self.add(note("Chat temporal: esta conversación no se guarda en el historial y no usa ni cambia la memoria."))
         err = self.session().send(text, list(self.pending_imgs), files)
@@ -1757,6 +1766,42 @@ class ChatPanel(QWidget):
         text = "%s · %s" % (fm.elidedText(name, Qt.ElideRight, max(48, room)), label)
         if text != cur:
             self.model_chip.setText(text)
+
+    # ---- asistente de la conversación
+    def assistant_id(self):
+        s = self.session()
+        return (s.data.get("assistant") if s else None) or getattr(self, "assistant_next", None)
+
+    def _fill_assist_menu(self):
+        from . import assistants as AS
+        m = self.assist_menu
+        m.clear()
+        cur, started = self.assistant_id(), bool(self.session() and self.session().events)
+        for a in AS.all_assistants():
+            act = m.addAction(a["name"])
+            act.setCheckable(True)
+            act.setChecked(a["id"] == cur)
+            act.triggered.connect(lambda _=False, i=a["id"]: self.set_assistant(None if i == self.assistant_id() else i))
+        if not AS.all_assistants():
+            na = m.addAction("Aún no tienes asistentes")
+            na.setEnabled(False)
+        m.addSeparator()
+        m.addAction("Crear o editar asistentes…", lambda: self.main.assistants())
+        if started:
+            m.setToolTipsVisible(True)
+
+    def set_assistant(self, aid):
+        """Elige el asistente de la conversación (si ya había empezado, se abre una nueva con él)."""
+        if self.busy:
+            return
+        if self.session() and self.session().events:
+            self.open_session(None)
+        self.assistant_next = aid
+        s = self.session()
+        if s:
+            s.data["assistant"] = aid
+        self._render_thumbs()
+        self.input.setFocus()
 
     IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 
@@ -1839,6 +1884,19 @@ class ChatPanel(QWidget):
             h.addWidget(im)
             h.addWidget(tbtn("ui_cerrar", "Quitar", lambda _=False, n=n: (self.pending_imgs.remove(n), self._render_thumbs()), size=12), 0, Qt.AlignTop)
             self.thumbs.addWidget(w)
+        from . import assistants as AS
+        a = AS.get(self.assistant_id())
+        if a:                                # etiqueta del asistente elegido (se quita con ×, antes de empezar)
+            w = QFrame()
+            w.setObjectName("noteBox")
+            h = QHBoxLayout(w)
+            h.setContentsMargins(8, 4, 2, 4)
+            h.setSpacing(4)
+            h.addWidget(pix_label("ia_controlador", C["acc"], 13))
+            h.addWidget(QLabel("Asistente: " + a["name"]))
+            if not (self.session() and self.session().events):
+                h.addWidget(tbtn("ui_cerrar", "Quitar el asistente", lambda _=False: self.set_assistant(None), size=11))
+            self.thumbs.addWidget(w)
         for f in getattr(self, "pending_files", []):
             w = QFrame()
             w.setObjectName("noteBox")
@@ -1852,7 +1910,7 @@ class ChatPanel(QWidget):
             h.addWidget(tbtn("ui_cerrar", "Quitar", lambda _=False, f=f: (self.pending_files.remove(f), self._render_thumbs()), size=11))
             w.setToolTip(f)
             self.thumbs.addWidget(w)
-        self.thumbs_w.setVisible(bool(self.pending_imgs or getattr(self, "pending_files", [])))
+        self.thumbs_w.setVisible(bool(self.pending_imgs or getattr(self, "pending_files", []) or a))
         self._sync_send()
 
     def _sync_send(self):
@@ -2524,6 +2582,7 @@ class Main(QMainWindow):
         pm.addAction(icon("acc_ajustes"), "Ajustes", lambda: self.settings("General"))
         pm.addAction(icon("mat_comentario"), "Personalización", lambda: self.settings("Personalización"))
         pm.addAction(icon("ia_memoria"), "Memoria", lambda: self.settings("Personalización"))
+        pm.addAction(icon("ia_controlador"), "Asistentes y habilidades", self.assistants)
         pm.addAction(icon("ia_controlador"), "Modelos", self.models)
         pm.addAction(icon("hub_conectar"), "Modelos por API…", self.providers)
         pm.addSeparator()
@@ -3219,6 +3278,12 @@ class Main(QMainWindow):
             p.empty = p.add(p._empty_state())
         p.input.setFocus()
         self.sync()
+
+    def assistants(self, tab=0):
+        from .assistants import AssistantsDialog
+        AssistantsDialog(self, tab).exec()
+        for p in (self.chat, self.code.chat):
+            p._render_thumbs()
 
     def providers(self):
         from .providers import ProvidersDialog

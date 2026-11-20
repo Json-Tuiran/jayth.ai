@@ -32,7 +32,7 @@ TOOL_LABELS = {
     "move_mouse": "Mover el ratón", "scroll": "Desplazar (rueda)", "type_text": "Escribir con el teclado", "press_keys": "Pulsar teclas",
     "list_windows": "Ver ventanas abiertas", "focus_window": "Activar una ventana", "command_output": "Ver salida de procesos",
     "stop_command": "Detener procesos", "read_document": "Leer documentos", "view_image": "Ver imágenes", "update_plan": "Plan de tareas",
-    "run_python": "Analizar datos con Python", "show_canvas": "Mostrar en el lienzo", "ask_user": "Preguntarte", "remember": "Recordar preferencias", "forget": "Olvidar un recuerdo", "create_document": "Crear documentos (Word, Excel, PowerPoint, PDF)",
+    "run_python": "Analizar datos con Python", "show_canvas": "Mostrar en el lienzo", "ask_user": "Preguntarte", "remember": "Recordar preferencias", "forget": "Olvidar un recuerdo", "use_skill": "Usar una habilidad", "create_document": "Crear documentos (Word, Excel, PowerPoint, PDF)",
 }
 CATEGORIES = {"read": "Lectura", "write": "Escritura", "exec": "Ejecución", "net": "Red", "control": "Control del PC",
               "agent": "Agente", "mcp": "Conector"}
@@ -1141,6 +1141,19 @@ def show_canvas(a, ctx):
     what = {"html": "página web", "markdown": "documento", "svg": "dibujo", "code": "código"}[kind]
     return {"text": "Mostrado en el lienzo: «%s» (%s, versión %d). El usuario ya lo ve; no repitas el contenido en tu respuesta." % (title, what, ver),
             "ui": {"canvas": {"title": title, "kind": kind, "path": p, "version": ver, "slug": slug, "language": lang}}}
+
+
+@tool("use_skill", "agent", "Carga las instrucciones completas de una habilidad de la lista «Habilidades» para seguirlas en la tarea actual.",
+      {"name": S("Nombre de la habilidad")}, ["name"])
+def use_skill(a, ctx):
+    from . import assistants as AS
+    s = AS.find_skill(a.get("name"))
+    if not s:
+        names = ", ".join(x["name"] for x in AS.enabled_skills()) or "(ninguna)"
+        raise ToolError("No existe la habilidad «%s». Disponibles: %s" % (a.get("name"), names))
+    extra = [f for f in sorted(os.listdir(s["folder"])) if f != "SKILL.md"]
+    tail = ("\n\nArchivos de apoyo en %s (léelos con read_file si los necesitas): %s" % (s["folder"], ", ".join(extra))) if extra else ""
+    return "Instrucciones de la habilidad «%s»:\n\n%s%s" % (s["name"], s["body"], tail)
 
 
 @tool("ask_user", "agent", "Pregunta al usuario cuando falta información o hay que elegir entre opciones. Espera su respuesta.",

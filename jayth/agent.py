@@ -66,6 +66,13 @@ def system_prompt(cfg):
     mem = "" if (cfg.get("_temp") or not cfg.get("memory_enabled", True)) else H.memory_text()
     if mem:
         p += "\n\n## Memoria (lo que el usuario te pidió recordar)\n" + mem
+    try:
+        from . import assistants as AS
+        sk = AS.skills_prompt(cfg)
+    except Exception:
+        sk = ""
+    if sk:
+        p += "\n\n## Habilidades\n" + sk
     ctx = H.context_files(cfg["workspace"])
     if ctx:
         p += "\n\n## Instrucciones del proyecto\n" + ctx
