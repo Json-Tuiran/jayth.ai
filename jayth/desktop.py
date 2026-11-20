@@ -1871,7 +1871,7 @@ class ChatPanel(QWidget):
         label, desc = next((l, d) for k, l, d in core.EFFORTS if k == eff)
         ext = cfg["llm_mode"] == "external"
         m = core.active_model(cfg)
-        name = ("Externo · " + (cfg["external_model"] or "servidor")) if ext else (core.model_title(m) if m else "Elegir modelo")
+        name = ((cfg["external_model"] or "servidor externo").split("/")[-1]) if ext else (core.model_title(m) if m else "Elegir modelo")
         self._chip_name, self._chip_label = name, label
         self._fit_model_chip()                                          # modelo · esfuerzo (se cambian en el mismo menú)
         self.model_chip.setToolTip("%s\nEsfuerzo %s: %s\nPulsa para cambiar de modelo o de esfuerzo." % (
@@ -2181,6 +2181,8 @@ class Main(QMainWindow):
         self.model_news = []
         self.folded, self.chat_width, self._side_sized = set(), 780, False
         self._build()
+        from . import providers as _pv
+        _pv.migrate()                        # el antiguo servidor externo único pasa a la lista de servicios
         self._init_peek()
         self._init_quick()
         self._tray()
@@ -3122,13 +3124,24 @@ class Main(QMainWindow):
             a.setToolTip(md.get("path", ""))
             grp.addAction(a)
             a.triggered.connect(lambda _=False, i=md["id"]: self._use_model(i))
-        if ext or cfg["external_model"]:
+        # modelos por API de los servicios guardados (OpenAI, Claude, Gemini, Ollama…)
+        from . import providers as PV
+        provs = PV.saved(cfg)
+        for p in provs:
+            for name in p.get("models") or []:
+                a = m.addAction("%s\t%s" % (name.split("/")[-1] if len(name) > 34 else name, p["name"]))
+                a.setCheckable(True)
+                a.setChecked(ext and cfg.get("external_provider") == p["id"] and cfg["external_model"] == name)
+                a.setToolTip("%s · %s" % (name, p["url"]))
+                grp.addAction(a)
+                a.triggered.connect(lambda _=False, p=p, n=name: (PV.use(p, n), setattr(self, "llm", {"state": "off"}), self.poll(), self.sync()))
+        if (ext or cfg["external_model"]) and not provs:
             a = m.addAction("%s\tservidor externo" % (cfg["external_model"] or cfg["external_url"]))
             a.setCheckable(True)
             a.setChecked(ext)
             grp.addAction(a)
             a.triggered.connect(lambda: (core.LLM_MGR.stop(), core.SET.update({"llm_mode": "external"}), self.poll()))
-        if not cfg["models"] and not (ext or cfg["external_model"]):
+        if not cfg["models"] and not (ext or cfg["external_model"]) and not provs:
             na = m.addAction("Aún no tienes modelos")
             na.setEnabled(False)
         m.addSeparator()
@@ -3149,7 +3162,7 @@ class Main(QMainWindow):
         more = m.addMenu(icon("acc_anadir"), "Más modelos")
         more.addAction(icon("acc_descargar"), "Descargar o añadir un modelo…", lambda: self.setup("model"))
         more.addAction(icon("ia_controlador"), "Gestionar modelos…", self.models)
-        more.addAction(icon("hub_conectar"), "Conectar un servidor externo…", lambda: self.setup("model"))
+        more.addAction(icon("hub_conectar"), "Modelos por API (OpenAI, Claude, Gemini, Ollama…)…", self.providers)
         if not ext:
             m.addSeparator()
             sec = m.addAction("Motor")
@@ -3160,6 +3173,12 @@ class Main(QMainWindow):
             on.setChecked(st in ("ready", "loading"))
             on.setToolTip("Encendido, el modelo ocupa memoria y responde al momento; apagado, libera la memoria.")
             on.triggered.connect(lambda _=False: self.toggle_llm())
+
+    def providers(self):
+        from .providers import ProvidersDialog
+        ProvidersDialog(self).exec()
+        self.poll()
+        self.sync()
 
     def _use_model(self, mid):
         cfg = core.SET.snapshot()

@@ -14,6 +14,8 @@ DEFAULTS = {
     "external_url": "http://127.0.0.1:11434/v1",
     "external_key": "",
     "external_model": "",
+    "providers": [],             # servicios por API guardados: {id, name, url, key, models}
+    "external_provider": "",     # id del proveedor al que pertenece el modelo externo activo
     # modelos locales (GGUF). Cada uno: {id, name, path, mmproj, repo, file, size, sha256, mmproj_file, mmproj_size, mmproj_sha256}
     "models": [],
     "active_model": "",
@@ -517,12 +519,16 @@ class LLM:
         return {"state": "off"}
 
     def _external_status(self, cfg):
-        import urllib.request
+        import urllib.request, urllib.error
         try:
             req = urllib.request.Request(cfg["external_url"].rstrip("/") + "/models",
                                          headers={"Authorization": "Bearer " + (cfg["external_key"] or "local")})
-            urllib.request.urlopen(req, timeout=2).read(200)
+            urllib.request.urlopen(req, timeout=4).read(200)
             return {"state": "ready", "external": True}
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                return {"state": "off", "external": True, "error": "El servicio rechazó la clave de API (HTTP %d)." % e.code}
+            return {"state": "ready", "external": True}      # contesta, aunque no ofrezca la lista de modelos
         except Exception as e:
             return {"state": "off", "external": True, "error": "Servidor externo no disponible"}
 
