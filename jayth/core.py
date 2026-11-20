@@ -63,6 +63,7 @@ DEFAULTS = {
     "model_news": True,          # avisar cuando se publiquen versiones nuevas de tus modelos
     "model_news_seen": [],
     # personalizacion
+    "memory_enabled": True,      # usar y guardar la memoria entre conversaciones
     "about_me": "",
     "response_style": "",
     "response_language": "auto",
@@ -272,6 +273,7 @@ class Session:
         self.cond = threading.Condition()
         self.run = None
         self.updated = self.created
+        self.temp = False            # chat temporal: no se guarda en disco, no usa ni escribe la memoria
         self.jpath = os.path.join(paths.SESS_DIR, sid + ".json")
         self.epath = os.path.join(paths.SESS_DIR, sid + ".events.jsonl")
 
@@ -285,8 +287,9 @@ class Session:
             ev["ts"] = round(time.time(), 2)
             self.events.append(ev)
             try:
-                with open(self.epath, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+                if not self.temp:                    # el chat temporal vive solo en memoria
+                    with open(self.epath, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(ev, ensure_ascii=False) + "\n")
             except Exception:
                 pass
             self.updated = time.time()
@@ -295,6 +298,8 @@ class Session:
             self.save()
 
     def save(self):
+        if self.temp:
+            return
         try:
             tmp = self.jpath + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
@@ -321,6 +326,7 @@ class Session:
             cfg["custom_instructions"] = (cfg["custom_instructions"] + "\n\n" + extra).strip()
             os.makedirs(proj["path"], exist_ok=True)
         cfg["_sid"] = self.id
+        cfg["_temp"] = self.temp
         cfg["_model_title"] = model_title(active_model(cfg)) if cfg["llm_mode"] == "local" else (cfg.get("external_model") or "")
         attach = attachments_text(files)
         if cfg["mode"] == "plan":
@@ -345,7 +351,7 @@ class Session:
     def _auto_title(self, cfg):
         """El modelo elegido pone nombre a la conversacion (una vez; si falla, se reintenta en la siguiente respuesta)."""
         left = self.data.get("title_auto") or 0
-        if not left or self.run is not None:
+        if not left or self.run is not None or self.temp:
             return
         self.data["title_auto"] = left - 1
         t = A.make_title(cfg, self.data["messages"])
@@ -462,8 +468,9 @@ def load_sessions():
                 continue
 
 
-def new_session(project_id=None):
+def new_session(project_id=None, temp=False):
     s = Session(uuid.uuid4().hex[:10])
+    s.temp = temp
     if project_id:
         s.data["project"] = project_id
     SESSIONS[s.id] = s
@@ -480,7 +487,7 @@ def project(cfg, pid):
 
 def sessions_for(project_id=None):
     """Conversaciones del modo Chat (project_id=None) o de un proyecto."""
-    return [s for s in sorted_sessions() if (s.data.get("project") or None) == (project_id or None)]
+    return [s for s in sorted_sessions() if (s.data.get("project") or None) == (project_id or None) and not s.temp]
 
 
 def sorted_sessions():

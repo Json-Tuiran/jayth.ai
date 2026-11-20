@@ -306,24 +306,82 @@ class SettingsDialog(QDialog):
         self._section(v, "Memoria")
         v.addWidget(lbl("Lo que %s recuerda de ti entre conversaciones (lo guarda cuando le dices algo duradero, como «uso pnpm»). "
                         "Puedes editarlo o borrarlo." % APP_NAME, "faint"))
-        from . import harness
-        self.mem = QPlainTextEdit(harness.memory_text(20000))
-        self.mem.setPlaceholderText("- Prefiero respuestas cortas\n- Mis proyectos están en D:\\Trabajo")
-        self.mem.setFixedHeight(120)
-        self.mem.textChanged.connect(lambda: self._debounced("__memory__", lambda: self._save_memory(self.mem.toPlainText())))
-        v.addWidget(self.mem)
+        self.field(v, "memory_enabled", "Usar la memoria (recordar cosas entre conversaciones)", "bool",
+                   help="Apagada, %s no lee ni guarda recuerdos. Para una sola conversación sin memoria usa el chat temporal." % APP_NAME)
+        self.mem_box = QVBoxLayout()
+        self.mem_box.setSpacing(4)
+        v.addLayout(self.mem_box)
         r = QHBoxLayout()
-        r.addWidget(btn("Borrar la memoria", "danger", lambda: self.mem.setPlainText("")))
+        self.mem_new = QLineEdit()
+        self.mem_new.setPlaceholderText("Añadir un recuerdo, p. ej.: Prefiero respuestas cortas")
+        self.mem_new.returnPressed.connect(self._mem_add)
+        r.addWidget(self.mem_new, 1)
+        r.addWidget(btn("Añadir", None, self._mem_add, "acc_anadir"))
+        v.addLayout(r)
+        r = QHBoxLayout()
+        self.mem_clear = btn("Borrar toda la memoria", "danger", self._mem_clear)
+        r.addWidget(self.mem_clear)
         r.addStretch(1)
         v.addLayout(r)
+        self._mem_render()
         v.addWidget(lbl("En los proyectos, %s también lee AGENTS.md, JAYTH.md o CLAUDE.md de la carpeta: escribe ahí las normas del proyecto." % APP_NAME, "faint"))
 
-    def _save_memory(self, text):
+    # ---- memoria: un recuerdo por fila, cada uno se puede corregir o borrar
+    def _mem_render(self):
         from . import harness
-        os.makedirs(os.path.dirname(harness.MEMORY), exist_ok=True)
-        with open(harness.MEMORY, "w", encoding="utf-8") as f:
-            f.write(text.strip() + ("\n" if text.strip() else ""))
-        return None
+        while self.mem_box.count():
+            w = self.mem_box.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        items = harness.memory_items()
+        self.mem_clear.setVisible(bool(items))
+        if not items:
+            self.mem_box.addWidget(lbl("Todavía no hay recuerdos guardados.", "faint"))
+        for i, (text, date) in enumerate(items):
+            row = QFrame()
+            row.setObjectName("noteBox")
+            h = QHBoxLayout(row)
+            h.setContentsMargins(10, 4, 4, 4)
+            e = QLineEdit(text)
+            e.setFrame(False)
+            e.setStyleSheet("background: transparent")
+            e.setToolTip("Edita el recuerdo y pulsa Enter para guardarlo")
+            e.editingFinished.connect(lambda i=i, e=e: self._mem_edit(i, e.text()))
+            h.addWidget(e, 1)
+            if date:
+                h.addWidget(lbl(date, "faint", wrap=False))
+            b = btn("Olvidar", None, lambda _=False, i=i: self._mem_edit(i, ""))
+            b.setProperty("kind", "flat")
+            h.addWidget(b)
+            self.mem_box.addWidget(row)
+
+    def _mem_edit(self, i, text):
+        from . import harness
+        items = harness.memory_items()
+        if i >= len(items) or items[i][0] == text.strip():
+            return
+        if text.strip():
+            items[i] = (text.strip(), items[i][1])
+        else:
+            del items[i]
+        harness.memory_save(items)
+        self.saved.setText("Memoria actualizada.")
+        if not text.strip():
+            QTimer.singleShot(0, self._mem_render)
+
+    def _mem_add(self):
+        from . import harness
+        t = self.mem_new.text().strip()
+        if t:
+            harness.remember(t)
+            self.mem_new.clear()
+            self._mem_render()
+
+    def _mem_clear(self):
+        from . import harness
+        if QMessageBox.question(self, "Borrar la memoria", "¿Borrar todos los recuerdos? No se puede deshacer.") == QMessageBox.StandardButton.Yes:
+            harness.memory_save([])
+            self._mem_render()
 
     def p_models(self, v):
         cfg = core.SET.snapshot()

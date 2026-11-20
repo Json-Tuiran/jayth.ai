@@ -325,6 +325,7 @@ STEP = {  # herramienta: (infinitivo, pasado, objeto)
     "read_document": ("leer el documento", "Leyó el documento", lambda a: _b(a.get("path"))),
     "view_image": ("ver la imagen", "Vio la imagen", lambda a: _b(a.get("path"))),
     "remember": ("recordar", "Recordó", lambda a: "«%s»" % _q(a.get("fact"), 50)),
+    "forget": ("olvidar", "Olvidó", lambda a: "«%s»" % _q(a.get("text"), 50)),
 }
 
 
@@ -1350,6 +1351,12 @@ class ChatPanel(QWidget):
         return w
 
     def open_session(self, sid):
+        old = core.SESSIONS.get(self.sid) if self.sid else None
+        if old is not None and old.temp and old.id != sid:      # al salir de un chat temporal, desaparece
+            if old.run:
+                old.run.request_stop()
+            core.SESSIONS.pop(old.id, None)
+        self.temp_next = False
         self.sid = sid
         self.ev_i = 0
         self.cur = None
@@ -1377,6 +1384,9 @@ class ChatPanel(QWidget):
             return EmptyState("¿Qué construimos en «%s»?" % (p["name"] if p else "tu proyecto"),
                               "Trabajo dentro de la carpeta del proyecto. Verás cada archivo que cree o cambie.",
                               CODE_SUGGESTIONS, self._pick, self.compact)
+        if getattr(self, "temp_next", False):
+            return EmptyState("Chat temporal", "Esta conversación no se guardará en el historial y no usa ni cambia la memoria. "
+                              "Al empezar otra conversación, desaparece.", [], self._pick, self.compact)
         name = core.SET.snapshot().get("user_name", "").strip()
         return EmptyState("¿En qué te ayudo%s?" % (", " + name if name else " hoy"),
                           "Puedo trabajar con tus archivos, programas y la web. Cada acción la ves y la apruebas tú.",
@@ -1522,6 +1532,10 @@ class ChatPanel(QWidget):
             r = self.rows.get(ev["id"])
             if r:
                 r.result(ev["ok"], ev.get("text") or "", ev.get("image"))
+                if ev["ok"] and r.ev["name"] in ("remember", "forget") and ev["ts"] > time.time() - 10:
+                    fact = str((r.ev.get("args") or {}).get("fact") or (r.ev.get("args") or {}).get("text") or "")
+                    self.main.toast(("Guardado en la memoria: «%s»" if r.ev["name"] == "remember" else "Olvidado: «%s»") % fact[:90],
+                                    "Ver memoria", lambda: self.main.settings("Personalización"), icon_name="ia_memoria")
                 if ev["ok"] and r.box is not None:
                     for n in (ev.get("images") or [])[1:]:           # el resto de gráficos de un análisis
                         r.box.add_preview(os.path.join(paths.IMG_DIR, n))
@@ -1671,7 +1685,10 @@ class ChatPanel(QWidget):
         if not core.SET.ready():
             return self.main.setup()
         if not self.session():
-            self.open_session(core.new_session(self.project_id).id)
+            temp = bool(getattr(self, "temp_next", False))
+            self.open_session(core.new_session(self.project_id, temp=temp).id)
+            if temp:
+                self.add(note("Chat temporal: esta conversación no se guarda en el historial y no usa ni cambia la memoria."))
         err = self.session().send(text, list(self.pending_imgs), files)
         if err:
             return QMessageBox.information(self, APP_NAME, err)
@@ -2506,7 +2523,9 @@ class Main(QMainWindow):
         pm = QMenu(self)
         pm.addAction(icon("acc_ajustes"), "Ajustes", lambda: self.settings("General"))
         pm.addAction(icon("mat_comentario"), "Personalización", lambda: self.settings("Personalización"))
+        pm.addAction(icon("ia_memoria"), "Memoria", lambda: self.settings("Personalización"))
         pm.addAction(icon("ia_controlador"), "Modelos", self.models)
+        pm.addAction(icon("hub_conectar"), "Modelos por API…", self.providers)
         pm.addSeparator()
         pm.addAction(icon("inp_teclado"), "Atajos de teclado", lambda: self.settings("Atajos de teclado"))
         pm.addAction(icon("mat_comentario"), "Enviar comentarios…", lambda: FeedbackDialog(self, "idea").exec())
@@ -2555,6 +2574,15 @@ class Main(QMainWindow):
         self.b_agent = tbtn("mat_comentario", "Panel del agente  ·  Ctrl+L", lambda: self.code.toggle_agent())
         for b in (self.b_tree, self.b_term, self.b_agent):
             h.addWidget(b)
+        self.b_temp = QToolButton()
+        self.b_temp.setObjectName("chip")
+        self.b_temp.setText("Temporal")
+        self.b_temp.setCheckable(True)
+        self.b_temp.setCursor(Qt.PointingHandCursor)
+        self.b_temp.setAccessibleName("Chat temporal")
+        self.b_temp.setToolTip("Chat temporal: una conversación que no se guarda en el historial y no usa ni cambia la memoria")
+        self.b_temp.clicked.connect(lambda on: self.toggle_temp(on))
+        h.addWidget(self.b_temp)
         self.b_layout = tbtn("act_layout_ui", "Distribución de paneles")
         self.b_layout.setPopupMode(QToolButton.InstantPopup)
         self.layout_menu = QMenu(self)
@@ -3174,6 +3202,24 @@ class Main(QMainWindow):
             on.setToolTip("Encendido, el modelo ocupa memoria y responde al momento; apagado, libera la memoria.")
             on.triggered.connect(lambda _=False: self.toggle_llm())
 
+    def toggle_temp(self, on):
+        """Empieza (o abandona) un chat temporal en el modo Chat."""
+        p = self.chat
+        if p.busy:
+            self.b_temp.setChecked(not on)
+            return self.toast("Espera a que el agente termine.", icon_name="est_aviso", color=C["warn"])
+        p.open_session(None)                 # conversación nueva (y, si había un chat temporal, se descarta)
+        if on:
+            p.temp_next = True
+            p.open_session(None)             # redibuja el estado vacío…
+            p.temp_next = True               # …que vuelve a apagar la marca
+            if p.empty is not None:
+                p.empty.hide()
+                p.empty.deleteLater()
+            p.empty = p.add(p._empty_state())
+        p.input.setFocus()
+        self.sync()
+
     def providers(self):
         from .providers import ProvidersDialog
         ProvidersDialog(self).exec()
@@ -3240,7 +3286,10 @@ class Main(QMainWindow):
         if self.mode == "code" and self.code.project:
             self.title.setText(self.code.project["name"] + (" · " + s.title if s and s.events else ""))
         else:
-            self.title.setText(s.title if s and s.events else ("" if self.mode == "chat" else CODE_NAME))
+            self.title.setText(("Chat temporal" if s.temp else s.title) if s and s.events else ("" if self.mode == "chat" else CODE_NAME))
+        temp_on = self.mode == "chat" and (bool(getattr(self.chat, "temp_next", False)) or bool(self.chat.session() and self.chat.session().temp))
+        self.b_temp.setVisible(self.mode == "chat")
+        self.b_temp.setChecked(temp_on)
         self.b_folder.setToolTip("Carpeta de trabajo: %s" % panel.workspace())
         in_code = self.mode == "code" and self.code.project is not None
         for b, w, ico in ((self.b_tree, self.code.left, "pan_explorador"), (self.b_term, self.code.term, "pan_consola"),

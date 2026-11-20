@@ -70,6 +70,36 @@ def remember(fact):
         f.write("- %s (%s)\n" % (fact.strip().replace("\n", " "), time.strftime("%Y-%m-%d")))
 
 
+def memory_items():
+    """Recuerdos guardados, uno por línea: [(texto, fecha)]."""
+    out = []
+    for line in memory_text(200000).splitlines():
+        t = line.strip().lstrip("-*• ").strip()
+        if not t:
+            continue
+        m = re.match(r"^(.*?)\s*\((\d{4}-\d{2}-\d{2})\)$", t)
+        out.append((m.group(1), m.group(2)) if m else (t, ""))
+    return out
+
+
+def memory_save(items):
+    os.makedirs(os.path.dirname(MEMORY), exist_ok=True)
+    with open(MEMORY, "w", encoding="utf-8") as f:
+        for text, date in items:
+            if text.strip():
+                f.write("- %s%s\n" % (text.strip().replace("\n", " "), " (%s)" % date if date else ""))
+
+
+def forget(query):
+    """Borra los recuerdos que contengan el texto dado. Devuelve los borrados."""
+    q = query.strip().lower()
+    items = memory_items()
+    gone = [t for t, _ in items if q and q in t.lower()]
+    if gone:
+        memory_save([(t, d) for t, d in items if not (q in t.lower())])
+    return gone
+
+
 # ---------------------------------------------------------------- JSON tolerante (modelos locales a veces se equivocan)
 def repair_json(raw):
     """Intenta convertir argumentos casi-JSON en un dict: bloques ```json```, comas finales, saltos de linea sin escapar,

@@ -32,7 +32,7 @@ TOOL_LABELS = {
     "move_mouse": "Mover el ratón", "scroll": "Desplazar (rueda)", "type_text": "Escribir con el teclado", "press_keys": "Pulsar teclas",
     "list_windows": "Ver ventanas abiertas", "focus_window": "Activar una ventana", "command_output": "Ver salida de procesos",
     "stop_command": "Detener procesos", "read_document": "Leer documentos", "view_image": "Ver imágenes", "update_plan": "Plan de tareas",
-    "run_python": "Analizar datos con Python", "show_canvas": "Mostrar en el lienzo", "ask_user": "Preguntarte", "remember": "Recordar preferencias", "create_document": "Crear documentos (Word, Excel, PowerPoint, PDF)",
+    "run_python": "Analizar datos con Python", "show_canvas": "Mostrar en el lienzo", "ask_user": "Preguntarte", "remember": "Recordar preferencias", "forget": "Olvidar un recuerdo", "create_document": "Crear documentos (Word, Excel, PowerPoint, PDF)",
 }
 CATEGORIES = {"read": "Lectura", "write": "Escritura", "exec": "Ejecución", "net": "Red", "control": "Control del PC",
               "agent": "Agente", "mcp": "Conector"}
@@ -1156,3 +1156,13 @@ def remember(a, ctx):
     from . import harness
     harness.remember(str(a["fact"]))
     return "Guardado en la memoria."
+
+
+@tool("forget", "agent", "Borra de la memoria un dato que el usuario ya no quiere que recuerdes (p. ej. si dice «olvida que uso pnpm»).",
+      {"text": S("Palabras del dato a olvidar")}, ["text"])
+def forget(a, ctx):
+    from . import harness
+    gone = harness.forget(str(a["text"]))
+    if not gone:
+        return "No había nada guardado con «%s». Memoria actual:\n%s" % (a["text"], harness.memory_text() or "(vacía)")
+    return "Olvidado: " + "; ".join(gone)

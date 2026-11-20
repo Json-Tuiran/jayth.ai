@@ -63,7 +63,7 @@ def system_prompt(cfg):
         p += "\n\n## Sobre el usuario\n" + cfg["about_me"]
     if cfg.get("response_style"):
         p += "\n\n## Cómo quiere que respondas\n" + cfg["response_style"]
-    mem = H.memory_text()
+    mem = "" if (cfg.get("_temp") or not cfg.get("memory_enabled", True)) else H.memory_text()
     if mem:
         p += "\n\n## Memoria (lo que el usuario te pidió recordar)\n" + mem
     ctx = H.context_files(cfg["workspace"])
@@ -83,6 +83,8 @@ def tool_schemas(cfg):
         off |= {n for n, t in T.TOOLS.items() if t["category"] == "net"}
     if not cfg.get("computer_control", True):
         off |= {n for n, t in T.TOOLS.items() if t["category"] == "control"}
+    if cfg.get("_temp") or not cfg.get("memory_enabled", True):       # chat temporal o memoria apagada: ni guarda ni olvida
+        off |= {"remember", "forget"}
     mode = cfg.get("mode")
     cats = {"read", "agent"} if mode == "readonly" else {"read", "agent", "net"} if mode == "plan" else None
     out = [s for s in T.schemas(cats) if s["function"]["name"] not in off]
