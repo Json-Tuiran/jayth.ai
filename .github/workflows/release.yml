@@ -42,7 +42,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
-            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xfixes0 libegl1 libfontconfig1 libdbus-1-3 file
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xfixes0 libegl1 libfontconfig1 libdbus-1-3 file \
+            libnss3 libnspr4 libasound2 libxcomposite1 libxdamage1 libxrandr2 libxtst6 libxkbfile1 libxshmfence1 libgbm1
 
       - name: Dependencias de Python
         run: |

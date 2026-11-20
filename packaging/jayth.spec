@@ -12,7 +12,9 @@ from jayth import __version__ as VERSION
 WIN, MAC = sys.platform == "win32", sys.platform == "darwin"
 ASSETS = os.path.join(ROOT, "assets")
 
-hidden = ["PySide6.QtSvg", "certifi", "pypdf"]
+hidden = ["PySide6.QtSvg", "PySide6.QtSvgWidgets", "certifi", "pypdf",
+          # navegador integrado del lienzo (se importa solo cuando hace falta, por eso se nombra aqui)
+          "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel", "PySide6.QtNetwork", "PySide6.QtPrintSupport"]
 if MAC:
     # pynput elige su motor al importarse: se nombran explicitamente (el compilador no tiene pantalla)
     hidden += ["mss", "mss.darwin", "pynput", "pynput.keyboard._darwin", "pynput.mouse._darwin", "pynput._util.darwin",
@@ -47,13 +49,21 @@ a = Analysis(
     hiddenimports=hidden,
     # dependencias opcionales que pypdf/mss/Qt arrastran si estan instaladas y Jayth no usa
     excludes=["tkinter", "unittest", "test", "pydoc_data", "lib2to3", "numpy", "PIL", "cryptography", "scipy", "matplotlib",
-              "pandas", "IPython", "PySide6.QtQuick", "PySide6.QtQml", "PySide6.QtPdf", "PySide6.QtWebEngineCore"],
+              "pandas", "IPython", "PySide6.QtPdf", "PySide6.QtWebEngineQuick", "PySide6.Qt3DCore", "PySide6.QtCharts",
+              "PySide6.QtMultimedia", "PySide6.QtDataVisualization", "PySide6.QtBluetooth", "PySide6.QtSensors"],
     noarchive=False,
 )
-# Partes de Qt que una app de widgets no necesita: QML/Quick, PDF, teclado virtual y OpenGL por software (~40 MB)
-_DROP = ("qt6quick", "qt6qml", "qt6pdf", "qt6virtualkeyboard", "virtualkeyboard", "opengl32sw", "qpdf")
+# Partes de Qt que Jayth no necesita: PDF y teclado virtual. (Qt Quick/QML se quedan: el navegador integrado los usa.)
+_DROP = ("qt6pdf", "qt6virtualkeyboard", "virtualkeyboard", "qpdf", "qt6quick3d", "qt6charts", "qt6multimedia", "qt6datavis",
+         "opengl32sw", "qt6quickcontrols2", "qt6quickdialogs2", "qt6quicktemplates2", "qt6quicklayouts", "qt6quickeffects",
+         "qt6quickparticles", "qt6quickshapes", "qt6quicktest", "qt6quicktimeline", "qt6webenginequick", "qt6labs")
 a.binaries = [b for b in a.binaries if not any(d in os.path.basename(b[0]).lower() for d in _DROP)]
 a.datas = [d for d in a.datas if not any(x in d[0].lower().replace("\\", "/") for x in ("/qml/", "qtvirtualkeyboard"))]
+# del navegador solo hacen falta los idiomas de la interfaz en español e inglés (el resto son ~25 MB)
+a.datas = [d for d in a.datas if "devtools_resources" not in d[0].lower()]        # inspector del navegador: 83 MB que no se usan
+a.binaries = [b for b in a.binaries if "devtools_resources" not in b[0].lower()]
+a.datas = [d for d in a.datas if "qtwebengine_locales" not in d[0].lower().replace("\\", "/")
+           or os.path.basename(d[0]).lower() in ("es.pak", "es-419.pak", "en-us.pak")]
 pyz = PYZ(a.pure)
 
 exe = EXE(

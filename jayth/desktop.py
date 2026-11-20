@@ -3372,13 +3372,49 @@ def selftest(app):
     ok("tools", lambda: len(T.TOOLS) >= 25 or "faltan herramientas")
     ok("shell", lambda: "JAYTH_OK" in __import__("subprocess").run(osys.shell_argv("echo JAYTH_OK"), capture_output=True, text=True,
                                                                      timeout=60, **osys.popen_kwargs()).stdout or "la terminal no responde")
+    def documents():
+        import tempfile
+        from . import office
+        d = tempfile.mkdtemp(prefix="jayth_st_")
+        try:
+            for ext in (".docx", ".xlsx", ".pptx", ".pdf"):
+                office.create(os.path.join(d, "prueba" + ext), "# Prueba\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- uno")
+            return all(os.path.getsize(os.path.join(d, "prueba" + e)) > 300 for e in (".docx", ".xlsx", ".pptx", ".pdf")) or "documentos vacíos"
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+    ok("documents", documents)
+    from . import canvas as _canvas
+    web = bool(_canvas.web_view_class())
+    # en Linux el navegador integrado depende de bibliotecas del sistema: si faltan, el lienzo abre el navegador normal
+    ok("canvas", lambda: web or not (osys.WIN or osys.MAC) or "falta el navegador integrado (Qt WebEngine)")
+
+    def web_page():                           # comprobación a fondo (solo si se pide): carga una página de verdad
+        from PySide6.QtCore import QEventLoop, QUrl
+        v = _canvas.web_view_class()()
+        done, loop = [], QEventLoop()
+        v.loadFinished.connect(lambda good: (done.append(good), loop.quit()))
+        v.setHtml("<html><body><h1>hola</h1><script>document.title='js-ok'</script></body></html>", QUrl("https://lienzo.jayth.local/"))
+        v.resize(400, 300)
+        v.show()
+        QTimer.singleShot(25000, loop.quit)
+        loop.exec()
+        end = time.time() + 3
+        while v.title() != "js-ok" and time.time() < end:
+            app.processEvents()
+        title = v.title()
+        v.close()
+        return (bool(done) and done[0] and title == "js-ok") or "la página no cargó (cargada=%s, título=%r)" % (done, title)
+    if os.environ.get("JAYTH_SELFTEST_WEB") == "1":
+        ok("web_page", web_page)
+    os.environ["JAYTH_NO_HOTKEY"] = "1"       # la comprobación no registra atajos globales
+
     def window():
         w = Main()
         w.tray.hide()
         w.poll_t.stop()
         w.news_t.stop()
     ok("window", window)
-    report = {"version": __version__, "os": osys.os_label(), "arch": _pf.machine(), "frozen": osys.FROZEN, "checks": checks}
+    report = {"version": __version__, "os": osys.os_label(), "arch": _pf.machine(), "frozen": osys.FROZEN, "web_canvas": web, "checks": checks}
     text = json.dumps(report, ensure_ascii=False, indent=1)
     try:
         print(text, flush=True)
