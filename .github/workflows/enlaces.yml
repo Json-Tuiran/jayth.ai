@@ -1,0 +1,40 @@
+# Enlaces de descarga directa por sistema en una Release ya publicada: sube las copias sin número de versión (enlaces fijos
+# que siempre bajan la última) y rehace las notas con un enlace por sistema. Las versiones nuevas ya lo hacen solas al
+# publicarse (release.yml); esto sirve para las anteriores. Se ejecuta al cambiar este archivo o el script, o a mano.
+name: Enlaces de descarga
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/enlaces.yml", "packaging/enlaces_release.sh"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Versión (por ejemplo v0.4.7; vacío = la última)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  enlaces:
+    name: Enlaces de descarga
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Paquetes de la versión
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_IN: ${{ github.event.inputs.tag }}
+        run: |
+          TAG="${TAG_IN:-$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          mkdir -p out
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir out --pattern "*${TAG#v}*"
+          ls -lh out
+
+      - name: Enlaces de descarga
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash packaging/enlaces_release.sh "$TAG" out

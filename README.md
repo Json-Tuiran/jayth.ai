@@ -6,6 +6,18 @@ Aplicación de escritorio para **Windows, macOS y Linux** que convierte **cualqu
 agente que programa, crea archivos, ejecuta comandos y programas, usa la web y controla el ordenador. Todo ocurre en tu
 equipo y **tú apruebas cada acción**.
 
+## ⬇️ Descargar
+
+| Sistema | Descarga directa (última versión) |
+|---|---|
+| **Windows 10/11** (64 bits) | **[Instalador (.exe)](https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-Setup-x64.exe)** · [Versión portátil (.zip)](https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-windows-x64-portable.zip) |
+| **macOS** con chip Apple (M1–M4) | **[Jayth para Apple Silicon (.dmg)](https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-macos-arm64.dmg)** |
+| **macOS** con Intel | **[Jayth para Intel (.dmg)](https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-macos-x64.dmg)** |
+| **Linux** (x86_64) | **[AppImage](https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-linux-x86_64.AppImage)** · [Comprimido (.tar.gz)](https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-linux-x86_64.tar.gz) |
+
+Cada enlace baja directamente la última versión para ese sistema. Todas las versiones y sus notas están en
+**[Releases](https://github.com/Json-Tuiran/jayth.ai/releases)**. Instrucciones en [Descargar e instalar](#descargar-e-instalar).
+
 - **Cualquier modelo:** descarga GGUF de Hugging Face desde la propia app (lista las cuantizaciones y marca cuáles caben
   en tu equipo), usa un `.gguf` que ya tengas, o conéctate a un servidor compatible con OpenAI (Ollama, LM Studio, otro PC).
 - **Se adapta al hardware:** detecta RAM, CPU y GPU; descarga la compilación oficial de llama.cpp adecuada
@@ -32,16 +44,17 @@ equipo y **tú apruebas cada acción**.
 
 ## Descargar e instalar
 
-Descarga el paquete de tu sistema en **[Releases](https://github.com/Json-Tuiran/jayth.ai/releases/latest)**.
 No hace falta instalar Python ni nada más.
 
-| Sistema | Archivo | Cómo |
+| Sistema | Descarga | Cómo |
 |---|---|---|
-| Windows 10/11 (64 bits) | `Jayth-Setup-<versión>-x64.exe` | Ábrelo y sigue el asistente. Se instala para tu usuario, sin permisos de administrador. |
-| Windows, sin instalar | `Jayth-<versión>-windows-x64-portable.zip` | Descomprime y abre `Jayth.exe`. Guarda los datos junto al programa (ideal para un USB). |
-| macOS Apple Silicon (M1–M4) | `Jayth-<versión>-macos-arm64.dmg` | Abre el `.dmg` y arrastra Jayth a Aplicaciones. |
-| macOS Intel | `Jayth-<versión>-macos-x64.dmg` | Igual que el anterior. |
-| Linux x86_64 | `Jayth-<versión>-linux-x86_64.AppImage` | `chmod +x Jayth-*.AppImage` y ábrelo. También hay un `.tar.gz`. |
+| Windows 10/11 (64 bits) | [Jayth-Setup-x64.exe](https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-Setup-x64.exe) | Ábrelo y sigue el asistente. Se instala para tu usuario, sin permisos de administrador. |
+| Windows, sin instalar | [Jayth-windows-x64-portable.zip](https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-windows-x64-portable.zip) | Descomprime y abre `Jayth.exe`. Guarda los datos junto al programa (ideal para un USB). |
+| macOS Apple Silicon (M1–M4) | [Jayth-macos-arm64.dmg](https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-macos-arm64.dmg) | Abre el `.dmg` y arrastra Jayth a Aplicaciones. |
+| macOS Intel | [Jayth-macos-x64.dmg](https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-macos-x64.dmg) | Igual que el anterior. |
+| Linux x86_64 | [Jayth-linux-x86_64.AppImage](https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-linux-x86_64.AppImage) | `chmod +x Jayth-*.AppImage` y ábrelo. También hay un [`.tar.gz`](https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-linux-x86_64.tar.gz). |
+
+¿No sabes si tu Mac es Apple Silicon o Intel? Menú Apple → *Acerca de este Mac*: si pone «Chip Apple M…» es Apple Silicon.
 
 En el primer arranque, un **asistente** detecta tu hardware, descarga el motor y el modelo (con reanudación y
 verificación SHA-256) y deja todo configurado.
@@ -76,7 +89,8 @@ irm https://raw.githubusercontent.com/Json-Tuiran/jayth.ai/main/install.ps1 | ie
 | Conversaciones (panel izquierdo) | Historial guardado; clic derecho para renombrar o borrar |
 | Modelo | Encender/apagar el motor; **Modelos…** para añadir, cambiar o borrar modelos |
 | Permisos | Solo lectura · Planificar · Preguntar (por defecto) · Editar archivos · Automático |
-| Chat | Cada acción aparece como tarjeta con su comando o cambio exacto, y su resultado |
+| Chat | El agente cuenta lo que va haciendo; cada acción es una línea con su icono que se despliega para ver el comando o el cambio exacto y su resultado |
+| Navegador de Jayth (botón del globo) | Webs que el agente usa a la vista: buscar, pulsar, rellenar formularios (las contraseñas las escribes tú) |
 
 **Modos de permiso:** las acciones delicadas (borrar, instalar, `sudo`, tocar el sistema o rutas protegidas) **siempre**
 piden confirmación, incluso en modo Automático. Para abortar el control del ratón al instante, lleva el cursor a la esquina
@@ -86,7 +100,8 @@ superior izquierda de la pantalla.
 
 Archivos (leer, escribir, editar, mover, papelera, buscar) · terminal del sistema (PowerShell en Windows, zsh/bash en
 macOS y Linux) y procesos en segundo plano · abrir programas/archivos/URLs · documentos e imágenes · web (buscar, leer
-páginas, descargar) · control del PC (capturas, clic, teclado, ventanas) · conectores MCP.
+páginas, descargar) y navegador integrado · control del PC (capturas de la pantalla o de una ventana, leer los botones y
+campos de cualquier programa por accesibilidad, clic, arrastrar, teclado, ventanas, portapapeles) · conectores MCP.
 
 La búsqueda web usa DuckDuckGo. Si este pide un captcha, la app no lo salta y cae a Wikipedia. Para una búsqueda web
 completa añade una clave de Brave Search o tu propio SearXNG en Ajustes.
@@ -124,7 +139,8 @@ memoria unificada con Metal.
 ## Compilar los paquetes
 
 Cada etiqueta `v*` compila y publica automáticamente los paquetes de los tres sistemas
-([`.github/workflows/release.yml`](.github/workflows/release.yml)):
+([`.github/workflows/release.yml`](.github/workflows/release.yml)), con copias sin número de versión para los enlaces
+fijos de descarga y notas con un enlace por sistema ([`packaging/enlaces_release.sh`](packaging/enlaces_release.sh)):
 
 ```bash
 git tag v0.2.0
@@ -148,6 +164,10 @@ app.py                  entrada de la app de escritorio
 server.py               interfaz web opcional (python server.py --open)
 jayth/
   desktop.py            ventana principal
+  chatview.py           cómo se ve el trabajo del agente (actividad, código, comandos y rutas)
+  overlay.py            brillo y puntero del agente mientras controla el equipo
+  browser.py            navegador integrado que usa el agente
+  codeview.py           editor y terminal de Jayth Code (explorer.py: explorador; docview.py: vistas previas)
   wizard.py             asistente y gestor de modelos
   settings_ui.py        ajustes
   agent.py              bucle del agente (API compatible con OpenAI)
