@@ -1,7 +1,9 @@
 # Ventana de escritorio (Qt). El resto usa la biblioteca estandar de Python.
-PySide6-Essentials>=6.6
+PySide6-Essentials>=6.12
 # Navegador integrado del lienzo (Qt WebEngine): vista previa de las páginas web que crea el agente
-PySide6-Addons>=6.6
+PySide6-Addons>=6.12
+# (desde Qt 6.12 el navegador se distribuye en su propio paquete)
+PySide6-WebEngine>=6.12
 # Certificados HTTPS propios (la app empaquetada no depende de los del sistema)
 certifi
 # Leer PDF (herramienta read_document)
