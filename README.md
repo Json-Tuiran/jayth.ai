@@ -8,6 +8,11 @@ equipo y **tú apruebas cada acción**.
 
 Creado por **Ing. Jeison Tuiran** · Software libre con licencia [GPL-3.0](LICENSE) · [Política de marca](MARCA.md)
 
+**Español** · [English](README.en.md)
+
+<p align="center"><img src="docs/img/demo.gif" width="860"
+  alt="Jayth crea una calculadora en Python: piensa, cuenta lo que hace, escribe el archivo, lo abre, lo comprueba con una captura y responde"></p>
+
 ## ⬇️ Descargar
 
 | Sistema | Descarga directa (última versión) |
@@ -21,6 +26,13 @@ Cada enlace baja directamente la última versión para ese sistema. Todas las ve
 **[Releases](https://github.com/Json-Tuiran/jayth.ai/releases)**. Instrucciones en [Descargar e instalar](#descargar-e-instalar).
 [Code signing policy](CODE_SIGNING_POLICY.md) · [Privacidad](CODE_SIGNING_POLICY.md#privacidad)
 
+## Qué hace
+
+- **Ves cómo trabaja:** el agente cuenta lo que va a hacer, cada acción aparece con su icono y una animación mientras se
+  ejecuta, su razonamiento se despliega con un clic y las capturas de lo que comprueba se ven en el chat.
+- **Usa tus programas y la web:** lee los botones y campos de cualquier programa (accesibilidad del sistema), hace clic,
+  arrastra, escribe y maneja ventanas; tiene un **navegador integrado** que usa a la vista (buscar, pulsar, rellenar
+  formularios), con su propio puntero y un brillo en los bordes mientras tiene el control.
 - **Cualquier modelo:** descarga GGUF de Hugging Face desde la propia app (lista las cuantizaciones y marca cuáles caben
   en tu equipo), usa un `.gguf` que ya tengas, o conéctate a un servidor compatible con OpenAI (Ollama, LM Studio, otro PC).
 - **Se adapta al hardware:** detecta RAM, CPU y GPU; descarga la compilación oficial de llama.cpp adecuada
@@ -44,6 +56,17 @@ Cada enlace baja directamente la última versión para ese sistema. Todas las ve
   - **conectores MCP** (Model Context Protocol) para añadir herramientas externas.
 - **Siempre al día:** avisa de versiones nuevas de Jayth (y se actualiza sola con un clic) y de versiones nuevas de tus modelos.
 - **Comentarios:** informa de errores o sugiere mejoras desde la app; revisas el texto antes de enviarlo.
+
+## Así se ve
+
+**Jayth Code:** explorador con iconos por tipo, vista previa de Markdown, Word, Excel, PowerPoint, PDF e imágenes, y
+el agente trabajando en tu proyecto (los archivos que cambia quedan marcados en verde).
+
+<p align="center"><img src="docs/img/code_dark.png" width="860" alt="Jayth Code: explorador, README formateado y el agente en el panel derecho"></p>
+
+**Navegador integrado:** el agente abre webs, busca, pulsa y rellena formularios a la vista; tú puedes intervenir cuando quieras.
+
+<p align="center"><img src="docs/img/navegador.png" width="860" alt="El agente escribe en el buscador de una tienda con su puntero «Jayth»"></p>
 
 ## Descargar e instalar
 
@@ -175,8 +198,8 @@ Las contribuciones al repositorio se aceptan bajo la misma licencia GPL-3.0.
 
 **Firma del código — [Code signing policy](CODE_SIGNING_POLICY.md):** free code signing provided by
 [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Los paquetes de
-Windows se firman con SignPath tras la aprobación manual del autor; detalles, equipo y privacidad en la
-[política de firma](CODE_SIGNING_POLICY.md).
+Windows se firmarán con SignPath, tras la aprobación manual del autor, en cuanto se active la firma; hasta entonces se
+publican sin firmar. Detalles, equipo y privacidad en la [política de firma](CODE_SIGNING_POLICY.md).
 
 ## Estructura
 

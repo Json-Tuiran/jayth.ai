@@ -1798,6 +1798,9 @@ class ChatPanel(QWidget):
             self.last_tool = None
             self.add(user_bubble(ev, self.compact))
         elif t == "turn_start":
+            if self.cur is not None and self.cur.empty():   # un paso anterior sin texto ni pensamiento: fuera su línea de espera
+                self.cur.hide()
+                self.cur.deleteLater()
             self.cur = self.add(AssistantBlock(ev["ts"], ev.get("step", 1), getattr(self, "last_tool", None)))
             if ev["ts"] < time.time() - 5:
                 self.cur.status.hide()     # reconstruyendo una conversacion guardada
