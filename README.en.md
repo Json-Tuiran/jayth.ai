@@ -13,8 +13,8 @@ Created by **Ing. Jeison Tuiran** · Free software under the [GPL-3.0](LICENSE) 
 
 [Español](README.md) · **English**
 
-> **Note:** Jayth's interface is currently in **Spanish**. The agent answers in the language you write to it, so you can
-> talk to it in English. An English interface is planned.
+> **Languages:** Jayth's interface is available in **English, Spanish and Portuguese (Brazil)**. It follows your system
+> language and can be changed in *Settings → General → Interface language*.
 
 <p align="center"><img src="docs/img/demo.gif" width="860"
   alt="Jayth builds a Python calculator: it thinks, says what it is doing, writes the file, runs it, checks it with a screenshot and answers"></p>
@@ -44,8 +44,14 @@ Each link downloads the latest version for that system. All versions and their n
 - **Adapts to your hardware:** detects RAM, CPU and GPU; downloads the right official llama.cpp build (Metal on Apple
   Silicon Macs, CUDA for NVIDIA, Vulkan for AMD/Intel Arc, or CPU) and recommends a quantization.
 - **No cloud:** once the model is downloaded it works offline. Web tools are only used when there is a connection.
-- **Full control:** permission modes, Allow/Deny buttons for each action, a Stop button and a mouse failsafe.
-- **Two modes:** Chat for any task and **Jayth Code** for projects (file tree, editor, terminal and agent).
+- **Automatic context:** uses all the conversation memory the model supports out of the box, adjusted to your computer's
+  memory (hybrid models included), with nothing to calculate.
+- **Knows the app itself:** ask it where a setting is or how to do something in Jayth; it checks its built-in guide and
+  your installation's details instead of guessing.
+- **Full control:** permission modes, Allow/Deny buttons for each action, a Stop button and a mouse failsafe. Your
+  messages can be **edited and resent**, **retried**, **rewound to that point** (undoing the file changes or not) or opened
+  as a **new conversation from there**.
+- **Two modes:** Chat for any task and **Jayth Code** for projects (file tree, editor with autosave, terminal and agent).
 - **Your own layout:** drag the dividers to resize each panel; double-click a divider to fold it. In Code you can hide
   the explorer (Ctrl+B), the terminal (Ctrl+\`) or the agent (Ctrl+L), move the agent left or right, put the terminal
   below or beside the editor and use focus mode (Ctrl+Shift+M). Everything is remembered.
@@ -59,7 +65,8 @@ Each link downloads the latest version for that system. All versions and their n
   - repairs malformed JSON, stops repeated actions, summarizes the context when it fills up and counts real tokens;
   - recommended sampling per model family (Qwen, Gemma, Llama, Mistral, DeepSeek…) and cache warm-up;
   - **MCP connectors** (Model Context Protocol) to add external tools.
-- **Always up to date:** tells you about new Jayth versions (one-click update) and new versions of your models.
+- **Always up to date, without interruptions:** new Jayth versions download in the background and install when you close
+  the app or click “Restart to update”; it also tells you about new versions of your models.
 - **Feedback:** report bugs or suggest improvements from the app; you review the text before it is sent.
 
 ## Screenshots
@@ -117,7 +124,7 @@ irm https://raw.githubusercontent.com/Json-Tuiran/jayth.ai/main/install.ps1 | ie
 | Part | What for |
 |---|---|
 | Conversations (left panel) | Saved history; right-click to rename or delete |
-| Model | Start/stop the engine; **Modelos…** to add, switch or delete models |
+| Model | Start/stop the engine; **Manage models…** to add, switch or delete models |
 | Permissions | Read only · Plan · Ask (default) · Edit files · Automatic |
 | Chat | The agent says what it is doing; each action is a line with its icon that unfolds to show the exact command or change and its result |
 | Jayth browser (globe button) | Websites the agent uses in plain sight: search, click, fill in forms (you type passwords yourself) |

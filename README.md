@@ -41,8 +41,16 @@ Cada enlace baja directamente la última versión para ese sistema. Todas las ve
 - **Se adapta al hardware:** detecta RAM, CPU y GPU; descarga la compilación oficial de llama.cpp adecuada
   (Metal en Mac con Apple Silicon, CUDA para NVIDIA, Vulkan para AMD/Intel Arc, o CPU) y recomienda la cuantización.
 - **Sin nube:** después de descargar el modelo funciona sin internet. Las herramientas web solo se usan si hay conexión.
-- **Control total:** modos de permiso, botones Permitir/Denegar por acción, botón Detener y failsafe del ratón.
-- **Dos modos:** Chat para cualquier tarea y **Jayth Code** para proyectos (árbol de archivos, editor, terminal y agente).
+- **Contexto automático:** usa toda la memoria de conversación que admite el modelo de fábrica, ajustada a la memoria de
+  tu equipo (también en modelos híbridos), sin que tengas que calcular nada.
+- **En tu idioma:** interfaz en español, inglés y portugués (Brasil); el agente responde en el idioma en que le escribas.
+- **Conoce la propia app:** pregúntale dónde está un ajuste o cómo se hace algo en Jayth; consulta su guía integrada y
+  los datos de tu instalación en lugar de inventar.
+- **Control total:** modos de permiso, botones Permitir/Denegar por acción, botón Detener y failsafe del ratón. Tus
+  mensajes se pueden **editar y reenviar**, **reintentar**, **volver a ese punto** (deshaciendo o no los cambios de
+  archivos) o abrir en una **conversación nueva desde ahí**.
+- **Dos modos:** Chat para cualquier tarea y **Jayth Code** para proyectos (árbol de archivos, editor con guardado
+  automático, terminal y agente).
 - **Distribución a tu gusto:** arrastra los divisores para cambiar el ancho de cada panel; doble clic en un divisor lo
   pliega. En Code puedes ocultar el explorador (Ctrl+B), la terminal (Ctrl+\`) o el agente (Ctrl+L), mover el agente a la
   izquierda o a la derecha, poner la terminal debajo o al lado del editor y usar el modo enfoque (Ctrl+Shift+M).
@@ -57,7 +65,8 @@ Cada enlace baja directamente la última versión para ese sistema. Todas las ve
   - repara JSON mal formado, frena acciones repetidas, resume el contexto al llenarse y cuenta los tokens reales;
   - muestreo recomendado por familia de modelo (Qwen, Gemma, Llama, Mistral, DeepSeek…) y precalentamiento de la caché;
   - **conectores MCP** (Model Context Protocol) para añadir herramientas externas.
-- **Siempre al día:** avisa de versiones nuevas de Jayth (y se actualiza sola con un clic) y de versiones nuevas de tus modelos.
+- **Siempre al día, sin interrupciones:** las versiones nuevas de Jayth se descargan en segundo plano y se instalan al
+  cerrar la app o cuando pulses «Reiniciar para actualizar»; también avisa de versiones nuevas de tus modelos.
 - **Comentarios:** informa de errores o sugiere mejoras desde la app; revisas el texto antes de enviarlo.
 
 ## Así se ve
@@ -116,7 +125,7 @@ irm https://raw.githubusercontent.com/Json-Tuiran/jayth.ai/main/install.ps1 | ie
 | Parte | Para qué |
 |---|---|
 | Conversaciones (panel izquierdo) | Historial guardado; clic derecho para renombrar o borrar |
-| Modelo | Encender/apagar el motor; **Modelos…** para añadir, cambiar o borrar modelos |
+| Modelo | Encender/apagar el motor; **Gestionar modelos…** para añadir, cambiar o borrar modelos |
 | Permisos | Solo lectura · Planificar · Preguntar (por defecto) · Editar archivos · Automático |
 | Chat | El agente cuenta lo que va haciendo; cada acción es una línea con su icono que se despliega para ver el comando o el cambio exacto y su resultado |
 | Navegador de Jayth (botón del globo) | Webs que el agente usa a la vista: buscar, pulsar, rellenar formularios (las contraseñas las escribes tú) |
