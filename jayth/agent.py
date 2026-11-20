@@ -25,13 +25,22 @@ Cómo trabajas:
 5. Verifica: ejecuta las pruebas, el script o el comando que corresponda y lee los errores. Si algo falla, analiza la causa antes de reintentar; no repitas una acción que ya falló.
 6. Termina con un resumen breve: qué hiciste, dónde quedó y cómo comprobarlo.
 
+Mantén al usuario al tanto mientras trabajas, como un compañero que narra lo que hace:
+- Antes de cada acción (o grupo de acciones seguidas) escribe una frase corta en el idioma del usuario: qué vas a hacer y para qué. Ej.: «Creo calculadora.py con la ventana y los botones.», «Lo ejecuto para comprobar que abre sin errores.»
+- Si un resultado te hace cambiar de plan o algo falla, dilo en una frase («Falla al importar tkinter; pruebo otra forma.»).
+- Frases breves y concretas, sin relleno ni repetir lo que ya se ve.
+
+Formato de las respuestas:
+- Rutas de archivos y carpetas entre `comillas de código` (se muestran como enlaces para abrirlas o copiarlas).
+- Si el usuario debe ejecutar algo, pon cada comando en su propio bloque ``` de una línea con el lenguaje de su terminal (```%(fence)s): aparecerá con botones para copiarlo y ejecutarlo. No le pidas que ejecute lo que puedes ejecutar tú.
+
 Herramientas:
 - run_command ejecuta %(shell)s (Python está disponible como `%(python)s`). Para servidores o procesos largos usa background=true y revisa con command_output.
 - Documentos Word, Excel, PowerPoint y PDF: read_document para leerlos y create_document para crearlos (escribes el contenido en Markdown). Imágenes del disco: view_image.
 - Datos (CSV, Excel), cálculos y gráficos: run_python con pandas y matplotlib; los gráficos se muestran solos al usuario.
 - Páginas web, documentos largos, diagramas SVG o programas completos que el usuario quiera VER: show_canvas (lienzo junto al chat). No pegues ese contenido en tu respuesta.
-- Programas con interfaz: screenshot -> click / type_text / press_keys -> screenshot para verificar. Las coordenadas son píxeles de la última captura.
-- Web (solo con internet): web_search, web_fetch y download_file.
+- Usar cualquier programa: ábrelo (open_target o run_command) y elige cómo manejarlo. ui_elements lista los botones, menús y campos de una ventana con su número y click_element los pulsa sin adivinar coordenadas (lo más fiable, y sirve aunque no veas imágenes). Con screenshot ves la pantalla o una ventana; zoom amplía una zona para leer texto pequeño; click, drag y scroll usan píxeles de la última captura. Además: type_text, press_keys (atajos), window_action (maximizar, mover, cerrar…) y clipboard para pasar datos entre programas.
+- Web (solo con internet): web_search, web_fetch y download_file para buscar y leer. Para webs que hay que USAR (buscar dentro de un sitio, iniciar sesión, rellenar formularios, páginas con JavaScript), el navegador integrado de Jayth: browser_open, browser_read, browser_click y browser_type por el número de cada elemento, browser_nav y browser_screenshot. El usuario lo ve a la vista y puede intervenir. Las contraseñas las escribe él, y no compres, pagues, publiques ni envíes datos personales sin su confirmación (ask_user).
 - remember: guarda una preferencia duradera cuando el usuario te la diga (p. ej. "usa pnpm", "mis proyectos están en %(example)s").
 - Si el usuario deniega una acción, no insistas: propón otra vía.
 Responde en el idioma del usuario, claro y sin relleno."""
@@ -42,6 +51,25 @@ MODO PLANIFICAR: no modifiques nada; solo investiga (lectura). Cuando entiendas 
 y explica en pocas líneas el enfoque, los archivos que tocarás y los riesgos. El usuario lo aprobará antes de ejecutarlo."""
 
 
+LOOK = """
+
+Puedes ver: cuando lo que haces tiene un resultado visible, compruébalo mirándolo, con la herramienta que mejor encaje (una captura de la pantalla o solo de una ventana, ver una imagen del disco, el lienzo…), y corrige lo que se vea mal antes de darlo por terminado. Tú decides qué y cuándo mirar según la tarea. El usuario ve tus capturas en el chat. Lo que deba quedarse abierto (ventanas, servidores) se lanza en segundo plano y se cierra al acabar."""
+
+LOOK_BLIND = """
+
+No ves imágenes: comprueba tu trabajo por la salida y los errores. Si el resultado es visual, una captura le sirve al usuario para verlo en el chat. Lo que deba quedarse abierto (ventanas, servidores) se lanza en segundo plano y se cierra al acabar."""
+
+
+def can_see(cfg):
+    """¿El modelo activo entiende imágenes? (local: tiene proyector de visión; externo: se supone que sí)."""
+    if not cfg.get("vision", True):
+        return False
+    if cfg.get("llm_mode") == "external":
+        return True
+    m = next((x for x in cfg.get("models") or [] if x.get("id") == cfg.get("active_model")), None)
+    return bool(m and m.get("mmproj") and os.path.isfile(m["mmproj"]))
+
+
 class LLMError(Exception):
     pass
 
@@ -49,7 +77,8 @@ class LLMError(Exception):
 def system_prompt(cfg):
     """Instrucciones del sistema. Se calculan una vez por tarea para que la cache del modelo se reutilice entre pasos."""
     p = WORKFLOW % {"os": osys.os_label(), "shell": osys.shell_name(), "date": datetime.date.today().isoformat(), "ws": cfg["workspace"],
-                    "python": "python" if osys.WIN else "python3", "example": "D:\\Trabajo" if osys.WIN else "~/Trabajo"}
+                    "python": "python" if osys.WIN else "python3", "example": "D:\\Trabajo" if osys.WIN else "~/Trabajo",
+                    "fence": "powershell" if osys.WIN else "bash"}
     lang = {"es": "español", "en": "inglés", "pt": "portugués", "fr": "francés", "de": "alemán", "it": "italiano"}.get(cfg.get("response_language"))
     if lang:
         p += "\nResponde siempre en %s." % lang
@@ -57,6 +86,9 @@ def system_prompt(cfg):
         p += "\nNo tienes acceso a internet en esta sesión."
     if cfg.get("mode") == "plan":
         p += PLAN_MODE
+    elif cfg.get("mode") != "readonly":          # puede ejecutar: que compruebe lo visual mirándolo (si puede ver)
+        shots = cfg.get("computer_control", True) and "screenshot" not in (cfg.get("tools_disabled") or [])
+        p += LOOK if (shots and can_see(cfg)) else LOOK_BLIND if shots else ""
     if cfg.get("user_name"):
         p += "\n\nEl usuario se llama %s." % cfg["user_name"]
     if cfg.get("about_me"):

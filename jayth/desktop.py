@@ -20,6 +20,8 @@ from .codeview import EditorTabs, FileTree, Terminal, ProjectDialog
 from .feedback import FeedbackDialog
 from .widgets import TextView, FlowLayout, OptionRow, ElidedLabel, FitLabel, Collapsible, elide_list
 from . import updater
+from . import chatview as CV
+from . import overlay as OV
 
 MODE_LABEL = {k: v.split(":")[0] for k, v in A.MODES.items()}
 CODE_NAME = APP_NAME + " Code"
@@ -62,8 +64,11 @@ def mono(text, kind=None, max_h=260):
 
 
 def md_label(text=""):
-    """Respuesta del agente en Markdown. Nunca ensancha el panel: parte código, rutas y URL largas."""
-    return TextView(text, "md", size="10.5pt")
+    """Respuesta del agente en Markdown. Nunca ensancha el panel: parte código, rutas y URL largas. Los bloques de código
+    llevan barra propia, los comandos botones de copiar y ejecutar y las rutas son enlaces (ver chatview)."""
+    v = CV.MessageView("10.5pt")
+    v.setText(text)
+    return v
 
 
 class Clickable(QWidget):
@@ -398,26 +403,87 @@ STEP = {  # herramienta: (infinitivo, pasado, objeto)
     "list_tasks": ("ver las tareas programadas", "Consultó las tareas programadas", lambda a: ""),
     "cancel_task": ("quitar la tarea", "Quitó la tarea", lambda a: "«%s»" % _q(a.get("task"), 50)),
     "use_skill": ("usar la habilidad", "Usó la habilidad", lambda a: "«%s»" % _q(a.get("name"), 50)),
+    "ui_elements": ("leer la interfaz de", "Leyó la interfaz de", lambda a: "«%s»" % _q(a.get("window"), 40)),
+    "click_element": ("pulsar", "Pulsó", lambda a: ("«%s»" % _q(a.get("name"), 40)) if a.get("name") else "el elemento %s" % a.get("index")),
+    "drag": ("arrastrar", "Arrastró", lambda a: "de (%s, %s) a (%s, %s)" % (a.get("x1"), a.get("y1"), a.get("x2"), a.get("y2"))),
+    "browser_open": ("abrir", "Abrió", lambda a: _q(str(a.get("url", "")).split("//")[-1], 48)),
+    "browser_read": ("leer la página", "Leyó la página", lambda a: ""),
+    "browser_click": ("pulsar", "Pulsó", lambda a: ("«%s»" % _q(a.get("text"), 40)) if a.get("text") else "el elemento %s" % a.get("index")),
+    "browser_type": ("escribir", "Escribió", lambda a: "«%s»" % _q(a.get("text"), 40)),
+    "browser_screenshot": ("capturar la página", "Capturó la página", lambda a: ""),
+}
+BROWSER_NAV = {"back": ("volver atrás", "Volvió atrás", "Volviendo atrás…"), "forward": ("ir adelante", "Fue adelante", "Yendo adelante…"),
+               "reload": ("recargar la página", "Recargó la página", "Recargando la página…"),
+               "down": ("bajar por la página", "Bajó por la página", "Bajando por la página…"),
+               "up": ("subir por la página", "Subió por la página", "Subiendo por la página…"),
+               "top": ("ir al principio de la página", "Fue al principio de la página", "Yendo al principio…"),
+               "bottom": ("ir al final de la página", "Fue al final de la página", "Yendo al final…")}
+WINDOW_ACT = {"maximize": ("maximizar", "Maximizó", "Maximizando"), "minimize": ("minimizar", "Minimizó", "Minimizando"),
+              "restore": ("restaurar", "Restauró", "Restaurando"), "close": ("cerrar", "Cerró", "Cerrando"), "move": ("mover", "Movió", "Moviendo"),
+              "resize": ("cambiar el tamaño de", "Cambió el tamaño de", "Cambiando el tamaño de")}
+
+
+# mientras se ejecuta: «Escribiendo calculadora.py…», «Ejecutando python app.py…»
+GERUND = {
+    "read_file": "Leyendo", "write_file": "Escribiendo", "create_document": "Creando el documento", "run_python": "Analizando con Python",
+    "show_canvas": "Preparando el lienzo", "edit_file": "Editando", "list_dir": "Explorando", "search_files": "Buscando",
+    "run_command": "Ejecutando", "open_target": "Abriendo", "wait": "Esperando", "web_fetch": "Leyendo", "web_search": "Buscando en la web",
+    "download_file": "Descargando", "screenshot": "Capturando la pantalla", "click": "Haciendo clic", "move_mouse": "Moviendo el ratón",
+    "scroll": "Desplazando", "type_text": "Escribiendo", "press_keys": "Pulsando", "list_windows": "Revisando las ventanas",
+    "focus_window": "Activando la ventana", "multi_edit": "Editando", "move_path": "Moviendo", "delete_path": "Enviando a la papelera",
+    "command_output": "Revisando la salida de", "stop_command": "Deteniendo", "read_document": "Leyendo el documento",
+    "view_image": "Mirando la imagen", "remember": "Guardando en la memoria", "forget": "Olvidando", "schedule_task": "Programando la tarea",
+    "list_tasks": "Consultando las tareas programadas", "cancel_task": "Quitando la tarea", "use_skill": "Usando la habilidad",
+    "ui_elements": "Leyendo la interfaz de", "click_element": "Pulsando", "drag": "Arrastrando",
+    "browser_open": "Abriendo", "browser_read": "Leyendo la página", "browser_click": "Pulsando", "browser_type": "Escribiendo",
+    "browser_screenshot": "Capturando la página",
 }
 
 
-def describe(name, args, phase):
+def describe_parts(name, args, phase):
+    """(verbo, objeto): «Escribió» + «calculadora.py». El objeto se resalta en la interfaz."""
+    args = args or {}
     if name.startswith("mcp__"):           # herramienta de un conector MCP: «Usó servidor › herramienta»
         parts = name.split("__")
         srv, tool = (parts[1].replace("_", " "), parts[2].replace("_", " ")) if len(parts) > 2 else (name, "")
-        return {"pending": "Quiere usar %s › %s" % (srv, tool), "run": "Usando %s › %s…" % (srv, tool)}.get(phase, "Usó %s › %s" % (srv, tool))
-    if name == "run_command" and (args or {}).get("background") and phase != "pending":
-        return ("Inició en segundo plano %s" if phase != "run" else "Iniciando en segundo plano %s…") % _q((args or {}).get("command", ""))
+        lead = {"pending": "Quiere usar", "run": "Usando"}.get(phase, "Usó")
+        return lead, "%s › %s%s" % (srv, tool, "…" if phase == "run" else "")
+    if name == "browser_nav":
+        inf, past, ger = BROWSER_NAV.get(str(args.get("action", "")).lower(), ("navegar", "Navegó", "Navegando…"))
+        return {"pending": "Quiere " + inf, "run": ger}.get(phase, past), ""
+    if name == "window_action":
+        inf, past, ger = WINDOW_ACT.get(str(args.get("action", "")).lower(), ("manejar", "Manejó", "Manejando"))
+        lead = {"pending": "Quiere " + inf, "run": ger}.get(phase, past)
+        return lead + " la ventana", "«%s»%s" % (_q(args.get("window"), 40), "…" if phase == "run" else "")
+    if name == "clipboard":
+        w = str(args.get("action", "")).lower() in ("write", "set", "copy")
+        inf, past, ger = ("copiar al portapapeles", "Copió al portapapeles", "Copiando al portapapeles") if w else \
+                         ("leer el portapapeles", "Leyó el portapapeles", "Leyendo el portapapeles")
+        lead = {"pending": "Quiere " + inf, "run": ger + ("" if w else "…")}.get(phase, past)
+        return lead, ("«%s»" % _q(args.get("text"), 40)) if w else ""
+    if name == "screenshot" and args.get("zoom"):
+        return {"pending": "Quiere ampliar una zona de la pantalla", "run": "Ampliando una zona de la pantalla…"}.get(phase, "Amplió una zona de la pantalla"), ""
+    if name == "screenshot" and args.get("window"):            # captura de una sola ventana
+        lead = {"pending": "Quiere capturar la ventana", "run": "Capturando la ventana"}.get(phase, "Capturó la ventana")
+        return lead, "«%s»%s" % (_q(args["window"], 40), "…" if phase == "run" else "")
+    if name == "run_command" and args.get("background") and phase != "pending":
+        return ("Iniciando en segundo plano" if phase == "run" else "Inició en segundo plano"), _q(args.get("command", "")) + ("…" if phase == "run" else "")
     inf, past, obj = STEP.get(name, (name, name, lambda a: ""))
     try:
-        o = obj(args or {})
+        o = obj(args)
     except Exception:
         o = ""
     if phase == "pending":
-        return ("Quiere %s %s" % (inf, o)).strip()
+        return "Quiere " + inf, o
     if phase == "run":
-        return ("%s %s…" % (inf[:1].upper() + inf[1:], o)).strip()
-    return ("%s %s" % (past, o)).strip()
+        lead = GERUND.get(name, inf[:1].upper() + inf[1:])
+        return (lead, o + "…") if o else (lead + "…", "")
+    return past, o
+
+
+def describe(name, args, phase):
+    lead, o = describe_parts(name, args, phase)
+    return ("%s %s" % (lead, o)).strip()
 
 
 def diff_badge(name, a):
@@ -433,7 +499,9 @@ def diff_badge(name, a):
 
 # ---------------------------------------------------------------- pasos del agente
 class StepRow(QWidget):
-    """Una accion del agente en una linea; se despliega para ver detalles y muestra la aprobacion en linea."""
+    """Una accion del agente en una linea, sin caja: icono de lo que hace (con un arco que gira mientras se ejecuta),
+    «Escribiendo calculadora.py…» con un brillo que lo recorre y, al terminar, «Escribió calculadora.py». Se despliega
+    para ver detalles y muestra la aprobacion en linea."""
 
     def __init__(self, ev, on_decide):
         super().__init__()
@@ -444,13 +512,17 @@ class StepRow(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
         head = Clickable()
+        head.setObjectName("stepHead")
+        head.setAttribute(Qt.WA_StyledBackground, True)
+        head.setAttribute(Qt.WA_Hover, True)
         head.setCursor(Qt.PointingHandCursor)
+        self.head = head
         h = QHBoxLayout(head)
-        h.setContentsMargins(10, 6, 8, 6)
-        h.setSpacing(8)
-        self.st_icon = Spinner(size=14)
+        h.setContentsMargins(0, 1, 6, 1)
+        h.setSpacing(6)
+        self.st_icon = CV.ActivityIcon(CV.tool_icon(ev["name"]), C["mut"], 14)
         h.addWidget(self.st_icon)
-        self.title = ElidedLabel()            # una linea; si no cabe termina en «…» (completo en el tooltip)
+        self.title = CV.Shimmer()             # una linea; si no cabe termina en «…» (completa en el tooltip)
         h.addWidget(self.title, 1)
         add, rem = diff_badge(ev["name"], ev.get("args") or {})
         for txt, col in ((add, C["ok"]), (rem, C["bad"])):
@@ -470,14 +542,13 @@ class StepRow(QWidget):
         self.b_undo = tbtn("acc_refrescar", "Deshacer este cambio (restaura los archivos)", size=13)
         self.b_undo.hide()
         h.addWidget(self.b_undo)
-        self.chev = QLabel("›")
-        self.chev.setStyleSheet("color:%s; font-size:12pt" % C["faint"])
+        self.chev = QLabel()
         h.addWidget(self.chev)
         head.clicked.connect(self.toggle)
         v.addWidget(head)
         self.details = QWidget()
         self.dl = QVBoxLayout(self.details)
-        self.dl.setContentsMargins(36, 0, 12, 8)
+        self.dl.setContentsMargins(30, 2, 6, 8)
         self.dl.setSpacing(6)
         self._args(ev["name"], ev.get("args") or {})
         self.details.hide()
@@ -501,7 +572,7 @@ class StepRow(QWidget):
             av.addWidget(bw)
             wrap = QWidget()
             wl = QVBoxLayout(wrap)
-            wl.setContentsMargins(10, 0, 10, 10)
+            wl.setContentsMargins(30, 2, 6, 8)
             wl.addWidget(self.approval)
             v.addWidget(wrap)
             self.approval_wrap = wrap
@@ -538,24 +609,30 @@ class StepRow(QWidget):
 
     def _set(self, phase):
         self.phase = phase
-        ico, col = {"pending": ("est_aviso", C["acc"]), "run": ("est_cargando", C["warn"]), "ok": ("ui_check", C["ok"]),
-                    "err": ("ui_cerrar", C["bad"]), "denied": ("est_bloqueado", C["bad"]), "blocked": ("est_bloqueado", C["faint"])}[phase]
-        if phase == "run" and self.ev.get("ts", 0) > time.time() - 30:
-            self.st_icon.start(ico, col)          # gira mientras se ejecuta
-        else:
-            self.st_icon.stop(pix(ico, col, 14))
-        text = describe(self.ev["name"], self.ev.get("args"), {"pending": "pending", "run": "run"}.get(phase, "done"))
+        tool = CV.tool_icon(self.ev["name"])
+        ico, col = {"pending": ("est_aviso", C["acc"]), "run": (tool, C["acc"]), "ok": (tool, C["mut"]),
+                    "err": ("est_error", C["bad"]), "denied": ("est_bloqueado", C["bad"]), "blocked": ("est_bloqueado", C["faint"])}[phase]
+        self.st_icon.set_icon(ico, col)
+        live = phase == "run" and self.ev.get("ts", 0) > time.time() - 30
+        self.st_icon.set_active(live)             # el arco gira mientras se ejecuta
+        lead, obj = describe_parts(self.ev["name"], self.ev.get("args"), {"pending": "pending", "run": "run"}.get(phase, "done"))
         if phase == "denied":
-            text = describe(self.ev["name"], self.ev.get("args"), "pending").replace("Quiere", "No se permitió", 1)
+            lead = describe_parts(self.ev["name"], self.ev.get("args"), "pending")[0].replace("Quiere", "No se permitió", 1)
         if phase == "blocked":
-            text += " (bloqueado: solo lectura)"
-        self.title.setText(text)
-        self.title.setToolTip(text)
-        self.title.setStyleSheet("color:%s" % (C["tx"] if phase in ("pending", "run") else C["mut"]))
+            obj = (obj + " (bloqueado: solo lectura)").strip()
+        text = ("%s %s" % (lead, obj)).strip()
+        self.title.setText(text, len(lead) + 1 if obj else -1)
+        self.title.set_active(live)
+        self.title.set_color(C["bad"] if phase == "err" else C["mut"], C["tx"])
+        self.head.setToolTip(text)
+        self._chev()
+
+    def _chev(self):
+        self.chev.setPixmap(pix("ui_chevron_abajo" if self.details.isVisible() else "ui_chevron_derecha", C["faint"], 10))
 
     def toggle(self):
         self.details.setVisible(not self.details.isVisible())
-        self.chev.setText("⌄" if self.details.isVisible() else "›")
+        self._chev()
 
     def _decide(self, d, cb):
         for b in self.approval.findChildren(QPushButton):
@@ -571,6 +648,12 @@ class StepRow(QWidget):
 
     def result(self, ok, text, image):
         self._set("ok" if ok else "err")
+        if ok and text and self.ev["name"] in ("browser_click", "click_element"):     # «Pulsó el elemento 7» -> «Pulsó «Iniciar sesión»»
+            m = re.search(r"«([^»\n]{1,60})»", text.split("\n", 1)[0])
+            if m:
+                t = "Pulsó «%s»" % m.group(1)
+                self.title.setText(t, len("Pulsó") + 1)
+                self.head.setToolTip(t)
         if text:
             self.dl.addWidget(mono(text, max_h=300))
         if image:                             # la imagen queda a la vista bajo las acciones (también con el resumen plegado)
@@ -586,7 +669,7 @@ class StepRow(QWidget):
             m = re.search(r"documento \w+ (.+?\.(?:docx|xlsx|pptx|pdf)) \(", text or "", re.I)
             if m:
                 self.doc_card = self.box.add_doc(m.group(1))
-        self.chev.setText("⌄" if self.details.isVisible() else "›")
+        self._chev()
 
     def undone(self):
         self.b_undo.hide()
@@ -597,7 +680,8 @@ class StepRow(QWidget):
             if self.box is not None:
                 self.box.extras.setVisible(any(not self.box.ev_.itemAt(i).widget().isHidden() for i in range(self.box.ev_.count())))
         self.title.setText(self.title.text() + "  · deshecho")
-        self.title.setStyleSheet("color:%s; text-decoration: line-through" % C["faint"])
+        self.title.set_color(C["faint"], C["faint"])
+        self.title.set_strike(True)
 
 
 # Resumen de varias acciones seguidas en una frase («Editó 2 archivos, buscó en los archivos y ejecutó un comando»)
@@ -613,10 +697,14 @@ GROUP = {
     "delete_path": ("envió un archivo a la papelera", "envió %d archivos a la papelera"), "remember": ("guardó una preferencia", "guardó %d preferencias"),
     "control": ("usó el ratón y el teclado", "usó el ratón y el teclado"), "open_target": ("abrió un programa o archivo", "abrió %d programas o archivos"),
     "wait": ("esperó un momento", "esperó %d veces"),
+    "browser_open": ("abrió una página", "abrió %d páginas"), "browser_read": ("leyó la página", "leyó %d veces la página"),
+    "browser_click": ("pulsó en la página", "pulsó %d veces en la página"), "browser_type": ("escribió en la página", "rellenó %d campos"),
+    "browser_nav": ("navegó por la página", "navegó %d veces"), "browser_screenshot": ("capturó la página", "capturó %d veces la página"),
     "run_python": ("analizó los datos con Python", "hizo %d análisis con Python"), "show_canvas": ("mostró algo en el lienzo", "actualizó el lienzo %d veces"),
 }
 _GROUP_ALIAS = {"multi_edit": "edit_file", "click": "control", "move_mouse": "control", "scroll": "control", "type_text": "control",
-                "press_keys": "control", "list_windows": "control", "focus_window": "control"}
+                "press_keys": "control", "list_windows": "control", "focus_window": "control", "ui_elements": "control",
+                "click_element": "control", "drag": "control", "window_action": "control", "clipboard": "control"}
 
 
 def summarize_steps(rows):
@@ -720,18 +808,37 @@ class CanvasCard(QFrame):
             self.on_open(self.item)
 
 
+def rounded(pm, r=8):
+    """Miniatura con las esquinas redondeadas y un borde fino (como una tarjeta)."""
+    from PySide6.QtGui import QPainter, QPainterPath, QColor, QPen
+    out = QPixmap(pm.size())
+    out.fill(Qt.transparent)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.Antialiasing)
+    path = QPainterPath()
+    path.addRoundedRect(0.5, 0.5, pm.width() - 1, pm.height() - 1, r, r)
+    p.setClipPath(path)
+    p.drawPixmap(0, 0, pm)
+    p.setClipping(False)
+    p.setPen(QPen(QColor(C["line"]), 1))
+    p.drawPath(path)
+    p.end()
+    return out
+
+
 class Preview(QLabel):
-    """Vista previa de una imagen que el agente ha visto o creado; un clic la abre en grande."""
+    """Miniatura de una imagen que el agente ha visto o creado (una captura de lo que está probando, un gráfico…);
+    un clic la abre en grande."""
 
     def __init__(self, path, max_w=520, max_h=300):
         super().__init__()
         self.path = path
         pm = QPixmap(path)
         if not pm.isNull():
-            self.setPixmap(pm.scaled(min(max_w, pm.width()), min(max_h, pm.height()), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.setPixmap(rounded(pm.scaled(min(max_w, pm.width()), min(max_h, pm.height()), Qt.KeepAspectRatio, Qt.SmoothTransformation)))
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("Abrir la imagen")
-        self.setObjectName("preview")
+        self.setToolTip("Clic para verla en grande")
+        self.setObjectName("thumb")
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton and os.path.isfile(self.path):
@@ -740,37 +847,35 @@ class Preview(QLabel):
 
 def reveal(path):
     """Muestra el archivo seleccionado en el Explorador / Finder (o abre su carpeta)."""
-    try:
-        if osys.WIN:
-            subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
-        elif osys.MAC:
-            subprocess.Popen(["open", "-R", path])
-        else:
-            osys.open_path(os.path.dirname(path))
-    except Exception:
-        osys.open_path(os.path.dirname(path))
+    osys.reveal(path)
 
 
 class StepsBox(QFrame):
-    """Acciones seguidas del agente. Mientras trabaja se ven una a una; al terminar, si son varias, se resumen en una
-    línea («Editó 2 archivos y ejecutó un comando  +12 −3 ›») que se despliega con un clic. Las imágenes que ve y los
-    documentos que crea quedan siempre a la vista debajo."""
+    """Acciones seguidas del agente, como líneas del mensaje (sin caja alrededor). Mientras trabaja se ven una a una;
+    al terminar, si son varias, se resumen en una línea («Editó 2 archivos y ejecutó un comando  +12 −3 ›») que se
+    despliega con un clic. Las imágenes que ve y los documentos que crea quedan siempre a la vista debajo."""
 
     def __init__(self):
         super().__init__()
         self.setObjectName("stepsBox")
         self.v = QVBoxLayout(self)
-        self.v.setContentsMargins(0, 2, 0, 2)
+        self.v.setContentsMargins(0, 0, 0, 0)
         self.v.setSpacing(0)
         self.rows = []
         self.closed = False
         self.head = Clickable()
+        self.head.setObjectName("stepHead")
+        self.head.setAttribute(Qt.WA_StyledBackground, True)
+        self.head.setAttribute(Qt.WA_Hover, True)
         self.head.setCursor(Qt.PointingHandCursor)
         hh = QHBoxLayout(self.head)
-        hh.setContentsMargins(10, 6, 8, 6)
-        hh.setSpacing(8)
-        self.h_icon = QLabel()
-        hh.addWidget(self.h_icon)
+        hh.setContentsMargins(0, 1, 6, 1)
+        hh.setSpacing(6)
+        self.h_icons = QWidget()                   # iconos de los tipos de acción (hasta tres, superpuestos)
+        self.h_icons.setFixedSize(24, 24)
+        self.h_icon = QLabel(self.h_icons)
+        self.h_icon.setGeometry(0, 0, 24, 24)
+        hh.addWidget(self.h_icons)
         self.h_text = ElidedLabel()
         self.h_text.setStyleSheet("color:%s" % C["mut"])
         hh.addWidget(self.h_text, 1)
@@ -778,8 +883,7 @@ class StepsBox(QFrame):
         for l, col in ((self.h_add, C["ok"]), (self.h_rem, C["bad"]), (self.h_fail, C["bad"])):
             l.setStyleSheet("color:%s; font-size:9pt" % col)
             hh.addWidget(l)
-        self.h_chev = QLabel("›")
-        self.h_chev.setStyleSheet("color:%s; font-size:12pt" % C["faint"])
+        self.h_chev = QLabel()
         hh.addWidget(self.h_chev)
         self.head.clicked.connect(self.toggle)
         self.head.hide()
@@ -787,20 +891,20 @@ class StepsBox(QFrame):
         self.body = QWidget()
         self.bv = QVBoxLayout(self.body)
         self.bv.setContentsMargins(0, 0, 0, 0)
-        self.bv.setSpacing(0)
+        self.bv.setSpacing(2)
         self.v.addWidget(self.body)
         self.extras = QWidget()
         self.ev_ = QVBoxLayout(self.extras)
-        self.ev_.setContentsMargins(10, 4, 10, 8)
+        self.ev_.setContentsMargins(30, 4, 6, 4)
         self.ev_.setSpacing(6)
         self.extras.hide()
         self.v.addWidget(self.extras)
 
     def add(self, row):
-        if self.rows:
-            self.bv.addWidget(hline())
         self.rows.append(row)
         self.bv.addWidget(row)
+        if len(self.rows) > 1 and row.ev.get("ts", 0) > time.time() - 3:
+            fade_in(row)                       # la primera aparece con la caja entera (sin efectos anidados)
         if self.closed:                      # llegó otra acción a una caja ya resumida: se vuelve a ver entera
             self.closed = False
             self.body.show()
@@ -813,7 +917,8 @@ class StepsBox(QFrame):
 
     def add_preview(self, path):
         if path and os.path.isfile(path):
-            self.ev_.addWidget(Preview(path), 0, Qt.AlignLeft)
+            self.ev_.addWidget(Preview(path, 300, 180), 0, Qt.AlignLeft)     # miniatura: se ve cómo va quedando
+            self.images = getattr(self, "images", []) + [path]
             self.extras.show()
 
     def add_canvas(self, item, on_open):
@@ -845,53 +950,76 @@ class StepsBox(QFrame):
         self.h_add.setText("+%d" % add if add else "")
         self.h_rem.setText("−%d" % rem if rem else "")
         self.h_fail.setText(("%d ha fallado" if fails == 1 else "%d han fallado") % fails if fails else "")
-        ico, col = ("est_aviso", C["warn"]) if fails else ("ui_check", C["ok"])
-        self.h_icon.setPixmap(pix(ico, col, 14))
+        self.h_icon.setPixmap(self._icon_stack(fails))
         self.head.show()
         self.body.hide()
-        self.h_chev.setText("›")
+        self._chev()
+
+    def _icon_stack(self, fails):
+        """Iconos de los distintos tipos de acción, un poco superpuestos (o el aviso si alguna falló)."""
+        from PySide6.QtGui import QPainter, QColor
+        names = []
+        for r in self.rows:
+            n = CV.tool_icon(r.ev["name"])
+            if n not in names:
+                names.append(n)
+        names = ["est_aviso"] if fails else names[:3]
+        dpr = self.devicePixelRatioF() or 1.0
+        out = QPixmap(int(24 * dpr), int(24 * dpr))
+        out.setDevicePixelRatio(dpr)
+        out.fill(Qt.transparent)
+        p = QPainter(out)
+        p.setRenderHint(QPainter.Antialiasing)
+        n = len(names)
+        size = 14 if n == 1 else 11
+        offs = [(5, 5)] if n == 1 else [(1, 2), (11, 11)] if n == 2 else [(1, 1), (12, 3), (6, 12)]
+        for name, (x, y) in zip(names, offs):
+            if n > 1:                              # un círculo del color del fondo separa los iconos superpuestos
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(C["bg"]))
+                p.drawEllipse(x - 1, y - 1, size + 2, size + 2)
+            p.drawPixmap(x, y, pix(name, C["warn"] if fails else C["mut"], size))
+        p.end()
+        return out
+
+    def _chev(self):
+        self.h_chev.setPixmap(pix("ui_chevron_abajo" if self.body.isVisible() else "ui_chevron_derecha", C["faint"], 10))
 
     def toggle(self):
         self.body.setVisible(not self.body.isVisible())
-        self.h_chev.setText("⌄" if self.body.isVisible() else "›")
+        self._chev()
 
 
 # ---------------------------------------------------------------- mensajes
 class AssistantBlock(QWidget):
-    def __init__(self, started, step=1):
+    """Un paso del modelo. Arriba, una línea animada con lo que está haciendo («Leyendo tu mensaje…», «Revisando la
+    salida…», «Pensando… 12 s»); si razonó, queda «Pensó durante 12 s ›» y un clic despliega el pensamiento. Debajo, su
+    texto (con código, comandos y rutas interactivos) y, en la respuesta final, los botones."""
+
+    def __init__(self, started, step=1, after=None):
         super().__init__()
         self.started = started
-        # primer paso: el modelo lee el mensaje; despues, lo que devolvieron las herramientas
-        self.wait_text = "Leyendo tu mensaje…" if (step or 1) <= 1 else "Revisando los resultados…"
+        # primer paso: el modelo lee el mensaje; despues, lo que devolvieron las herramientas (frases segun la ultima)
+        self.kind = CV.activity_kind(after) if (step or 1) > 1 else "start"
         self.r_start = self.r_end = None
+        self.reasoning = ""
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(6)
-        self.status = QWidget()
-        sh = QHBoxLayout(self.status)
-        sh.setContentsMargins(0, 0, 0, 0)
-        self.spin = Spinner(size=14)
-        sh.addWidget(self.spin)
-        if started > time.time() - 5:
-            self.spin.start()
-        self.status_lbl = QLabel(self.wait_text)
-        self.status_lbl.setObjectName("muted")
-        sh.addWidget(self.status_lbl)
-        sh.addStretch(1)
-        v.addWidget(self.status)
-        self.think_btn = QToolButton()
-        self.think_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.think_btn.setIcon(icon("ia_memoria", C["mut"], 15))
-        self.think_btn.setCheckable(True)
-        self.think_btn.hide()
-        self.think_txt = QPlainTextEdit()
-        self.think_txt.setObjectName("mono")
-        self.think_txt.setReadOnly(True)
-        self.think_txt.setFixedHeight(160)
-        self.think_txt.hide()
-        self.think_btn.toggled.connect(self.think_txt.setVisible)
-        v.addWidget(self.think_btn, 0, Qt.AlignLeft)
-        v.addWidget(self.think_txt)
+        self.act = CV.ActivityLine()
+        self.act.run(CV.WAIT.get(self.kind, CV.WAIT["other"]), started, CV.WAIT_ICON.get(self.kind, "ia_controlador"),
+                     live=started > time.time() - 5)
+        self.act.clicked.connect(self.toggle_think)
+        self.status = self.act                     # (nombre anterior: la línea de espera)
+        v.addWidget(self.act)
+        self.peek = ElidedLabel()                  # mientras piensa: la última frase de su pensamiento, tenue
+        self.peek.setObjectName("thinkPeek")
+        self.peek.hide()
+        v.addWidget(self.peek)
+        self.think_view = CV.ThinkView()
+        self.think_fold = Collapsible(self.think_view, limit=280, fade=C["bg"], slack=80)
+        self.think_fold.hide()
+        v.addWidget(self.think_fold)
         self.body = md_label()
         self.body.hide()
         v.addWidget(self.body)
@@ -924,24 +1052,26 @@ class AssistantBlock(QWidget):
         self.text = ""
 
     def tick(self, now):
-        if self.status.isVisible():
-            self.status_lbl.setText("%s %d s" % (self.wait_text, max(0, now - self.started)))
-        if self.r_start and not self.r_end:
-            self.think_btn.setText("Pensando… %d s" % (now - self.r_start))
+        if self.act.live:
+            self.act.tick(now)
 
     def delta(self, kind, text, ts):
-        if self.status.isVisible():
-            self.spin.stop()
-            self.status.hide()
         if kind == "reasoning":
             if self.r_start is None:
                 self.r_start = ts
-                self.think_btn.show()
-            self.think_txt.moveCursor(self.think_txt.textCursor().MoveOperation.End)
-            self.think_txt.insertPlainText(text)
-            self.tick(ts)
+                live = ts > time.time() - 5
+                self.act.show()
+                self.act.run(CV.think_phrases(self.kind), ts, "ia_controlador", live=live)
+                self.act.set_expandable(True)
+            self.reasoning += text
+            if self.think_fold.isVisible():
+                self.think_view.append(text)
+            elif self.act.live:
+                self._peek()
         else:
             self._end_think(ts)
+            if self.r_start is None:
+                self.act.hide()                     # empezó a escribir sin pensar: fuera la línea de espera
             self.text += text
             self.body.show()
             # el Markdown se vuelve a dibujar como mucho cada 90 ms: con modelos rapidos llegan decenas de trozos por segundo
@@ -950,15 +1080,35 @@ class AssistantBlock(QWidget):
             if not self._render_t.isActive():
                 self._render_t.start()
 
+    def _peek(self):
+        """La última frase que está pensando, en una línea tenue (para ver que avanza sin desplegar nada)."""
+        tail = self.reasoning[-400:].replace("\r", "")
+        lines = [l.strip() for l in tail.split("\n") if l.strip()]
+        last = lines[-1] if lines else ""
+        if len(last) > 160:
+            last = "…" + last[-159:]
+        self.peek.setText(last)
+        self.peek.setVisible(bool(last))
+
+    def toggle_think(self):
+        on = not self.think_fold.isVisible()
+        if on:
+            self.think_view.setText(self.reasoning)
+        self.think_fold.setVisible(on)
+        self.act.set_open(on)
+        self.peek.setVisible(False if on else (self.act.live and bool(self.peek.text())))
+
     def _end_think(self, ts):
         if self.r_start and not self.r_end:
             self.r_end = ts
-            self.think_btn.setText("Pensó durante %d s" % max(1, round(self.r_end - self.r_start)))
+            self.act.done(CV.thought_for(self.r_end - self.r_start))
+            self.peek.hide()
 
     def finish(self, text, ts):
-        self.spin.stop()
-        self.status.hide()
         self._end_think(ts)
+        if self.r_start is None:
+            self.act.done("")
+            self.act.hide()
         if getattr(self, "_render_t", None):
             self._render_t.stop()
         if not text and self.text:
@@ -970,6 +1120,18 @@ class AssistantBlock(QWidget):
 
     def empty(self):
         return not self.text and self.r_start is None
+
+    def add_gallery(self, paths_):
+        """Debajo de la respuesta final: miniaturas de lo que el agente capturó o generó en esta respuesta (cómo quedó)."""
+        paths_ = [p for p in paths_ if os.path.isfile(p)]
+        if not paths_ or getattr(self, "gallery", None) is not None:
+            return
+        self.gallery = QWidget()
+        fl = FlowLayout(self.gallery, spacing=8)
+        for p in paths_:
+            fl.addWidget(Preview(p, 340 if len(paths_) == 1 else 220, 210 if len(paths_) == 1 else 140))
+        lay = self.layout()
+        lay.insertWidget(lay.indexOf(self.actions), self.gallery)
 
     def copy(self):
         QGuiApplication.clipboard().setText(self.text)
@@ -1472,6 +1634,53 @@ class ChatPanel(QWidget):
         p = core.project(cfg, self.project_id)
         return p["path"] if p else cfg["workspace"]
 
+    # ---- botones de las respuestas (comandos y rutas)
+    def _code_page(self):
+        """La página del proyecto si este chat es el de su panel (allí hay editor y terminal)."""
+        code = getattr(self.main, "code", None)
+        return code if (code is not None and getattr(code, "chat", None) is self and code.project) else None
+
+    def run_in_terminal(self, cmd):
+        """Ejecuta un comando que sugirió el agente: en la terminal del proyecto si estamos en uno; si no, en una
+        ventana de terminal del sistema abierta en la carpeta de trabajo."""
+        cmd = (cmd or "").strip()
+        if not cmd:
+            return False
+        if T.is_dangerous("run_command", {"command": cmd}, None):
+            r = QMessageBox.question(self, APP_NAME, "Este comando puede borrar o cambiar cosas importantes de tu equipo:\n\n%s\n\n"
+                                     "¿Ejecutarlo de todos modos?" % cmd[:800], QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if r != QMessageBox.Yes:
+                return False
+        code = self._code_page()
+        if code is not None:
+            code.toggle_terminal(True)
+            term = code.term
+            if term.proc is None:
+                term.start(code.project["path"])
+            for line in cmd.split("\n"):
+                if line.strip():
+                    term.run(line)
+            return True
+        try:
+            if osys.open_terminal(cmd, self.workspace()):
+                return True
+        except Exception as e:
+            self.main.toast("No pude abrir una terminal: %s" % e, icon_name="est_error", color=C["bad"])
+            return False
+        self.main.toast("No encontré ninguna terminal en el sistema. Copia el comando y pégalo en la tuya.", icon_name="est_aviso", color=C["warn"])
+        return False
+
+    def can_edit(self, path):
+        from .codeview import TEXT_EXT
+        return self._code_page() is not None and os.path.splitext(path)[1].lower() in TEXT_EXT
+
+    def open_in_editor(self, path):
+        code = self._code_page()
+        if code is not None:
+            code.tabs.open(path)
+        else:
+            osys.open_path(path)
+
     def clear(self):
         while self.cl.count() > 1:
             it = self.cl.takeAt(0)
@@ -1583,9 +1792,11 @@ class ChatPanel(QWidget):
             self._end_steps()
             self.cur = None
             self.turn_blocks = []
+            self.turn_images = []
+            self.last_tool = None
             self.add(user_bubble(ev, self.compact))
         elif t == "turn_start":
-            self.cur = self.add(AssistantBlock(ev["ts"], ev.get("step", 1)))
+            self.cur = self.add(AssistantBlock(ev["ts"], ev.get("step", 1), getattr(self, "last_tool", None)))
             if ev["ts"] < time.time() - 5:
                 self.cur.status.hide()     # reconstruyendo una conversacion guardada
         elif t == "delta":
@@ -1652,6 +1863,7 @@ class ChatPanel(QWidget):
                 self.add(self._plan_ready_card())
                 self._end_steps()
         elif t == "tool_call":
+            self.last_tool = ev["name"]
             row = StepRow(ev, self.decide)
             self.rows[ev["id"]] = row
             if self.steps is None or self._last_visible() is not self.steps:
@@ -1673,6 +1885,14 @@ class ChatPanel(QWidget):
                 r.box.refresh()
                 self.sync()
         elif t == "tool_result":
+            if ev.get("ok"):                     # imágenes de esta respuesta (capturas, gráficos): se repiten al final
+                for n in (ev.get("images") or ([ev["image"]] if ev.get("image") else [])):
+                    p = os.path.join(paths.IMG_DIR, n)
+                    imgs = getattr(self, "turn_images", None)
+                    if imgs is None:
+                        imgs = self.turn_images = []
+                    if p not in imgs:
+                        imgs.append(p)
             r = self.rows.get(ev["id"])
             if r:
                 r.result(ev["ok"], ev.get("text") or "", ev.get("image"))
@@ -1687,6 +1907,7 @@ class ChatPanel(QWidget):
                         r.box.add_canvas(ev["canvas"], self.main.open_canvas)
                         if ev["ts"] > time.time() - 10:               # en directo se abre solo; al reabrir la conversación, no
                             self.main.open_canvas(ev["canvas"])
+                            QTimer.singleShot(80, lambda: OV.glow(getattr(self.main, "canvas", None), 1.8))
                 if ev.get("undo") and ev["ok"]:
                     from . import harness
                     if harness.has_snapshot(self.sid, ev["id"]):
@@ -1695,7 +1916,7 @@ class ChatPanel(QWidget):
                             r._undo_wired = True
                             r.b_undo.clicked.connect(lambda _=False, cid=ev["id"]: self.undo(cid))
                         self.turn_undo = True
-                if ev["ok"] and r.ev["name"] in ("write_file", "edit_file", "multi_edit") and ev["ts"] > time.time() - 10:
+                if ev["ok"] and r.ev["name"] in ("write_file", "edit_file", "multi_edit", "create_document") and ev["ts"] > time.time() - 10:
                     p = str((r.ev.get("args") or {}).get("path", ""))
                     if p:
                         self.file_written.emit(os.path.normpath(p if os.path.isabs(p) else os.path.join(self.workspace(), p)))
@@ -1720,7 +1941,13 @@ class ChatPanel(QWidget):
                 b.final = False
             if tb:
                 tb[-1].final = True
+                imgs = getattr(self, "turn_images", None) or []
+                near = self._just_above(tb[-1])          # las que ya se ven justo encima no se repiten
+                imgs = [p for p in imgs if p not in (getattr(near, "images", None) or [])]
+                if imgs:
+                    tb[-1].add_gallery(imgs[-4:])       # cómo quedó: las últimas capturas, bajo la respuesta
             self.turn_blocks = []
+            self.turn_images = []
             for b in self.blocks:
                 b.actions.setVisible(getattr(b, "final", True))
                 b.b_regen.hide()
@@ -1737,6 +1964,14 @@ class ChatPanel(QWidget):
             for q in self.questions.values():
                 if q.inputs.isVisible():
                     q.answered("")
+
+    def _just_above(self, w):
+        """El elemento visible inmediatamente anterior a w en la conversación."""
+        for i in range(self.cl.indexOf(w) - 1, -1, -1):
+            x = self.cl.itemAt(i).widget()
+            if x is not None and not (x.isHidden() and x.testAttribute(Qt.WA_WState_ExplicitShowHide)):
+                return x
+        return None
 
     # ---- plan, preguntas y deshacer
     def _plan_ready_card(self):
@@ -2257,25 +2492,16 @@ class CodePage(QWidget):
         wl = QHBoxLayout(ws)
         wl.setContentsMargins(0, 0, 0, 0)
         self.split = panels.Splitter(Qt.Horizontal, "codeSplit")
-        left = QWidget()
-        self.left = left
+        from .explorer import ExplorerPanel
+        left = ExplorerPanel(tbtn)                       # nombre y botones, «Ir a un archivo…» y el árbol con iconos
+        self.left = self.explorer = left
         left.setProperty("foldable", True)
         left.setMinimumWidth(160)
-        left.setObjectName("sidebar")
-        lv = QVBoxLayout(left)
-        lv.setContentsMargins(6, 6, 0, 6)
-        lv.setSpacing(4)
-        th = QHBoxLayout()
-        self.proj_lbl = QLabel()
-        self.proj_lbl.setStyleSheet("font-weight:600; padding-left:4px")
-        th.addWidget(self.proj_lbl, 1)
-        th.addWidget(tbtn("acc_nuevo", "Nuevo archivo", self._new_file, size=14))
-        th.addWidget(tbtn("act_carpeta_abierta", SHOW_IN, lambda: self.project and osys.open_path(self.project["path"]), size=14))
-        lv.addLayout(th)
-        self.tree = FileTree()
-        self.tree.open_file.connect(lambda p: self.tabs.open(p))
-        lv.addWidget(self.tree, 1)
+        self.tree = left.tree
+        self.proj_lbl = left.name
+        left.open_file.connect(lambda p: self.tabs.open(p))
         self.split.addWidget(left)
+        QShortcut(QKeySequence("Ctrl+P"), self, activated=lambda: (self.toggle_tree(True), self.explorer.focus_finder()))
         center = panels.Splitter(Qt.Vertical, "codeCenter")
         center.setProperty("main", True)
         self.tabs = EditorTabs()
@@ -2291,6 +2517,9 @@ class CodePage(QWidget):
         self.chat = ChatPanel(main, compact=True)
         self.chat.changed.connect(main.on_chat_changed)
         self.chat.file_written.connect(self.tabs.refresh)
+        self.chat.file_written.connect(lambda _p: OV.glow(self.tabs, 1.4))      # el agente acaba de escribir aquí
+        self.chat.file_written.connect(self.tree.mark_changed)                   # y en el árbol queda marcado
+        self.tabs.currentChanged.connect(lambda i: getattr(self.tabs.widget(i), "path", None) and self.tree.reveal(self.tabs.widget(i).path))
         self.chat.setMinimumWidth(320)
         self.chat.setProperty("foldable", True)
         self.split.addWidget(self.chat)
@@ -2462,9 +2691,7 @@ class CodePage(QWidget):
         self.stack.setCurrentIndex(1)
         if not self._sized:
             QTimer.singleShot(0, self._apply_sizes)
-        self.proj_lbl.setText(p["name"])
-        self.proj_lbl.setToolTip(p["path"])
-        self.tree.set_root(p["path"])
+        self.explorer.set_project(p["name"], p["path"])
         self.term.root = p["path"]
         self.term.start(p["path"])
         self.chat.project_id = p["id"]
@@ -2517,6 +2744,14 @@ class Main(QMainWindow):
         self._init_quick()
         self._init_tasks()
         self._init_models()
+        # cuando el agente usa el ratón y el teclado: brillo en los bordes de la pantalla, su puntero y un aviso
+        self.overlay = OV.ControlOverlay()
+        T.UI_HOOK = self.overlay.notify
+        # navegador integrado: el agente lo usa con browser_* (el panel se crea la primera vez que hace falta)
+        from .browser import BrowserBridge
+        self.browser = None
+        self.browser_bridge = BrowserBridge(self.browser_panel)
+        T.BROWSER = self.browser_bridge
         self._tray()
         self.chat.open_session(None)
         self.code.set_project(core.project(cfg, cfg["active_project"]))
@@ -2900,6 +3135,8 @@ class Main(QMainWindow):
         self.b_temp.setToolTip("Chat temporal: una conversación que no se guarda en el historial y no usa ni cambia la memoria")
         self.b_temp.clicked.connect(lambda on: self.toggle_temp(on))
         h.addWidget(self.b_temp)
+        self.b_web = tbtn("herr_espacio_mundo", "Navegador de Jayth: navega tú o pide al agente que use una web por ti", lambda: self.set_browser(None))
+        h.addWidget(self.b_web)
         self.b_layout = tbtn("act_layout_ui", "Distribución de paneles")
         self.b_layout.setPopupMode(QToolButton.InstantPopup)
         self.layout_menu = QMenu(self)
@@ -3087,7 +3324,42 @@ class Main(QMainWindow):
         self.canvas.load(item)
         self.set_canvas(True)
 
+    # ---- navegador integrado (comparte el sitio del lienzo: se ve uno u otro)
+    def browser_panel(self):
+        """Muestra el navegador (lo crea la primera vez) y lo devuelve; lo usan el botón y las herramientas del agente."""
+        if self.browser is None:
+            from .browser import BrowserPanel
+            self.browser = BrowserPanel(self)
+            self.browser.closed.connect(lambda: self.set_browser(False))
+            self.browser.hide()
+            self.body_split.addWidget(self.browser)
+            self.body_split.setStretchFactor(self.body_split.indexOf(self.browser), 1)
+        self.set_browser(True)
+        return self.browser
+
+    def set_browser(self, on=None):
+        if self.browser is None:
+            if on is False:
+                return
+            self.browser_panel()
+            return
+        if on is None:
+            on = self.browser.isHidden()
+        if on == (not self.browser.isHidden()):
+            return
+        size = None
+        if on:
+            self.set_canvas(False)
+            total = self.body_split.width()
+            size = int(self.browser.property("last_size") or 0)
+            if size < total * 0.4:
+                size = int(total * 0.55)
+        panels.set_visible(self.body_split, self.browser, on, animated=animations_on() and self.isVisible(), size=size)
+        self.b_web.setIcon(icon("herr_espacio_mundo", C["acc"] if on else C["mut"], 18))
+
     def set_canvas(self, on):
+        if on and self.browser is not None and not self.browser.isHidden():
+            self.set_browser(False)
         if on == (not self.canvas.isHidden()):
             return
         size = None
@@ -3949,6 +4221,13 @@ def selftest(app):
     ok("certifi", lambda: os.path.isfile(__import__("certifi").where()) or "sin certificados")
     # buscar modelos movidos y leer su tipo (se importan dentro de funciones: comprobar que van en el paquete)
     ok("models_relocate", lambda: (importlib.import_module("jayth.relocate").drives(), importlib.import_module("jayth.gguf")) and None)
+    # respuestas con código, comandos y rutas; resaltado de sintaxis; capa de control del ratón
+    ok("chat_view", lambda: None if [s[0] for s in CV.split_md("Hola `C:\\x`\n```bash\nls\n```\n```py\nx = 1\n```")] == ["md", "cmd", "code"]
+       and CV.CodeBlock() and OV.ControlOverlay() else "trozos mal partidos")
+    ok("browser", lambda: importlib.import_module("jayth.browser").to_url("ejemplo.com").toString() == "https://ejemplo.com" and None)
+    # vistas del editor (Markdown, Office, PDF, imágenes) y el explorador con sus iconos
+    ok("doc_views", lambda: None if importlib.import_module("jayth.docview").DOC_KIND and not importlib.import_module("jayth.explorer").file_icon("a.py").isNull()
+       else "faltan las vistas del editor")
     ok("hardware", lambda: HW.summary(HW.detect()) and None)
     ok("engine", lambda: bool(P.LLAMA_PATTERNS) or "sin motores")
     ok("spanish", lambda: install_spanish(app) or "sin traducción de Qt al español")

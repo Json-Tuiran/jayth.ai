@@ -1,11 +1,12 @@
 """Piezas del modo Jayth Code: editor con resaltado, pestañas, arbol de archivos, terminal y dialogo de proyecto."""
 import os, re, json, time, uuid
-from PySide6.QtCore import Qt, QRect, QSize, Signal, QFileSystemWatcher, QProcess, QDir, QModelIndex, QTimer
+from PySide6.QtCore import Qt, QRect, QSize, Signal, QFileSystemWatcher, QProcess, QDir, QModelIndex, QTimer, QUrl
 from PySide6.QtGui import (QColor, QFont, QPainter, QTextFormat, QSyntaxHighlighter, QTextCharFormat, QKeySequence, QShortcut,
-                           QPixmap, QGuiApplication, QTextCursor, QDesktopServices)
+                           QPixmap, QGuiApplication, QTextCursor, QDesktopServices, QTextOption)
 from PySide6.QtWidgets import (QWidget, QPlainTextEdit, QTextEdit, QTabWidget, QTreeView, QFileSystemModel, QVBoxLayout, QHBoxLayout,
                                QLabel, QLineEdit, QMenu, QMessageBox, QInputDialog, QDialog, QFormLayout, QFileDialog, QHeaderView,
-                               QAbstractItemView, QScrollArea, QToolButton, QPushButton, QDialogButtonBox, QRadioButton, QButtonGroup)
+                               QAbstractItemView, QScrollArea, QToolButton, QPushButton, QDialogButtonBox, QRadioButton, QButtonGroup,
+                               QStackedWidget, QFrame)
 from . import core, paths, osys
 from .theme import C, icon, pix
 from .wizard import btn, lbl, browse_row
@@ -117,19 +118,42 @@ class _Gutter(QWidget):
 
 
 class CodeEditor(QPlainTextEdit):
+    """Editor de código. Las líneas largas se leen con la barra de abajo o Mayús + rueda, o se ajustan al ancho con
+    «Ajustar líneas» (Alt+Z)."""
+    BOTTOM = 14
+
     def __init__(self):
         super().__init__()
+        self.setObjectName("codeEditor")             # el tema le deja ver su barra horizontal (en el resto de la app no hay)
         self.setFont(MONO)
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.setWordWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * 4)
         self.setStyleSheet("QPlainTextEdit { background: %s; border: none; border-radius: 0; padding: 0; font-family: %s; font-size: 10pt; }" % (C["bg"], MONO_CSS))
         self.gutter = _Gutter(self)
         self.gutter.setFont(MONO)
-        self.blockCountChanged.connect(lambda _: self.setViewportMargins(self.gutter_width(), 0, 0, 0))
+        # un poco de aire bajo la última línea: el código no queda pegado al borde de abajo
+        self.blockCountChanged.connect(lambda _: self.setViewportMargins(self.gutter_width(), 0, 0, self.BOTTOM))
         self.updateRequest.connect(self._upd)
         self.cursorPositionChanged.connect(self._hl_line)
-        self.setViewportMargins(self.gutter_width(), 0, 0, 0)
+        self.setViewportMargins(self.gutter_width(), 0, 0, self.BOTTOM)
         self._hl_line()
+
+    def set_wrap(self, on):
+        """Ajustar las líneas largas al ancho (sin desplazarse de lado) o dejarlas enteras."""
+        self.setLineWrapMode(QPlainTextEdit.WidgetWidth if on else QPlainTextEdit.NoWrap)
+        self.gutter.update()
+
+    def wheelEvent(self, e):
+        """Mayús + rueda: desplaza de lado (para leer el final de las líneas largas)."""
+        if e.modifiers() & Qt.ShiftModifier and self.lineWrapMode() == QPlainTextEdit.NoWrap:
+            hsb = self.horizontalScrollBar()
+            d = e.angleDelta().y() or e.angleDelta().x()
+            hsb.setValue(hsb.value() - d)
+            e.accept()
+            return
+        super().wheelEvent(e)
 
     def gutter_width(self):
         return 18 + self.fontMetrics().horizontalAdvance("9") * max(3, len(str(self.blockCount())))
@@ -187,56 +211,221 @@ class CodeEditor(QPlainTextEdit):
 
 
 class FileTab(QWidget):
+    """Una pestaña del editor. Elige cómo mostrar cada archivo: código con colores; Markdown formateado (y «Código» para
+    editarlo); HTML, SVG y CSV con vista previa; Word, Excel, PowerPoint y PDF en modo lectura; imágenes con zoom."""
     changed = Signal()
+    open_file = Signal(str)        # un enlace de la vista previa lleva a otro archivo del proyecto
 
     def __init__(self, path):
         super().__init__()
+        from . import docview as DV
+        self.DV = DV
         self.path = path
         self.dirty = False
         self._loading = False
+        self.editor = self.preview = self.stack = None
+        self.mode, self._stale = "code", True
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        self.v = v
         ext = os.path.splitext(path)[1].lower()
-        self.editor = None
-        if ext in IMG_EXT:
-            sc = QScrollArea()
-            im = QLabel()
-            im.setAlignment(Qt.AlignCenter)
-            im.setPixmap(QPixmap(path))
-            sc.setWidget(im)
-            sc.setWidgetResizable(True)
-            v.addWidget(sc)
-            return
+        self.ext = ext
         size = os.path.getsize(path) if os.path.isfile(path) else 0
+        if ext in IMG_EXT:                                   # imagen: ajustada a la ventana, con zoom
+            self.kind = "image"
+            self.preview = DV.ImageView()
+            self.preview.layout().itemAt(0).widget().layout().addWidget(self._open_btn())
+            v.addWidget(self.preview)
+            self.reload()
+            return
+        if ext in DV.DOCS:                                   # documento de Office o PDF: solo lectura
+            self.kind = "doc"
+            v.addWidget(self._bar("%s · solo lectura" % DV.DOC_KIND.get(ext, "Documento"), toggle=False))
+            if size > DV.MAX_DOC:
+                v.addWidget(self._note("Es muy grande para verlo aquí (%s). Ábrelo con su programa." % _human(size)), 1)
+                return
+            self.preview = DV.web_preview() if ext == ".pdf" else None
+            if self.preview is not None:                 # si el visor de PDF no puede con él, se muestra su texto
+                self.preview.loadFinished.connect(lambda ok_: ok_ or self._pdf_as_text())
+            else:
+                self.preview = DV.Reader(os.path.dirname(path))
+                self.preview.open_file.connect(self.open_file.emit)
+            v.addWidget(self.preview, 1)
+            self.reload()
+            return
         with open(path, "rb") as f:
             head = f.read(4096)
         if b"\0" in head or size > 3_000_000:
-            l = lbl("No se muestra: %s (%s)." % ("archivo binario" if b"\0" in head else "archivo demasiado grande", _human(size)), "muted")
-            l.setAlignment(Qt.AlignCenter)
-            v.addWidget(l)
+            self.kind = "none"
+            v.addWidget(self._note("No se muestra: %s (%s)." % ("archivo binario" if b"\0" in head else "archivo demasiado grande", _human(size))), 1)
             return
         self.editor = CodeEditor()
         self.hl = Highlighter(self.editor.document(), ext if ext in LANG else os.path.basename(path).lower())
-        v.addWidget(self.editor)
+        if ext in DV.TEXT_PREVIEW:                           # texto con vista previa: Markdown, HTML, SVG, CSV
+            self.kind = "text"
+            if ext in (".md", ".markdown"):
+                self.preview = DV.Reader(os.path.dirname(path))
+                self.preview.open_file.connect(self.open_file.emit)
+            elif ext in (".html", ".htm"):
+                self.preview = DV.web_preview() or DV.Reader(os.path.dirname(path))
+            elif ext == ".svg":
+                self.preview = DV.ImageView()
+            else:
+                self.preview = DV.CsvView()
+            v.addWidget(self._bar(DV.DOC_KIND.get(ext, ""), toggle=True))
+            self.stack = QStackedWidget()
+            self.stack.addWidget(self.preview)
+            self.stack.addWidget(self.editor)
+            v.addWidget(self.stack, 1)
+            modes = core.SET.snapshot().get("preview_modes") or {}
+            self.mode = modes.get(ext) or ("preview" if ext in (".md", ".markdown", ".csv") else "code")
+        else:
+            self.kind = "code"
+            v.addWidget(self.editor)
         self.reload()
         self.editor.textChanged.connect(self._edited)
+        if self.stack is not None:
+            self.set_mode(self.mode, save=False)
+
+    def _pdf_as_text(self):
+        if isinstance(self.preview, self.DV.Reader):
+            return
+        old = self.preview
+        self.preview = self.DV.Reader(os.path.dirname(self.path))
+        self.v.replaceWidget(old, self.preview)
+        old.hide()
+        old.deleteLater()
+        self.render_preview()
+
+    # ---- barra de arriba y modos
+    def _open_btn(self):
+        b = QToolButton()
+        b.setObjectName("chip")
+        b.setIcon(icon("acc_abrir_externo", C["mut"], 13))
+        b.setText("Abrir con su programa")
+        b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        b.setCursor(Qt.PointingHandCursor)
+        b.setToolTip("Abrirlo con el programa del sistema (Word, Excel, el visor de imágenes…)")
+        b.clicked.connect(lambda: osys.open_path(self.path))
+        return b
+
+    def _note(self, text):
+        l = lbl(text, "muted")
+        l.setAlignment(Qt.AlignCenter)
+        l.setWordWrap(True)
+        return l
+
+    def _bar(self, label, toggle):
+        bar = QWidget()
+        bar.setObjectName("fileBar")
+        bar.setAttribute(Qt.WA_StyledBackground, True)
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(12, 4, 8, 4)
+        h.setSpacing(6)
+        k = QLabel(label)
+        k.setObjectName("faint")
+        h.addWidget(k)
+        h.addStretch(1)
+        if toggle:
+            seg = QFrame()
+            seg.setObjectName("segment")
+            sh = QHBoxLayout(seg)
+            sh.setContentsMargins(3, 3, 3, 3)
+            sh.setSpacing(2)
+            self.b_prev, self.b_code = QPushButton("Vista previa"), QPushButton("Código")
+            for b, m in ((self.b_prev, "preview"), (self.b_code, "code")):
+                b.setObjectName("segBtn")
+                b.setCheckable(True)
+                b.setCursor(Qt.PointingHandCursor)
+                b.clicked.connect(lambda _=False, m=m: self.set_mode(m))
+                sh.addWidget(b)
+            self.b_prev.setToolTip("Ver el archivo ya formateado")
+            self.b_code.setToolTip("Ver y editar el texto del archivo")
+            h.addWidget(seg)
+        h.addWidget(self._open_btn())
+        return bar
+
+    def set_mode(self, mode, save=True):
+        """«Vista previa» o «Código» (se recuerda para ese tipo de archivo)."""
+        if self.stack is None:
+            return
+        self.mode = mode
+        self.b_prev.setChecked(mode == "preview")
+        self.b_code.setChecked(mode == "code")
+        self.stack.setCurrentWidget(self.preview if mode == "preview" else self.editor)
+        if mode == "preview":
+            self.render_preview()
+        else:
+            self.editor.setFocus()
+        if save:
+            modes = dict(core.SET.snapshot().get("preview_modes") or {})
+            modes[self.ext] = mode
+            core.SET.update({"preview_modes": modes})
+
+    def render_preview(self):
+        """Dibuja la vista previa con lo último (el texto del editor, aunque no esté guardado, o el archivo)."""
+        DV, p, ext = self.DV, self.preview, self.ext
+        if p is None:
+            return
+        try:
+            if self.kind == "image":
+                pm = QPixmap(self.path)
+                try:
+                    size = _human(os.path.getsize(self.path))
+                except OSError:
+                    size = ""
+                p.set_pixmap(pm, "%d × %d · %s" % (pm.width(), pm.height(), size) if not pm.isNull() else "")
+            elif self.kind == "doc":
+                if isinstance(p, DV.Reader):
+                    p.show_html(DV.document_html(self.path))
+                elif p.url().isEmpty() or p.url().toLocalFile() != self.path:
+                    p.load(QUrl.fromLocalFile(self.path))
+                else:
+                    p.reload()
+            else:
+                text = self.editor.toPlainText()
+                if ext in (".md", ".markdown"):
+                    p.show_markdown(text)
+                elif ext in (".html", ".htm"):
+                    if isinstance(p, DV.Reader):
+                        p.show_html(text)
+                    else:
+                        p.setHtml(text, QUrl.fromLocalFile(os.path.dirname(self.path).rstrip("\\/") + "/"))
+                elif ext == ".svg":
+                    p.set_svg(text.encode("utf-8"))
+                else:
+                    p.show_text(text)
+            self._stale = False
+        except Exception as e:                                # documento dañado o formato raro: se dice, no se rompe
+            msg = "No pude mostrar la vista previa: %s" % e
+            if isinstance(p, DV.Reader):
+                p.show_html("<p><i>%s</i></p>" % DV.esc(msg))
+            elif hasattr(p, "info"):
+                p.info.setText(msg)
 
     def reload(self):
         if not self.editor:
+            if self.preview is not None:
+                self.render_preview()
             return
         with open(self.path, "r", encoding="utf-8", errors="replace", newline="") as f:
             text = f.read()
         self._loading = True
         pos = self.editor.textCursor().position()
         sb = self.editor.verticalScrollBar().value()
+        hb = self.editor.horizontalScrollBar().value()
         self.editor.setPlainText(text)
         c = self.editor.textCursor()
         c.setPosition(min(pos, len(text)))
         self.editor.setTextCursor(c)
         self.editor.verticalScrollBar().setValue(sb)
+        self.editor.horizontalScrollBar().setValue(hb)      # al recargar (cambios del agente) no se pierde la posición
         self._loading = False
         self.dirty = False
         self.changed.emit()
+        if self.stack is not None and self.mode == "preview":   # el agente cambió el archivo: la vista previa también
+            self.render_preview()
 
     def _edited(self):
         if not self._loading and not self.dirty:
@@ -272,6 +461,30 @@ class EditorTabs(QTabWidget):
         self.addTab(self.welcome, "Inicio")
         QShortcut(QKeySequence("Ctrl+S"), self, activated=self.save_current)
         QShortcut(QKeySequence("Ctrl+W"), self, activated=lambda: self.close_tab(self.currentIndex()))
+        # ajustar las líneas largas al ancho (se recuerda); Alt+Z como en otros editores
+        self.wrap = bool(core.SET.snapshot().get("editor_wrap", False))
+        self.b_wrap = QToolButton()
+        self.b_wrap.setCheckable(True)
+        self.b_wrap.setChecked(self.wrap)
+        self.b_wrap.setIcon(icon("uij_alinear_izq", C["mut"], 14))
+        self.b_wrap.setText("Ajustar líneas")
+        self.b_wrap.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.b_wrap.setObjectName("chip")
+        self.b_wrap.setCursor(Qt.PointingHandCursor)
+        self.b_wrap.setToolTip("Ajustar las líneas largas al ancho del editor, sin desplazarse de lado  ·  Alt+Z\n"
+                               "(sin ajustar: barra de abajo o Mayús + rueda para ver el final de cada línea)")
+        self.b_wrap.toggled.connect(self.set_wrap)
+        self.setCornerWidget(self.b_wrap, Qt.TopRightCorner)
+        QShortcut(QKeySequence("Alt+Z"), self, activated=self.b_wrap.toggle)
+
+    def set_wrap(self, on):
+        self.wrap = bool(on)
+        if self.b_wrap.isChecked() != self.wrap:
+            self.b_wrap.setChecked(self.wrap)
+        for t in self.tabs():
+            if t.editor is not None:
+                t.editor.set_wrap(self.wrap)
+        core.SET.update({"editor_wrap": self.wrap})
 
     def tabs(self):
         return [self.widget(i) for i in range(self.count()) if isinstance(self.widget(i), FileTab)]
@@ -292,6 +505,9 @@ class EditorTabs(QTabWidget):
             return
         if self.indexOf(self.welcome) >= 0:
             self.removeTab(self.indexOf(self.welcome))
+        if t.editor is not None:
+            t.editor.set_wrap(self.wrap)
+        t.open_file.connect(lambda p: self.open(p))           # enlaces de la vista previa a otros archivos
         i = self.addTab(t, os.path.basename(path))
         self.setTabToolTip(i, path)
         x = QToolButton()
@@ -364,82 +580,7 @@ class EditorTabs(QTabWidget):
 
 
 # ---------------------------------------------------------------- arbol de archivos
-class FileTree(QTreeView):
-    open_file = Signal(str)
-
-    def __init__(self):
-        super().__init__()
-        self.model_ = QFileSystemModel(self)
-        self.model_.setReadOnly(False)
-        self.model_.setFilter(QDir.AllEntries | QDir.NoDotAndDotDot | QDir.Hidden)
-        self.setModel(self.model_)
-        for c in (1, 2, 3):
-            self.hideColumn(c)
-        self.setHeaderHidden(True)
-        self.setAnimated(True)
-        self.setIndentation(14)
-        self.setEditTriggers(QAbstractItemView.EditKeyPressed)
-        self.setDragDropMode(QAbstractItemView.InternalMove)
-        self.doubleClicked.connect(self._dbl)
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self._menu)
-        self.setStyleSheet("QTreeView { background: %s; border: none; } QTreeView::item { padding: 3px 2px; border-radius: 5px; }"
-                           "QTreeView::item:selected { background: %s; color: %s; } QTreeView::item:hover:!selected { background: %s; }"
-                           % (C["side"], C["panel2"], C["tx"], C["hover"]))
-        self.root = ""
-
-    def set_root(self, path):
-        self.root = path
-        idx = self.model_.setRootPath(path)
-        self.setRootIndex(idx)
-
-    def _path(self, idx):
-        return self.model_.filePath(idx) if idx.isValid() else self.root
-
-    def _dbl(self, idx):
-        p = self._path(idx)
-        if os.path.isfile(p):
-            self.open_file.emit(p)
-
-    def _menu(self, pos):
-        idx = self.indexAt(pos)
-        p = self._path(idx)
-        folder = p if os.path.isdir(p) else os.path.dirname(p)
-        m = QMenu(self)
-        a_file = m.addAction(icon("acc_nuevo"), "Nuevo archivo…")
-        a_dir = m.addAction(icon("act_carpeta"), "Nueva carpeta…")
-        m.addSeparator()
-        a_ren = m.addAction(icon("acc_renombrar"), "Renombrar") if idx.isValid() else None
-        a_copy = m.addAction(icon("acc_copiar"), "Copiar ruta")
-        a_os = m.addAction(icon("act_carpeta_abierta"), "Mostrar en el Explorador" if osys.WIN else ("Mostrar en el Finder" if osys.MAC else "Abrir la carpeta"))
-        m.addSeparator()
-        a_del = m.addAction(icon("acc_eliminar", C["bad"]), "Mover a la papelera") if idx.isValid() else None
-        a = m.exec(self.viewport().mapToGlobal(pos))
-        if a is None:
-            return
-        if a == a_file:
-            n, ok = QInputDialog.getText(self, "Nuevo archivo", "Nombre:")
-            if ok and n.strip():
-                fp = os.path.join(folder, n.strip())
-                if not os.path.exists(fp):
-                    os.makedirs(os.path.dirname(fp), exist_ok=True)
-                    open(fp, "w", encoding="utf-8").close()
-                self.open_file.emit(fp)
-        elif a == a_dir:
-            n, ok = QInputDialog.getText(self, "Nueva carpeta", "Nombre:")
-            if ok and n.strip():
-                os.makedirs(os.path.join(folder, n.strip()), exist_ok=True)
-        elif a == a_ren:
-            self.edit(idx)
-        elif a == a_copy:
-            QGuiApplication.clipboard().setText(p)
-        elif a == a_os:
-            osys.open_path(folder)
-        elif a == a_del:
-            if QMessageBox.question(self, "Mover a la papelera", "¿Mover «%s» a la papelera?" % os.path.basename(p)) == QMessageBox.StandardButton.Yes:
-                from PySide6.QtCore import QFile
-                if not QFile.moveToTrash(p):
-                    QMessageBox.warning(self, "No se pudo", "No se pudo mover a la papelera.")
+from .explorer import FileTree   # el explorador vive en explorer.py (iconos, guías, «Ir a un archivo»)
 
 
 # ---------------------------------------------------------------- terminal

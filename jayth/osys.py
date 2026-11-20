@@ -74,6 +74,43 @@ def open_path(target):
         subprocess.Popen(["xdg-open", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def reveal(path):
+    """Muestra el archivo seleccionado en el Explorador / Finder (o abre su carpeta)."""
+    try:
+        if WIN:
+            subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+        elif MAC:
+            subprocess.Popen(["open", "-R", path])
+        else:
+            open_path(os.path.dirname(path))
+    except Exception:
+        open_path(os.path.dirname(path))
+
+
+def open_terminal(command, cwd=None):
+    """Abre una ventana de terminal del sistema que ejecuta el comando y se queda abierta (para que el usuario vea
+    la salida y siga escribiendo). Devuelve False si no encuentra ninguna terminal."""
+    cwd = cwd if cwd and os.path.isdir(cwd) else os.path.expanduser("~")
+    if WIN:
+        import base64
+        enc = base64.b64encode(command.encode("utf-16-le")).decode()
+        subprocess.Popen(["powershell.exe", "-NoExit", "-NoLogo", "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc],
+                         cwd=cwd, creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10))
+        return True
+    if MAC:
+        script = "cd %s && %s" % (shlex.quote(cwd), command)
+        esc = script.replace("\\", "\\\\").replace('"', '\\"')
+        subprocess.Popen(["osascript", "-e", 'tell application "Terminal" to do script "%s"' % esc, "-e", 'tell application "Terminal" to activate'])
+        return True
+    sh = 'cd %s && %s; exec "${SHELL:-bash}"' % (shlex.quote(cwd), command)
+    for term, args in (("x-terminal-emulator", ["-e"]), ("gnome-terminal", ["--"]), ("konsole", ["-e"]), ("xfce4-terminal", ["-x"]),
+                       ("kitty", []), ("alacritty", ["-e"]), ("xterm", ["-e"])):
+        if shutil.which(term):
+            subprocess.Popen([term] + args + ["bash", "-c", sh], start_new_session=True)
+            return True
+    return False
+
+
 def run_program(target, args=""):
     """Lanza un programa con argumentos sin esperar a que termine."""
     if WIN:

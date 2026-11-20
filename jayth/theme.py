@@ -122,6 +122,11 @@ QScrollBar::handle:vertical { background: %(line)s; border-radius: 4px; min-heig
 QScrollBar::handle:vertical:hover { background: %(faint)s; }
 QScrollBar::add-line, QScrollBar::sub-line { height: 0; }
 QScrollBar:horizontal { height: 0; }
+QPlainTextEdit#codeEditor QScrollBar:horizontal, QPlainTextEdit#mono QScrollBar:horizontal { background: transparent; height: 10px; margin: 2px; }
+QPlainTextEdit#codeEditor QScrollBar::handle:horizontal, QPlainTextEdit#mono QScrollBar::handle:horizontal { background: %(faint)s; border-radius: 4px; min-width: 30px; }
+QPlainTextEdit#codeEditor QScrollBar::handle:horizontal:hover, QPlainTextEdit#mono QScrollBar::handle:horizontal:hover { background: %(mut)s; }
+QPlainTextEdit#codeEditor QScrollBar::add-line:horizontal, QPlainTextEdit#codeEditor QScrollBar::sub-line:horizontal,
+QPlainTextEdit#mono QScrollBar::add-line:horizontal, QPlainTextEdit#mono QScrollBar::sub-line:horizontal { width: 0; }
 QProgressBar { background: %(panel)s; border: 1px solid %(line)s; border-radius: 6px; text-align: center; height: 16px; }
 QProgressBar::chunk { background: %(acc)s; border-radius: 5px; }
 QToolTip { background: %(panel2)s; border: 1px solid %(line)s; color: %(tx)s; padding: 6px 9px; font-size: 9pt; }
@@ -133,8 +138,18 @@ QMenu::separator { height: 1px; background: %(line)s; margin: 5px 8px; }
 QMenu::indicator { width: 14px; height: 14px; }
 QMenu::icon { padding-left: 6px; }
 QFrame#userBubble { background: %(panel2)s; border-radius: 16px; }
-QFrame#stepsBox { background: transparent; border: 1px solid %(line)s; border-radius: 10px; }
-QFrame#stepsBox[pending="true"] { border: 1px solid %(acc)s; }
+QWidget#fileBar { background: %(bg)s; border-bottom: 1px solid %(line)s; }
+QFrame#stepsBox { background: transparent; border: none; }
+QWidget#stepHead { background: transparent; border-radius: 8px; }
+QWidget#stepHead:hover { background: %(hover)s; }
+QLabel#thinkPeek { color: %(faint)s; font-size: 9pt; font-style: italic; padding-left: 30px; }
+QFrame#codeBlock { background: %(code)s; border: 1px solid %(line)s; border-radius: 10px; }
+QWidget#codeHead { background: transparent; border: none; border-bottom: 1px solid %(line)s; }
+QLabel#codeLang { color: %(faint)s; font-size: 8.5pt; }
+QToolButton#codeBtn { color: %(mut)s; font-size: 8.5pt; padding: 3px 7px; border-radius: 6px; }
+QToolButton#codeBtn:hover { background: %(hover)s; color: %(tx)s; }
+QFrame#cmdRow { background: %(acc_bg)s; border: 1px solid %(acc_bg)s; border-radius: 10px; }
+QFrame#cmdRow:hover { border-color: %(acc)s; }
 QFrame#approval { background: %(panel)s; border-radius: 8px; }
 QPlainTextEdit#mono { background: %(code)s; border: 1px solid %(line)s; border-radius: 8px; font-family: Consolas; font-size: 9.5pt; }
 QPlainTextEdit#mono[kind="add"] { border-left: 3px solid %(ok)s; } QPlainTextEdit#mono[kind="del"] { border-left: 3px solid %(bad)s; }

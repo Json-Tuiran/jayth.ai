@@ -49,6 +49,8 @@ DEFAULTS = {
     "active_project": "",
     "app_mode": "chat",          # chat | code (ultimo modo usado)
     "layout": {},                # distribucion de paneles: anchos, plegados, lados (la guarda la ventana sola)
+    "editor_wrap": False,        # editor de Jayth Code: ajustar las lineas largas al ancho (Alt+Z)
+    "preview_modes": {},         # por extension: "preview" o "code" (Markdown y CSV se abren formateados)
     # interfaz
     "theme": "system",           # system | dark | light
     "font_scale": 100,

@@ -34,6 +34,10 @@ TOOL_LABELS = {
     "stop_command": "Detener procesos", "read_document": "Leer documentos", "view_image": "Ver imágenes", "update_plan": "Plan de tareas",
     "run_python": "Analizar datos con Python", "show_canvas": "Mostrar en el lienzo", "ask_user": "Preguntarte", "remember": "Recordar preferencias", "forget": "Olvidar un recuerdo", "use_skill": "Usar una habilidad", "schedule_task": "Programar tareas", "list_tasks": "Ver tareas programadas",
     "cancel_task": "Quitar tareas programadas", "create_document": "Crear documentos (Word, Excel, PowerPoint, PDF)",
+    "ui_elements": "Leer la interfaz de un programa", "click_element": "Pulsar un elemento de un programa", "drag": "Arrastrar con el ratón",
+    "window_action": "Manejar ventanas", "clipboard": "Usar el portapapeles",
+    "browser_open": "Abrir páginas en el navegador de Jayth", "browser_read": "Leer la página del navegador", "browser_click": "Pulsar en el navegador",
+    "browser_type": "Escribir en el navegador", "browser_nav": "Navegar (atrás, recargar, desplazar)", "browser_screenshot": "Capturar el navegador",
 }
 CATEGORIES = {"read": "Lectura", "write": "Escritura", "exec": "Ejecución", "net": "Red", "control": "Control del PC",
               "agent": "Agente", "mcp": "Conector"}
@@ -57,6 +61,7 @@ class Ctx:
         self.max_out = max_out
         self.scale = None  # factor captura -> pantalla real
         self.img_w = None
+        self.origin = None  # esquina de la ventana capturada (None = pantalla entera)
 
     def path(self, p):
         p = os.path.expandvars(os.path.expanduser(str(p)))
@@ -120,6 +125,8 @@ def is_dangerous(name, args, ctx):
         if name == "run_command":
             cmd = str(args.get("command", ""))
             return any(re.search(p, cmd, re.I) for p in DANGEROUS_CMD)
+        if name == "browser_type":              # algo que parece un número de tarjeta: siempre lo confirma el usuario
+            return bool(re.search(r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)", str(args.get("text", ""))))
         if name == "run_python":                # un script de análisis no debería borrar, lanzar programas ni usar la red
             return bool(re.search(r"\b(os\.(remove|unlink|rmdir|system|popen|startfile)|shutil\.(rmtree|move)|subprocess|socket|urllib|requests|"
                                   r"ctypes|winreg|eval\(|exec\(|__import__)", str(args.get("code", ""))))
@@ -793,18 +800,24 @@ def screen_size():
     return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
 
 
-def capture(max_w=1024):
+def capture(max_w=1024, rect=None, zoom=False):
+    """PNG reducido de la pantalla o de una zona (x, y, ancho, alto): (png, ancho_img, alto_img, ancho_real, alto_real).
+    zoom: una zona pequeña se amplía (hasta el doble) para leer texto menudo."""
     if not osys.WIN:
-        return _px(PX.capture, max_w)
-    W, H = screen_size()
-    tw = min(W, max_w)
+        return _px(PX.capture, max_w, rect, zoom)
+    if rect:
+        X, Y, W, H = rect
+    else:
+        X, Y = 0, 0
+        W, H = screen_size()
+    tw = min(max_w, W * 2 if zoom else W)
     th = max(1, round(H * tw / W))
     hdc = user32.GetDC(None)
     mdc = gdi32.CreateCompatibleDC(hdc)
     bmp = gdi32.CreateCompatibleBitmap(hdc, tw, th)
     old = gdi32.SelectObject(mdc, bmp)
     gdi32.SetStretchBltMode(mdc, 4)  # HALFTONE
-    gdi32.StretchBlt(mdc, 0, 0, tw, th, hdc, 0, 0, W, H, 0x00CC0020)
+    gdi32.StretchBlt(mdc, 0, 0, tw, th, hdc, X, Y, W, H, 0x00CC0020)
     bih = _BIH(ctypes.sizeof(_BIH), tw, -th, 1, 32, 0, 0, 0, 0, 0, 0)
     buf = ctypes.create_string_buffer(tw * th * 4)
     gdi32.GetDIBits(mdc, bmp, 0, th, buf, ctypes.byref(bih), 0)
@@ -835,18 +848,119 @@ def _failsafe():
 
 
 def _real(ctx, x, y):
+    """Píxel de la última captura -> píxel real de la pantalla (si se capturó una ventana, relativo a ella)."""
     W, H = screen_size()
     sc = ctx.scale or (W / min(W, 1024))
-    return max(3, min(W - 3, round(float(x) * sc))), max(3, min(H - 3, round(float(y) * sc)))
+    ox, oy = getattr(ctx, "origin", None) or (0, 0)
+    return max(3, min(W - 3, round(ox + float(x) * sc))), max(3, min(H - 3, round(oy + float(y) * sc)))
 
 
-@tool("screenshot", "control", "Captura la pantalla. Devuelve una imagen; las coordenadas de click/scroll son píxeles de esa imagen.", {})
+def _find_window(q):
+    """La ventana cuyo título encaja mejor (igual, empieza por, contiene), sin contar las de Jayth."""
+    q = q.strip().lower()
+    mine = os.getpid()
+    best = None
+    for hwnd, t in _windows():
+        tl = t.lower()
+        if q not in tl:
+            continue
+        if osys.WIN:
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value == mine:
+                continue
+        rank = 0 if tl == q else 1 if tl.startswith(q) else 2
+        if best is None or rank < best[0]:
+            best = (rank, hwnd, t)
+    return (best[1], best[2]) if best else (None, None)
+
+
+def _window_rect(hwnd, title):
+    """Trae la ventana al frente y devuelve su zona en la pantalla (x, y, ancho, alto), o None si no se puede saber."""
+    if not osys.WIN:
+        _px(PX.focus, hwnd, title)
+        time.sleep(0.5)
+        return PX.window_rect(hwnd, title)
+    _dpi()
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)
+    _key(0x12, False), _key(0x12, True)
+    user32.SetForegroundWindow(hwnd)
+    time.sleep(0.5)                                  # que termine de dibujarse delante
+    r = wintypes.RECT()
+    try:                                             # borde visible, sin la sombra de Windows 10/11
+        got = ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, 9, ctypes.byref(r), ctypes.sizeof(r)) == 0
+    except Exception:
+        got = False
+    if not got:
+        user32.GetWindowRect(hwnd, ctypes.byref(r))
+    W, H = screen_size()
+    x0, y0, x1, y1 = max(0, r.left), max(0, r.top), min(W, r.right), min(H, r.bottom)
+    if x1 - x0 < 20 or y1 - y0 < 20:                 # fuera de la pantalla principal: se captura la pantalla entera
+        return None
+    return x0, y0, x1 - x0, y1 - y0
+
+
+def _win(q, ctx, wait=6):
+    """(id, título) de la ventana pedida; espera unos segundos por si el programa aún está abriendo."""
+    hwnd, title = _find_window(q)
+    end = time.time() + wait
+    while hwnd is None and time.time() < end and not ctx.stop.is_set():
+        time.sleep(0.4)
+        hwnd, title = _find_window(q)
+    if hwnd is None:
+        raise ToolError("No hay ninguna ventana cuyo título contenga «%s». Mira los títulos con list_windows." % q)
+    return hwnd, title
+
+
+def _zone(ctx, z):
+    """«x,y,ancho,alto» de la última captura -> zona real de la pantalla."""
+    try:
+        vals = [float(v) for v in (z if isinstance(z, (list, tuple)) else re.split(r"[,\s;]+", str(z).strip("[]() ")))]
+        x, y, w, h = vals[:4]
+    except (ValueError, TypeError):
+        raise ToolError("zoom debe ser «x,y,ancho,alto» en píxeles de la última captura, p. ej. «100,200,300,150».")
+    W, H = screen_size()
+    sc = ctx.scale or (W / min(W, 1024))
+    ox, oy = getattr(ctx, "origin", None) or (0, 0)
+    x0, y0 = max(0, round(ox + x * sc)), max(0, round(oy + y * sc))
+    x1, y1 = min(W, round(ox + (x + w) * sc)), min(H, round(oy + (y + h) * sc))
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        raise ToolError("La zona a ampliar es demasiado pequeña o queda fuera de la pantalla.")
+    return x0, y0, x1 - x0, y1 - y0
+
+
+@tool("screenshot", "control", "Captura la pantalla, solo una ventana (window) o amplía una zona de la última captura (zoom, para leer texto "
+      "pequeño). El usuario también ve la captura en el chat. Las coordenadas de click/drag/scroll son píxeles de la última imagen.",
+      {"window": S("Parte del título de una ventana: la trae al frente y captura solo esa ventana (opcional)"),
+       "zoom": S("Zona de la última captura a ampliar: «x,y,ancho,alto» (opcional)")})
 def screenshot(a, ctx):
     _failsafe()
-    png, tw, th, W, H = capture()
+    q = str(a.get("window") or "").strip()
+    rect, title = None, ""
+    if a.get("zoom"):
+        rect = _zone(ctx, a["zoom"])
+    elif q:
+        hwnd, title = _win(q, ctx)
+        rect = _window_rect(hwnd, title)
+    if not osys.WIN:                                 # en Windows el brillo no sale en las capturas; aquí se aparta un instante
+        _ui("hide")
+        time.sleep(0.15)
+    try:
+        png, tw, th, W, H = capture(rect=rect, zoom=bool(a.get("zoom")))
+    finally:
+        if not osys.WIN:
+            _ui("show")
+    _ui("look")                                      # destello en los bordes: «acabo de mirar»
     ctx.scale, ctx.img_w = W / tw, tw
+    ctx.origin = (rect[0], rect[1]) if rect else (0, 0)
+    if a.get("zoom"):
+        return {"text": "Zona ampliada (%dx%d). Las coordenadas de click/drag ahora son píxeles de esta imagen." % (tw, th), "image": png}
+    if rect:
+        return {"text": "Captura de la ventana «%s» (%dx%d). Las coordenadas de click/scroll son píxeles de esta imagen." % (title, tw, th), "image": png}
     cx, cy = _cursor()
-    return {"text": "Captura %dx%d (pantalla real %dx%d). Ratón en (%d,%d)." % (tw, th, W, H, cx / ctx.scale, cy / ctx.scale), "image": png}
+    note = (" No pude saber dónde está la ventana «%s»: es la pantalla entera." % title) if q else ""
+    return {"text": "Captura %dx%d (pantalla real %dx%d). Ratón en (%d,%d).%s" % (tw, th, W, H, cx / ctx.scale, cy / ctx.scale, note), "image": png}
 
 
 def _mouse(flags, data=0):
@@ -860,31 +974,120 @@ def _set_cursor(x, y):
         _px(PX.set_cursor, x, y)
 
 
-@tool("click", "control", "Mueve el ratón a (x,y) de la última captura y hace clic.",
-      {"x": I("X en la captura"), "y": I("Y en la captura"), "button": S("left (por defecto), right o middle"), "double": B("Doble clic")}, ["x", "y"])
+# la interfaz se suscribe aquí para mostrar que el agente tiene el control (brillo en los bordes, su puntero, ondas)
+UI_HOOK = None
+
+
+def _ui(kind, x=-1, y=-1):
+    h = UI_HOOK
+    if h is not None:
+        try:
+            h(kind, x, y)
+        except Exception:
+            pass
+
+
+def _here():
+    try:
+        return _cursor()
+    except Exception:
+        return -1, -1
+
+
+def _glide(x, y):
+    """Lleva el ratón hasta (x, y) con un movimiento suave (~¼ s) en vez de un salto: se ve qué va a tocar el agente."""
+    _ui("move", x, y)
+    sx, sy = _here()
+    d = ((x - sx) ** 2 + (y - sy) ** 2) ** 0.5 if sx >= 0 else 0
+    n = 0 if d < 8 else int(min(18, max(6, d / 40)))
+    for i in range(1, n + 1):
+        e = 1 - (1 - i / float(n)) ** 3
+        _set_cursor(round(sx + (x - sx) * e), round(sy + (y - sy) * e))
+        time.sleep(0.014)
+    _set_cursor(x, y)
+
+
+def _mods(keys):
+    """'shift', 'ctrl+shift'… -> lista de nombres de tecla."""
+    return [k for k in str(keys or "").lower().replace(" ", "").split("+") if k]
+
+
+def _hold(mods, down):
+    if not mods:
+        return
+    if not osys.WIN:
+        return _px(PX.hold, mods, down)
+    codes = [VK[m] for m in mods if m in VK]
+    for c in (codes if down else reversed(codes)):
+        _key(c, not down)
+
+
+_BTN = {"right": (0x8, 0x10), "middle": (0x20, 0x40)}
+
+
+def _press_at(x, y, button="left", double=False, keys=None):
+    """Lleva el ratón hasta (x, y) píxeles reales y hace clic (con teclas pulsadas si se piden)."""
+    _glide(x, y)
+    _ui("click", x, y)
+    time.sleep(0.08)
+    button = str(button or "left").lower()
+    mods = _mods(keys)
+    _hold(mods, True)
+    try:
+        if osys.WIN:
+            d, u = _BTN.get(button, (0x2, 0x4))
+            for _ in range(2 if double else 1):
+                _mouse(d)
+                _mouse(u)
+                time.sleep(0.06)
+        else:
+            _px(PX.click, button, bool(double))
+    finally:
+        _hold(mods, False)
+    time.sleep(0.4)
+
+
+@tool("click", "control", "Mueve el ratón a (x,y) de la última captura y hace clic. keys: teclas a mantener pulsadas (p. ej. «shift» "
+      "o «ctrl» para seleccionar varios).",
+      {"x": I("X en la captura"), "y": I("Y en la captura"), "button": S("left (por defecto), right o middle"), "double": B("Doble clic"),
+       "keys": S("Teclas pulsadas durante el clic: shift, ctrl, alt… (opcional)")}, ["x", "y"])
 def click(a, ctx):
     _failsafe()
     x, y = _real(ctx, a["x"], a["y"])
-    _set_cursor(x, y)
-    time.sleep(0.08)
+    _press_at(x, y, a.get("button"), a.get("double"), a.get("keys"))
+    return "Clic %s%s en (%s,%s)" % (a.get("button") or "left", (" con " + a["keys"]) if a.get("keys") else "", a["x"], a["y"])
+
+
+@tool("drag", "control", "Arrastra con el ratón de (x1,y1) a (x2,y2) de la última captura: mover archivos o ventanas, seleccionar texto, "
+      "deslizadores, dibujar…",
+      {"x1": I("X inicial"), "y1": I("Y inicial"), "x2": I("X final"), "y2": I("Y final"), "button": S("left (por defecto) o right")},
+      ["x1", "y1", "x2", "y2"])
+def drag(a, ctx):
+    _failsafe()
+    x1, y1 = _real(ctx, a["x1"], a["y1"])
+    x2, y2 = _real(ctx, a["x2"], a["y2"])
     button = str(a.get("button") or "left").lower()
-    if osys.WIN:
-        d, u = {"right": (0x8, 0x10), "middle": (0x20, 0x40)}.get(button, (0x2, 0x4))
-        for _ in range(2 if a.get("double") else 1):
-            _mouse(d)
-            _mouse(u)
-            time.sleep(0.06)
-    else:
-        _px(PX.click, button, bool(a.get("double")))
-    time.sleep(0.4)
-    return "Clic %s en (%s,%s)" % (a.get("button") or "left", a["x"], a["y"])
+    _glide(x1, y1)
+    _ui("click", x1, y1)
+    time.sleep(0.08)
+    d, u = _BTN.get(button, (0x2, 0x4))
+    _mouse(d) if osys.WIN else _px(PX.mouse_button, button, True)
+    try:
+        time.sleep(0.12)
+        _glide(x2, y2)                               # en pasos: los programas ven el arrastre
+        time.sleep(0.12)
+    finally:
+        _mouse(u) if osys.WIN else _px(PX.mouse_button, button, False)
+    _ui("click", x2, y2)
+    time.sleep(0.35)
+    return "Arrastrado de (%s,%s) a (%s,%s)" % (a["x1"], a["y1"], a["x2"], a["y2"])
 
 
 @tool("move_mouse", "control", "Mueve el ratón a (x,y) de la última captura.", {"x": I("X"), "y": I("Y")}, ["x", "y"])
 def move_mouse(a, ctx):
     _failsafe()
     x, y = _real(ctx, a["x"], a["y"])
-    _set_cursor(x, y)
+    _glide(x, y)
     return "Ratón en (%s,%s)" % (a["x"], a["y"])
 
 
@@ -894,7 +1097,8 @@ def scroll(a, ctx):
     _failsafe()
     if a.get("x") is not None and a.get("y") is not None:
         x, y = _real(ctx, a["x"], a["y"])
-        _set_cursor(x, y)
+        _glide(x, y)
+    _ui("scroll", *_here())
     if osys.WIN:
         _mouse(0x800, int(a["amount"]) * 120)
     else:
@@ -912,6 +1116,7 @@ def _send_unicode(unit, up):
 @tool("type_text", "control", "Escribe texto con el teclado en la ventana que tenga el foco.", {"text": S("Texto a escribir")}, ["text"])
 def type_text(a, ctx):
     _failsafe()
+    _ui("key", *_here())
     txt = str(a["text"])
     if not osys.WIN:
         _px(PX.type_text, txt, ctx.stop)
@@ -952,6 +1157,7 @@ def _key(vk, up):
       (" ('cmd' es la tecla Comando: 'cmd+c' copia)" if osys.MAC else ", 'win'"), {"keys": S("Combinación separada por +")}, ["keys"])
 def press_keys(a, ctx):
     _failsafe()
+    _ui("key", *_here())
     parts = str(a["keys"]).lower().replace(" ", "").split("+")
     if not osys.WIN:
         _px(PX.press_combo, parts)
@@ -999,6 +1205,7 @@ def list_windows(a, ctx):
 @tool("focus_window", "control", "Trae al frente la primera ventana cuyo título contenga el texto dado.", {"title": S("Parte del título")}, ["title"])
 def focus_window(a, ctx):
     q = str(a["title"]).lower()
+    _ui("focus")
     for hwnd, t in _windows():
         if q in t.lower():
             if not osys.WIN:
@@ -1011,6 +1218,276 @@ def focus_window(a, ctx):
             time.sleep(0.4)
             return "Foco en: " + t
     raise ToolError("No hay ventana con ese título.")
+
+
+# ---------------------------------------------------------------- interfaz de los programas (accesibilidad)
+UI_ROLE = {"Button": "botón", "SplitButton": "botón", "Edit": "campo de texto", "Document": "documento", "Text": "texto",
+           "CheckBox": "casilla", "RadioButton": "opción", "ComboBox": "lista desplegable", "ListItem": "elemento de lista",
+           "MenuItem": "menú", "Hyperlink": "enlace", "TabItem": "pestaña", "TreeItem": "elemento del árbol", "Slider": "deslizador",
+           "Spinner": "número", "DataItem": "celda"}
+# Windows: UI Automation desde PowerShell (viene con el sistema; nada que instalar)
+_UIA_PS = r"""
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class JDpi { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); }'
+[void][JDpi]::SetProcessDPIAware()
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$A = [System.Windows.Automation.AutomationElement]
+$CT = [System.Windows.Automation.ControlType]
+$root = $A::FromHandle([IntPtr]::new(%(hwnd)d))
+$types = @(%(types)s) | ForEach-Object { New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, $CT::$_) }
+$cond = New-Object System.Windows.Automation.AndCondition(
+  (New-Object System.Windows.Automation.PropertyCondition($A::IsOffscreenProperty, $false)),
+  (New-Object System.Windows.Automation.OrCondition([System.Windows.Automation.Condition[]]$types)))
+$all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)
+$out = New-Object System.Collections.ArrayList
+foreach ($e in $all) {
+  if ($out.Count -ge %(limit)d) { break }
+  try {
+    $c = $e.Current
+    $r = $c.BoundingRectangle
+    if ($r.IsEmpty -or $r.Width -lt 2 -or $r.Height -lt 2) { continue }
+    $v = ''
+    try { $v = $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value } catch {}
+    [void]$out.Add([ordered]@{t = $c.ControlType.ProgrammaticName.Substring(12); n = $c.Name; v = "$v"; x = [int]$r.X; y = [int]$r.Y;
+                              w = [int]$r.Width; h = [int]$r.Height; e = $c.IsEnabled})
+  } catch {}
+}
+ConvertTo-Json -InputObject @($out) -Compress -Depth 3
+"""
+
+
+def _ui_read(hwnd, title, limit=150):
+    if not osys.WIN:
+        return _px(PX.ui_elements, hwnd, title, limit)
+    script = _UIA_PS % {"hwnd": int(hwnd), "limit": int(limit), "types": ",".join("'%s'" % t for t in UI_ROLE)}
+    try:
+        r = subprocess.run(osys.shell_argv(script), capture_output=True, timeout=40, **osys.popen_kwargs())
+    except subprocess.TimeoutExpired:
+        raise ToolError("La ventana tarda demasiado en describir su interfaz. Usa screenshot y click con coordenadas.")
+    out = r.stdout.decode("utf-8", "replace").strip()
+    if r.returncode != 0 or not out.startswith("["):
+        raise ToolError("No pude leer la interfaz de «%s»: %s" % (title, (r.stderr.decode("utf-8", "replace").strip() or out)[:300]))
+    return json.loads(out)
+
+
+def _ui_text(title, items):
+    lines = ["Ventana «%s»: %d elementos (número · tipo · nombre%s):" % (title, len(items), " · valor" if any(i.get("v") for i in items) else "")]
+    for k, it in enumerate(items, 1):
+        name = " ".join(str(it.get("n") or "").split())[:80]
+        val = " ".join(str(it.get("v") or "").split())[:80]
+        lines.append("[%d] %s%s%s%s" % (k, UI_ROLE.get(it.get("t"), it.get("t")), (" «%s»" % name) if name else "",
+                                       (" = «%s»" % val) if val and val != name else "", "" if it.get("e", True) else " (desactivado)"))
+    if not items:
+        lines.append("(no expone elementos: usa screenshot y click con coordenadas)")
+    return "\n".join(lines)
+
+
+@tool("ui_elements", "control", "Lista los botones, menús, campos, casillas, enlaces y textos visibles de una ventana (accesibilidad del sistema), "
+      "numerados. Es la forma más fiable de usar un programa: luego click_element con el número. También sirve sin ver imágenes.",
+      {"window": S("Parte del título de la ventana"), "filter": S("Mostrar solo los que contengan este texto (opcional)")}, ["window"])
+def ui_elements(a, ctx):
+    hwnd, title = _win(str(a["window"]), ctx)
+    items = _ui_read(hwnd, title)
+    f = str(a.get("filter") or "").strip().lower()
+    if f:
+        items = [i for i in items if f in str(i.get("n") or "").lower() or f in str(i.get("v") or "").lower()]
+    ctx.ui = {"window": title, "hwnd": hwnd, "items": items}
+    _ui("look")
+    return _ui_text(title, items)
+
+
+@tool("click_element", "control", "Hace clic en un elemento de la interfaz por su número de ui_elements (o por su nombre): trae la ventana al "
+      "frente y pulsa en su centro, sin adivinar coordenadas.",
+      {"index": I("Número del elemento en la última lista de ui_elements"), "name": S("O el nombre del elemento (p. ej. «Guardar»)"),
+       "window": S("Ventana (si se busca por nombre sin haber listado antes)"), "button": S("left (por defecto), right o middle"),
+       "double": B("Doble clic"), "keys": S("Teclas pulsadas durante el clic (opcional)")})
+def click_element(a, ctx):
+    _failsafe()
+    ui = getattr(ctx, "ui", None)
+    if a.get("window") and (not ui or str(a["window"]).lower() not in ui["window"].lower()):
+        hwnd, title = _win(str(a["window"]), ctx)
+        ui = ctx.ui = {"window": title, "hwnd": hwnd, "items": _ui_read(hwnd, title)}
+    if not ui:
+        raise ToolError("Primero lista los elementos de la ventana con ui_elements (o indica window).")
+    it = None
+    if a.get("index") not in (None, ""):
+        k = int(a["index"])
+        if not 1 <= k <= len(ui["items"]):
+            raise ToolError("No hay elemento %d: la lista tiene %d." % (k, len(ui["items"])))
+        it = ui["items"][k - 1]
+    elif a.get("name"):
+        q = " ".join(str(a["name"]).split()).lower()
+        cand = [i for i in ui["items"] if " ".join(str(i.get("n") or "").split()).lower() == q] or \
+               [i for i in ui["items"] if q in str(i.get("n") or "").lower()]
+        if not cand:
+            raise ToolError("No encuentro «%s» en la ventana «%s». Vuelve a listar con ui_elements." % (a["name"], ui["window"]))
+        it = cand[0]
+    else:
+        raise ToolError("Indica index (número de ui_elements) o name.")
+    if not it.get("e", True):
+        raise ToolError("Ese elemento está desactivado ahora mismo.")
+    _window_rect(ui["hwnd"], ui["window"])           # al frente (el clic tiene que caer en esa ventana)
+    x, y = int(it["x"] + it["w"] / 2), int(it["y"] + it["h"] / 2)
+    _press_at(x, y, a.get("button"), a.get("double"), a.get("keys"))
+    name = " ".join(str(it.get("n") or "").split())[:60]
+    return "Clic en %s%s" % (UI_ROLE.get(it.get("t"), it.get("t")), (" «%s»" % name) if name else "")
+
+
+# ---------------------------------------------------------------- ventanas y portapapeles
+@tool("window_action", "control", "Maneja una ventana: maximize, minimize, restore, close (pide cerrarla como el botón X; el programa puede "
+      "preguntar si guardar), move o resize (en píxeles reales de la pantalla).",
+      {"window": S("Parte del título de la ventana"), "action": S("maximize, minimize, restore, close, move o resize"),
+       "x": I("X (move)"), "y": I("Y (move)"), "width": I("Ancho (resize)"), "height": I("Alto (resize)")}, ["window", "action"])
+def window_action(a, ctx):
+    act = str(a["action"]).lower().strip()
+    if act not in ("maximize", "minimize", "restore", "close", "move", "resize"):
+        raise ToolError("action debe ser maximize, minimize, restore, close, move o resize.")
+    hwnd, title = _win(str(a["window"]), ctx, wait=2)
+    _ui("focus")
+    g = lambda k: int(a[k]) if a.get(k) not in (None, "") else None
+    if not osys.WIN:
+        _px(PX.window_action, hwnd, title, act, g("x"), g("y"), g("width"), g("height"))
+    elif act in ("maximize", "minimize", "restore"):
+        user32.ShowWindow(hwnd, {"maximize": 3, "minimize": 6, "restore": 9}[act])
+    elif act == "close":
+        user32.PostMessageW(hwnd, 0x0010, 0, 0)      # WM_CLOSE: como pulsar la X
+    else:
+        _dpi()
+        if user32.IsZoomed(hwnd):
+            user32.ShowWindow(hwnd, 9)
+        r = wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(r))
+        x, y = g("x"), g("y")
+        w, h = g("width"), g("height")
+        user32.SetWindowPos(hwnd, 0, r.left if x is None else x, r.top if y is None else y,
+                            (r.right - r.left) if w is None else max(80, w), (r.bottom - r.top) if h is None else max(60, h), 0x0004 | 0x0010)
+    time.sleep(0.4)
+    return {"maximize": "Maximizada", "minimize": "Minimizada", "restore": "Restaurada", "close": "Pedí cerrar", "move": "Movida",
+            "resize": "Cambiada de tamaño"}[act] + " la ventana «%s»" % title
+
+
+def _clip_dll():
+    u = ctypes.WinDLL("user32", use_last_error=True)
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    V = ctypes.c_void_p
+    u.OpenClipboard.argtypes, u.GetClipboardData.restype, u.GetClipboardData.argtypes = [V], V, [ctypes.c_uint]
+    u.SetClipboardData.restype, u.SetClipboardData.argtypes = V, [ctypes.c_uint, V]
+    k.GlobalAlloc.restype, k.GlobalAlloc.argtypes = V, [ctypes.c_uint, ctypes.c_size_t]
+    k.GlobalLock.restype, k.GlobalLock.argtypes, k.GlobalUnlock.argtypes = V, [V], [V]
+    return u, k
+
+
+def _clip_open(u):
+    for _ in range(20):                               # otro programa puede tenerlo abierto un instante
+        if u.OpenClipboard(None):
+            return
+        time.sleep(0.05)
+    raise ToolError("El portapapeles está ocupado por otro programa.")
+
+
+def clipboard_get():
+    if not osys.WIN:
+        return _px(PX.clipboard_get)
+    u, k = _clip_dll()
+    _clip_open(u)
+    try:
+        if not u.IsClipboardFormatAvailable(13):      # CF_UNICODETEXT
+            return ""
+        h = u.GetClipboardData(13)
+        p = k.GlobalLock(h)
+        try:
+            return ctypes.wstring_at(p) if p else ""
+        finally:
+            k.GlobalUnlock(h)
+    finally:
+        u.CloseClipboard()
+
+
+def clipboard_set(text):
+    if not osys.WIN:
+        return _px(PX.clipboard_set, text)
+    u, k = _clip_dll()
+    data = text.encode("utf-16-le") + b"\0\0"
+    h = k.GlobalAlloc(0x0002, len(data))             # GMEM_MOVEABLE
+    p = k.GlobalLock(h)
+    ctypes.memmove(p, data, len(data))
+    k.GlobalUnlock(h)
+    _clip_open(u)
+    try:
+        u.EmptyClipboard()
+        if not u.SetClipboardData(13, h):
+            raise ToolError("No pude escribir en el portapapeles.")
+    finally:
+        u.CloseClipboard()
+
+
+@tool("clipboard", "control", "Lee el texto del portapapeles o escribe en él (para pasar datos entre programas: copia aquí y pega allí con ctrl+v).",
+      {"action": S("read o write"), "text": S("Texto a copiar (write)")}, ["action"])
+def clipboard(a, ctx):
+    act = str(a["action"]).lower().strip()
+    if act in ("write", "set", "copy"):
+        txt = str(a.get("text") or "")
+        clipboard_set(txt)
+        return "Copiado al portapapeles (%d caracteres)." % len(txt)
+    txt = clipboard_get()
+    return clip(txt, ctx.max_out) if txt else "El portapapeles no tiene texto."
+
+
+# ---------------------------------------------------------------- navegador integrado de Jayth
+BROWSER = None      # puente con el panel del navegador (lo pone la ventana; sin ventana, no hay navegador)
+
+
+def _web(op, ctx, timeout=45, **args):
+    b = BROWSER
+    if b is None:
+        raise ToolError("El navegador integrado no está disponible aquí. Usa web_fetch para leer páginas.")
+    try:
+        return b.call(op, args, ctx.stop, timeout)
+    except RuntimeError as e:
+        raise ToolError(str(e))
+
+
+@tool("browser_open", "net", "Abre una página en el navegador integrado de Jayth (el usuario la ve a la vista) y devuelve su texto y lo que se "
+      "puede usar, numerado. Para webs que hay que usar, no solo leer: buscar dentro de un sitio, iniciar sesión, formularios, páginas con JavaScript.",
+      {"url": S("Dirección (o lo que quieras buscar)")}, ["url"])
+def browser_open(a, ctx):
+    return _web("open", ctx, 60, url=str(a["url"]))
+
+
+@tool("browser_read", "net", "Lee la página abierta en el navegador integrado: what=all (resumen y lo que hay a la vista), text (todo el texto, por "
+      "partes con offset) o elements (todo lo que se puede usar, numerado; filter para buscar uno).",
+      {"what": S("all (por defecto), text o elements"), "filter": S("Solo elementos que contengan este texto (opcional)"),
+       "offset": I("Desde qué carácter del texto (opcional)")})
+def browser_read(a, ctx):
+    return _web("read", ctx, what=a.get("what") or "all", filter=a.get("filter") or "", offset=a.get("offset") or 0)
+
+
+@tool("browser_click", "net", "Pulsa un enlace, botón, casilla o pestaña de la página del navegador integrado por su número (de browser_open o "
+      "browser_read) o por su texto. Es un clic real; si se abre otra página, devuelve su resumen.",
+      {"index": I("Número del elemento"), "text": S("O el texto del enlace o botón")})
+def browser_click(a, ctx):
+    return _web("click", ctx, index=a.get("index"), text=a.get("text"))
+
+
+@tool("browser_type", "net", "Escribe en un campo de la página del navegador integrado (por número, o por su nombre en field) y, con submit=true, "
+      "pulsa Intro (buscar, enviar). En una lista desplegable elige la opción con ese texto. Las contraseñas las escribe el usuario.",
+      {"index": I("Número del campo"), "field": S("O el nombre del campo"), "text": S("Texto a escribir (o la opción de la lista)"),
+       "submit": B("Pulsar Intro al terminar"), "clear": B("Borrar lo que había antes (por defecto sí)")}, ["text"])
+def browser_type(a, ctx):
+    return _web("type", ctx, index=a.get("index"), field=a.get("field"), text=str(a.get("text", "")), submit=bool(a.get("submit")),
+                clear=a.get("clear", True) not in (False, "false", 0))
+
+
+@tool("browser_nav", "net", "En el navegador integrado: back, forward o reload; o desplaza la página: down, up, top, bottom.",
+      {"action": S("back, forward, reload, down, up, top o bottom")}, ["action"])
+def browser_nav(a, ctx):
+    return _web("nav", ctx, action=str(a["action"]))
+
+
+@tool("browser_screenshot", "net", "Captura lo que se ve en el navegador integrado (para ver el diseño de la página; el usuario también la ve).", {})
+def browser_screenshot(a, ctx):
+    return _web("shot", ctx)
 
 
 # ---------------------------------------------------------------- procesos en segundo plano
