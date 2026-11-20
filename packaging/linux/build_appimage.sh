@@ -13,7 +13,7 @@ python3 -m PyInstaller --noconfirm --clean packaging/jayth.spec
 
 # Comprobacion del paquete (sin ventana)
 TMP=$(mktemp -d)
-JAYTH_HOME="$TMP" QT_QPA_PLATFORM=offscreen dist/Jayth/Jayth --selftest || { cat "$TMP/selftest.json" 2>/dev/null; exit 1; }
+JAYTH_HOME="$TMP" QT_QPA_PLATFORM=offscreen dist/Jayth/Jayth --selftest || { cat "$TMP/selftest.json" 2>/dev/null; echo "::error title=Autocomprobacion Linux::$(tr -d '\n' < "$TMP/selftest.json" 2>/dev/null || echo sin informe)"; exit 1; }
 
 APPDIR=build/Jayth.AppDir
 rm -rf "$APPDIR"

@@ -3785,13 +3785,24 @@ def selftest(app):
 
     def voice_parts():                        # las piezas de Qt para la voz deben venir en el paquete
         import importlib
+        bad = []
         for m in ("PySide6.QtTextToSpeech", "PySide6.QtMultimedia"):
-            importlib.import_module(m)
+            try:
+                importlib.import_module(m)
+            except Exception as e:
+                bad.append("%s: %s" % (m, e))
+        # en Linux dependen de bibliotecas de sonido del sistema (PulseAudio): si faltan, la voz se desactiva sola
+        if bad and not (osys.WIN or osys.MAC):
+            report_extra["voice_missing"] = bad
+            return None
+        return "; ".join(bad) or None
+    report_extra = {}
     ok("voice_modules", voice_parts)
     # que haya voces o micrófono depende del equipo (en los servidores de compilación no hay): solo se informa
     from . import voice as _vc
     report = {"version": __version__, "os": osys.os_label(), "arch": _pf.machine(), "frozen": osys.FROZEN, "web_canvas": web,
               "voices": _vc.Speaker.available(), "microphone": _vc.Recorder.available(), "checks": checks}
+    report.update(report_extra)
     text = json.dumps(report, ensure_ascii=False, indent=1)
     try:
         print(text, flush=True)

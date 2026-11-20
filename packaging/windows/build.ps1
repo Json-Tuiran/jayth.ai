@@ -15,7 +15,7 @@ $env:QT_QPA_PLATFORM = "offscreen"
 $p = Start-Process -FilePath "dist\Jayth\Jayth.exe" -ArgumentList "--selftest" -Wait -PassThru
 Get-Content (Join-Path $tmp "selftest.json") -ErrorAction SilentlyContinue | Write-Host
 Remove-Item Env:JAYTH_HOME, Env:QT_QPA_PLATFORM
-if ($p.ExitCode -ne 0) { throw "La comprobacion del paquete fallo (codigo $($p.ExitCode))" }
+if ($p.ExitCode -ne 0) { Write-Host ("::error title=Autocomprobacion Windows::" + ((Get-Content (Join-Path $tmp "selftest.json") -Raw -ErrorAction SilentlyContinue) -replace "\s+", " ")); throw "La comprobacion del paquete fallo (codigo $($p.ExitCode))" }
 
 # Zip portatil: con portable.txt los datos se guardan junto al programa (para llevarlo en un USB)
 $stage = "build\portable\Jayth"

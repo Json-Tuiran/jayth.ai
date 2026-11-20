@@ -12,7 +12,7 @@ codesign --force --deep --sign - dist/Jayth.app       # firma ad hoc de todo el 
 
 # Comprobacion del paquete (sin ventana)
 TMP=$(mktemp -d)
-JAYTH_HOME="$TMP" QT_QPA_PLATFORM=offscreen dist/Jayth.app/Contents/MacOS/Jayth --selftest || { cat "$TMP/selftest.json" 2>/dev/null; exit 1; }
+JAYTH_HOME="$TMP" QT_QPA_PLATFORM=offscreen dist/Jayth.app/Contents/MacOS/Jayth --selftest || { cat "$TMP/selftest.json" 2>/dev/null; echo "::error title=Autocomprobacion macOS::$(tr -d '\n' < "$TMP/selftest.json" 2>/dev/null || echo sin informe)"; exit 1; }
 
 rm -rf build/dmg && mkdir -p build/dmg
 cp -R dist/Jayth.app build/dmg/
