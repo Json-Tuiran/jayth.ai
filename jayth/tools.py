@@ -38,7 +38,7 @@ TOOL_LABELS = {
     "run_python": tr("Analizar datos con Python"), "show_canvas": tr("Mostrar en el lienzo"), "ask_user": tr("Preguntarte"), "remember": tr("Recordar preferencias"), "forget": tr("Olvidar un recuerdo"), "use_skill": tr("Usar una habilidad"), "schedule_task": tr("Programar tareas"), "list_tasks": tr("Ver tareas programadas"),
     "cancel_task": tr("Quitar tareas programadas"), "create_document": tr("Crear documentos (Word, Excel, PowerPoint, PDF)"),
     "ui_elements": tr("Leer la interfaz de un programa"), "click_element": tr("Pulsar un elemento de un programa"), "drag": tr("Arrastrar con el ratón"),
-    "window_action": tr("Manejar ventanas"), "clipboard": tr("Usar el portapapeles"),
+    "window_action": tr("Manejar ventanas"), "clipboard": tr("Usar el portapapeles"), "jayth_guide": tr("Consultar la guía de Jayth"),
     "browser_open": tr("Abrir páginas en el navegador de Jayth"), "browser_read": tr("Leer la página del navegador"), "browser_click": tr("Pulsar en el navegador"),
     "browser_type": tr("Escribir en el navegador"), "browser_nav": tr("Navegar (atrás, recargar, desplazar)"), "browser_screenshot": tr("Capturar el navegador"),
 }
@@ -1694,6 +1694,15 @@ def use_skill(a, ctx):
       ["question"])
 def ask_user(a, ctx):
     return "(la respuesta la gestiona el agente)"
+
+
+@tool("jayth_guide", "agent", "Guía de Jayth, la app en la que trabajas: qué hace cada parte, dónde está cada botón, menú o ajuste, "
+      "cómo se hace algo en Jayth y datos de esta instalación (versión, modelo activo, carpetas, atajos, permisos). Consúltala "
+      "antes de responder cualquier pregunta sobre Jayth. Sin tema devuelve el índice.",
+      {"topic": S("Tema o pregunta, p. ej. «cambiar el idioma», «dónde se guardan los modelos», «deshacer cambios»")})
+def jayth_guide(a, ctx):
+    from . import guide
+    return guide.answer(str(a.get("topic") or ""))
 
 
 @tool("remember", "agent", "Guarda un dato duradero sobre el usuario o sus preferencias para futuras conversaciones (p. ej. 'usa pnpm').",

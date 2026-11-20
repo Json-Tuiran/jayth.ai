@@ -408,6 +408,7 @@ STEP = {  # herramienta: (infinitivo, pasado, objeto)
     "forget": (tr("olvidar"), tr("Olvidó"), lambda a: tr("«%s»") % _q(a.get("text"), 50)),
     "schedule_task": (tr("programar la tarea"), tr("Programó la tarea"), lambda a: tr("«%s»") % _q(a.get("name"), 50)),
     "list_tasks": (tr("ver las tareas programadas"), tr("Consultó las tareas programadas"), lambda a: ""),
+    "jayth_guide": (tr("consultar la guía de Jayth"), tr("Consultó la guía de Jayth"), lambda a: _q(a.get("topic"), 50) if a.get("topic") else ""),
     "cancel_task": (tr("quitar la tarea"), tr("Quitó la tarea"), lambda a: tr("«%s»") % _q(a.get("task"), 50)),
     "use_skill": (tr("usar la habilidad"), tr("Usó la habilidad"), lambda a: tr("«%s»") % _q(a.get("name"), 50)),
     "ui_elements": (tr("leer la interfaz de"), tr("Leyó la interfaz de"), lambda a: tr("«%s»") % _q(a.get("window"), 40)),
@@ -439,7 +440,7 @@ GERUND = {
     "scroll": tr("Desplazando"), "type_text": tr("Escribiendo"), "press_keys": tr("Pulsando"), "list_windows": tr("Revisando las ventanas"),
     "focus_window": tr("Activando la ventana"), "multi_edit": tr("Editando"), "move_path": tr("Moviendo"), "delete_path": tr("Enviando a la papelera"),
     "command_output": tr("Revisando la salida de"), "stop_command": tr("Deteniendo"), "read_document": tr("Leyendo el documento"),
-    "view_image": tr("Mirando la imagen"), "remember": tr("Guardando en la memoria"), "forget": tr("Olvidando"), "schedule_task": tr("Programando la tarea"),
+    "view_image": tr("Mirando la imagen"), "jayth_guide": tr("Consultando la guía de Jayth"), "remember": tr("Guardando en la memoria"), "forget": tr("Olvidando"), "schedule_task": tr("Programando la tarea"),
     "list_tasks": tr("Consultando las tareas programadas"), "cancel_task": tr("Quitando la tarea"), "use_skill": tr("Usando la habilidad"),
     "ui_elements": tr("Leyendo la interfaz de"), "click_element": tr("Pulsando"), "drag": tr("Arrastrando"),
     "browser_open": tr("Abriendo"), "browser_read": tr("Leyendo la página"), "browser_click": tr("Pulsando"), "browser_type": tr("Escribiendo"),
@@ -4621,6 +4622,8 @@ def selftest(app):
     ok("engine", lambda: bool(P.LLAMA_PATTERNS) or "sin motores")
     ok("qt_language", lambda: install_qt_language(app) or "sin traducción de Qt al idioma " + i18n.LANG)
     ok("i18n", lambda: i18n.LANG == "es" or len(i18n.CATALOG) > 500 or "falta el catálogo de " + i18n.LANG)
+    # la guía que consulta el agente sobre la propia app (jayth_guide), en el idioma de la interfaz
+    ok("guide", lambda: (len(importlib.import_module("jayth.guide").sections()) >= 20 and "jayth_guide" in T.TOOLS) or "falta la guía de Jayth")
     ok("tools", lambda: len(T.TOOLS) >= 25 or "faltan herramientas")
     ok("shell", lambda: "JAYTH_OK" in __import__("subprocess").run(osys.shell_argv("echo JAYTH_OK"), capture_output=True, text=True,
                                                                      timeout=60, **osys.popen_kwargs()).stdout or "la terminal no responde")

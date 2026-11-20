@@ -52,7 +52,7 @@ TOOL_ICON = {
     "open_target": "acc_abrir_externo", "wait": "est_cargando", "remember": "ia_memoria", "forget": "ia_memoria",
     "schedule_task": "lista_subir", "list_tasks": "ui_menu_hamburguesa", "cancel_task": "acc_eliminar", "use_skill": "vfx_magia",
     "show_canvas": "uij_panel", "ui_elements": "act_layout_ui", "click_element": "inp_raton", "drag": "inp_raton",
-    "window_action": "app_restaurar", "clipboard": "acc_copiar",
+    "window_action": "app_restaurar", "clipboard": "acc_copiar", "jayth_guide": "est_info",
     "browser_open": "herr_espacio_mundo", "browser_read": "acc_examinar", "browser_click": "inp_raton", "browser_type": "inp_teclado",
     "browser_nav": "herr_espacio_mundo", "browser_screenshot": "vista_captura",
 }
@@ -69,7 +69,7 @@ _KIND = {"write_file": "write", "edit_file": "write", "multi_edit": "write", "cr
          "web_search": "web", "web_fetch": "web", "download_file": "web",
          "screenshot": "look", "view_image": "look", "click": "look", "move_mouse": "look", "scroll": "look", "type_text": "look",
          "press_keys": "look", "list_windows": "look", "focus_window": "look", "ui_elements": "look", "click_element": "look",
-         "drag": "look", "window_action": "look", "clipboard": "other",
+         "drag": "look", "window_action": "look", "clipboard": "other", "jayth_guide": "read",
          "browser_open": "web", "browser_read": "web", "browser_click": "web", "browser_type": "web", "browser_nav": "web",
          "browser_screenshot": "web"}
 

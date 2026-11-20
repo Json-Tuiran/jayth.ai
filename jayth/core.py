@@ -30,7 +30,8 @@ DEFAULTS = {
     "backend": "cpu",            # cpu | cuda | vulkan
     "threads": max(1, (os.cpu_count() or 2) // 2),
     "llm_port": 8080,
-    "n_ctx": 16384,
+    "n_ctx": 0,                  # 0 = automatico: el maximo que admite el modelo, ajustado a la memoria (ver effective_ctx)
+    "ctx_auto_migrated": False,  # el antiguo valor fijo por defecto (16384) ya se paso a automatico
     "gpu_layers": -1,            # -1 = automatico (--fit); 0 = solo CPU; N = capas en la GPU
     "batch_size": 512,
     "flash_attn": "auto",        # auto | on | off
@@ -136,6 +137,11 @@ class Settings:
                             pass
                         self.load_error = tr("No se pudieron leer tus ajustes (%s). Se guardó una copia en %s.") % (e, bak)
                     time.sleep(0.3)
+        if not self.v.get("ctx_auto_migrated"):
+            # antes el contexto era 16 000 fijo por defecto: pasa a automático (el máximo del modelo que quepa en memoria)
+            if int(self.v.get("n_ctx") or 0) == 16384:
+                self.v["n_ctx"] = 0
+            self.v["ctx_auto_migrated"] = True
         old_ws = os.path.join(os.path.dirname(paths.WORKSPACE_DEFAULT), "AgenteLocal")
         if os.path.normcase(os.path.normpath(self.v["workspace"])) == os.path.normcase(old_ws):
             self.v["workspace"] = paths.WORKSPACE_DEFAULT   # carpeta del nombre provisional anterior (Documentos\AgenteLocal)
@@ -308,11 +314,87 @@ def read_caps(m):
         tpl = str(meta.get("tokenizer.chat_template") or "")
         caps.update(tools=bool(P._TOOLS_TPL.search(tpl)) if tpl else bool(P._TOOLS_NAME.search(m.get("repo") or path)),
                     think=bool(P._THINK_TPL.search(tpl)) if tpl else False, arch=str(meta.get("general.architecture") or ""),
-                    ctx=next((int(v) for k, v in meta.items() if k.endswith(".context_length") and isinstance(v, int)), 0), source="gguf")
+                    ctx=next((int(v) for k, v in meta.items() if k.endswith(".context_length") and isinstance(v, int)), 0),
+                    kv=_kv_elems(meta), source="gguf")
     except (OSError, ValueError):
         name = m.get("repo") or path                      # archivo ilegible o ausente: se deduce del nombre
-        caps.update(tools=bool(P._TOOLS_NAME.search(name)), think=False, arch="", ctx=0, source="nombre")
+        caps.update(tools=bool(P._TOOLS_NAME.search(name)), think=False, arch="", ctx=0, kv=0, source="nombre")
     return caps
+
+
+def _kv_elems(meta):
+    """Valores de la caché de atención por cada token de contexto: capas × cabezas KV × (dim. de clave + de valor).
+    Con atención por ventana o capas sin atención el gasto real es menor: así se calcula por lo alto (sin sorpresas)."""
+    def g(suffix):
+        return next((v for k, v in meta.items() if k.endswith(suffix)), None)
+    layers, heads, embd = g(".block_count"), g(".attention.head_count"), g(".embedding_length")
+    kvh = g(".attention.head_count_kv")
+    if not isinstance(layers, int) or not layers:
+        return 0
+    extra = g(".nextn_predict_layers")              # capas de predicción múltiple (MTP): el motor no les reserva caché
+    if isinstance(extra, int) and 0 < extra < layers:
+        layers -= extra
+    if isinstance(heads, list):
+        heads = max(heads) if heads else 0
+    head_dim = (embd // heads) if isinstance(embd, int) and isinstance(heads, int) and heads else 128
+    k, v = g(".attention.key_length") or head_dim, g(".attention.value_length") or head_dim
+    if isinstance(kvh, list):                         # cabezas por capa (las capas sin atención llevan 0)
+        per_layer = sum(int(x) for x in kvh[:layers])
+    else:
+        # modelos híbridos (p. ej. Qwen3.5/Qwen3-Next): solo 1 de cada N capas tiene atención; las demás guardan un
+        # estado fijo que no crece con el contexto
+        every = g(".full_attention_interval")
+        attn_layers = -(-layers // every) if isinstance(every, int) and every > 1 else layers
+        per_layer = attn_layers * int(kvh or heads or 8)
+    return int(per_layer * (int(k) + int(v)))
+
+
+CTX_FLOOR = 16384               # lo que se usaba antes por defecto: el automático nunca baja de aquí (si el modelo llega)
+_KV_BYTES = {"f16": 2.0, "q8_0": 34 / 32, "q4_0": 18 / 32}
+_HW = []
+
+
+def _hardware():
+    if not _HW:
+        from . import hardware as HW
+        try:
+            _HW.append(HW.detect())
+        except Exception:
+            _HW.append({"ram": 8 << 30, "vram": 0})
+    return _HW[0]
+
+
+def effective_ctx(cfg, m=None):
+    """Contexto con el que se enciende el modelo. Con n_ctx > 0 es ese número; con 0 (automático) es el máximo que admite
+    el modelo de fábrica, reducido si su caché no cabe en la memoria del equipo (nunca por debajo de CTX_FLOOR)."""
+    n = int(cfg.get("n_ctx") or 0)
+    if n > 0:
+        return n
+    if cfg.get("llm_mode") == "external":
+        return CTX_FLOOR                                 # el servidor externo decide su propio contexto
+    m = m or active_model(cfg)
+    c = model_caps(m) if m else None
+    native = int((c or {}).get("ctx") or 0) or 32768
+    kv = int((c or {}).get("kv") or 0) * _KV_BYTES.get(cfg.get("cache_type", "f16"), 2.0)
+    if not kv:
+        return min(native, CTX_FLOOR * 2)
+    # medido con llama.cpp (Qwen3.5 27B en CPU): la caché crece exactamente kv bytes por token, el búfer de cálculo unos
+    # 2 KB más por token y hay ~0,5 GB fijos (cálculo y estado de las capas recurrentes)
+    per_token = kv + 2048
+    hw = _hardware()
+    GB = 1 << 30
+    used = GB // 2
+    for p in ((m or {}).get("path"), (m or {}).get("mmproj") if cfg.get("vision", True) else None):
+        try:
+            used += os.path.getsize(p) if p else 0
+        except OSError:
+            pass
+    ram = hw.get("ram", 0)
+    reserve = max(4 * GB, ram * 0.2)                 # para el sistema y los demás programas abiertos
+    free = ram + max(0, hw.get("vram", 0) - GB) - used - reserve
+    fits = int(free / per_token) if free > 0 else 0
+    ctx = min(native, max(min(native, CTX_FLOOR), fits))
+    return max(2048, ctx // 1024 * 1024)
 
 
 def model_caps(m, compute=True):
@@ -320,7 +402,7 @@ def model_caps(m, compute=True):
     if not m:
         return None
     c = m.get("caps")
-    if c and c.get("sig") == _file_sig(m.get("path", "")):
+    if c and c.get("sig") == _file_sig(m.get("path", "")) and ("kv" in c or not compute):
         c = dict(c)
         c["vision"] = bool(m.get("mmproj") and os.path.isfile(m["mmproj"]))     # el proyector se puede añadir o quitar luego
         return c
@@ -439,6 +521,7 @@ class Session:
                 cfg["custom_instructions"] = (cfg["custom_instructions"] + "\n\n" + AS.instructions_for(a)).strip()
         cfg["_sid"] = self.id
         cfg["_temp"] = self.temp
+        cfg["n_ctx"] = effective_ctx(cfg)        # el agente mide la conversación con el contexto real (también en automático)
         cfg["_model_title"] = model_title(active_model(cfg)) if cfg["llm_mode"] == "local" else (cfg.get("external_model") or "")
         attach = attach_text if attach_text is not None else attachments_text(files)
         if cfg["mode"] == "plan":
@@ -749,7 +832,7 @@ class LLM:
         cfg = cfg or SET.snapshot()
         m = active_model(cfg) or {}
         cmd = [cfg["llama_exe"], "-m", m.get("path", ""), "--host", "127.0.0.1", "--port", str(cfg["llm_port"]),
-               "-t", str(cfg["threads"]), "-c", str(cfg["n_ctx"]), "--jinja", "--no-warmup",
+               "-t", str(cfg["threads"]), "-c", str(effective_ctx(cfg, m)), "--jinja", "--no-warmup",
                "-np", "1",                       # una sola ranura: todo el contexto disponible y la cache de prompt siempre se reutiliza
                "-b", str(cfg["batch_size"])]
         if cfg["backend"] in ("cuda", "vulkan", "metal"):

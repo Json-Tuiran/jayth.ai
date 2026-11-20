@@ -513,9 +513,22 @@ class SettingsDialog(QDialog):
         run_bg(HW.detect, lambda h: hw.setText(HW.summary(h) if not isinstance(h, Exception) else tr("No se pudo detectar el hardware.")))
         self.field(v, "warmup", tr("Precalentar al encender el modelo"), "bool",
                    help=tr("Procesa una vez las instrucciones y herramientas del agente: el primer mensaje responde muchísimo antes."))
+        cfg = core.SET.snapshot()
+        auto = dict(cfg, n_ctx=0)
+        try:
+            now = core.effective_ctx(auto)
+            caps = core.model_caps(core.active_model(cfg), compute=False) or {}
+            native = int(caps.get("ctx") or 0)
+            ctx_help = tr("Automático usa todo el contexto que admite el modelo de fábrica, reducido si no cabe en la memoria de "
+                          "tu equipo. Con el modelo activo serían %s tokens%s.") % (
+                "{:,}".format(now).replace(",", " "), (tr(" (máximo del modelo: %s)") % "{:,}".format(native).replace(",", " ")) if native else "")
+        except Exception:
+            ctx_help = tr("Automático usa todo el contexto que admite el modelo de fábrica, reducido si no cabe en la memoria de tu equipo.")
         self.field(v, "n_ctx", tr("Memoria de la conversación (contexto)"), "choice",
-                   choices=[(tr("4 000 tokens"), 4096), (tr("8 000 tokens"), 8192), (tr("16 000 tokens (recomendado)"), 16384), (tr("32 000 tokens"), 32768),
-                            (tr("64 000 tokens"), 65536), (tr("128 000 tokens"), 131072)], help=tr("Más contexto permite tareas más largas, pero usa más memoria."))
+                   choices=[(tr("Automático: lo que admita el modelo (recomendado)"), 0), (tr("4 000 tokens"), 4096), (tr("8 000 tokens"), 8192),
+                            (tr("16 000 tokens"), 16384), (tr("32 000 tokens"), 32768), (tr("64 000 tokens"), 65536), (tr("128 000 tokens"), 131072),
+                            (tr("256 000 tokens"), 262144)],
+                   help=ctx_help + " " + tr("Más contexto permite tareas más largas, pero usa más memoria."))
         self.field(v, "idle_unload", tr("Apagar el modelo si no se usa durante"), "choice",
                    choices=[(tr("Nunca"), 0), (tr("5 minutos"), 5), (tr("15 minutos"), 15), (tr("30 minutos"), 30), (tr("1 hora"), 60)], help=tr("Libera memoria cuando no lo estás usando."))
         self._section(v, tr("Ajustes del motor"))

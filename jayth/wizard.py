@@ -352,12 +352,14 @@ class SetupWizard(QDialog):
         self.threads.setValue(self.cfg["threads"])
         f.addRow(tr("Hilos de CPU:"), self.threads)
         self.ctx = QComboBox()
-        for n in (4096, 8192, 16384, 32768, 65536, 131072):
+        self.ctx.addItem(tr("Automático: lo que admita el modelo (recomendado)"), 0)
+        for n in (4096, 8192, 16384, 32768, 65536, 131072, 262144):
             self.ctx.addItem("%d tokens" % n, n)
         self.ctx.setCurrentIndex(max(0, self.ctx.findData(self.cfg["n_ctx"])))
         f.addRow(tr("Contexto:"), self.ctx)
         v.addLayout(f)
-        v.addWidget(lbl(tr("Más contexto permite tareas más largas, pero usa más memoria. Para agentes se recomiendan 16 000 o más."), "muted"))
+        v.addWidget(lbl(tr("Automático usa todo el contexto que admite el modelo de fábrica, reducido si no cabe en la memoria de tu "
+                           "equipo. Más contexto permite tareas más largas, pero usa más memoria."), "muted"))
         v.addStretch(1)
         self.backend.currentIndexChanged.connect(self._eng_state)
         self.chk_own.toggled.connect(self._eng_state)

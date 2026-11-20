@@ -10,6 +10,9 @@ import struct
 _FIXED = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8}       # tamaño de los tipos numéricos
 _FMT = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i", 6: "<f", 7: "<?", 10: "<Q", 11: "<q", 12: "<d"}
 STRING, ARRAY = 8, 9
+# siempre se guardan: el contexto de fábrica y lo necesario para saber cuánta memoria ocupa cada token de contexto
+_ALWAYS = (".context_length", ".block_count", ".embedding_length", ".attention.head_count", ".attention.head_count_kv",
+           ".attention.key_length", ".attention.value_length", ".full_attention_interval", ".nextn_predict_layers")
 
 
 class NotGGUF(ValueError):
@@ -72,7 +75,7 @@ def read_meta(path, want=None, max_bytes=256 << 20):
         for _ in range(u64()):
             key = string()
             t = u32()
-            keep = want is None or key in want or key.endswith(".context_length")
+            keep = want is None or key in want or key.endswith(_ALWAYS)
             v = value(t, keep)
             if keep:
                 out[key] = v

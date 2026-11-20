@@ -42,6 +42,15 @@ jobs:
           V=$(python -c "import jayth; print(jayth.__version__)")
           [ "v$V" = "${GITHUB_REF_NAME}" ] || { echo "La etiqueta ${GITHUB_REF_NAME} no coincide con __version__ = $V"; exit 1; }
 
+      # idiomas y guía del agente al día: ningún texto sin traducir y la guía nombra todos los ajustes y menús
+      - name: Comprobar traducciones y guía de Jayth
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python tools_i18n/catalogo.py revisar
+          python tools_i18n/revisar_guia.py
+
       - name: Bibliotecas de Qt (Linux)
         if: runner.os == 'Linux'
         run: |

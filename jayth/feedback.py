@@ -22,7 +22,8 @@ def tech_info():
     m = core.active_model(cfg)
     lines = ["- %s %s (%s %s)" % (APP_NAME, __version__, installed().get("kind", ""), (installed().get("sha") or "")[:7]),
              "- Sistema: %s · %s · Python %s" % (osys.os_label(), platform.machine(), platform.python_version()),
-             "- Motor: llama.cpp %s · %s · contexto %s" % (cfg["llama_tag"] or "—", cfg["backend"], cfg["n_ctx"]),
+             "- Motor: llama.cpp %s · %s · contexto %s%s" % (cfg["llama_tag"] or "—", cfg["backend"], core.effective_ctx(cfg),
+                                                             " (automático)" if not int(cfg.get("n_ctx") or 0) else ""),
              "- Modelo: %s %s" % (core.model_title(m) if m else ("externo" if cfg["llm_mode"] == "external" else "ninguno"), core.model_quant(m) if m else "")]
     return "\n".join(lines)
 
