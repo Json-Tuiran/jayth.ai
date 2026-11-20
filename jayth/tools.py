@@ -32,7 +32,8 @@ TOOL_LABELS = {
     "move_mouse": "Mover el ratón", "scroll": "Desplazar (rueda)", "type_text": "Escribir con el teclado", "press_keys": "Pulsar teclas",
     "list_windows": "Ver ventanas abiertas", "focus_window": "Activar una ventana", "command_output": "Ver salida de procesos",
     "stop_command": "Detener procesos", "read_document": "Leer documentos", "view_image": "Ver imágenes", "update_plan": "Plan de tareas",
-    "run_python": "Analizar datos con Python", "show_canvas": "Mostrar en el lienzo", "ask_user": "Preguntarte", "remember": "Recordar preferencias", "forget": "Olvidar un recuerdo", "use_skill": "Usar una habilidad", "create_document": "Crear documentos (Word, Excel, PowerPoint, PDF)",
+    "run_python": "Analizar datos con Python", "show_canvas": "Mostrar en el lienzo", "ask_user": "Preguntarte", "remember": "Recordar preferencias", "forget": "Olvidar un recuerdo", "use_skill": "Usar una habilidad", "schedule_task": "Programar tareas", "list_tasks": "Ver tareas programadas",
+    "cancel_task": "Quitar tareas programadas", "create_document": "Crear documentos (Word, Excel, PowerPoint, PDF)",
 }
 CATEGORIES = {"read": "Lectura", "write": "Escritura", "exec": "Ejecución", "net": "Red", "control": "Control del PC",
               "agent": "Agente", "mcp": "Conector"}
@@ -122,6 +123,8 @@ def is_dangerous(name, args, ctx):
         if name == "run_python":                # un script de análisis no debería borrar, lanzar programas ni usar la red
             return bool(re.search(r"\b(os\.(remove|unlink|rmdir|system|popen|startfile)|shutil\.(rmtree|move)|subprocess|socket|urllib|requests|"
                                   r"ctypes|winreg|eval\(|exec\(|__import__)", str(args.get("code", ""))))
+        if name == "schedule_task":
+            return True                         # una tarea que se ejecutará sola siempre la aprueba el usuario
         if name == "delete_path":
             return True                         # borrar siempre se confirma
         if name in ("write_file", "edit_file", "multi_edit", "download_file", "move_path"):
@@ -1141,6 +1144,56 @@ def show_canvas(a, ctx):
     what = {"html": "página web", "markdown": "documento", "svg": "dibujo", "code": "código"}[kind]
     return {"text": "Mostrado en el lienzo: «%s» (%s, versión %d). El usuario ya lo ve; no repitas el contenido en tu respuesta." % (title, what, ver),
             "ui": {"canvas": {"title": title, "kind": kind, "path": p, "version": ver, "slug": slug, "language": lang}}}
+
+
+@tool("schedule_task", "agent",
+      "Programa una tarea para que Jayth la haga solo más adelante o de forma periódica (p. ej. «cada mañana resúmeme las noticias», "
+      "«el viernes a las 17:00 revisa esta carpeta»). El usuario debe aprobarla.",
+      {"name": S("Nombre corto de la tarea"), "prompt": S("Qué debe hacer, con todo el detalle necesario (se ejecutará sin esta conversación)"),
+       "frequency": S("once (una vez), daily (cada día), weekdays (lunes a viernes), weekly (cada semana) o interval (cada X minutos)"),
+       "time": S("Hora HH:MM en 24 h (no hace falta con interval)"), "date": S("Fecha AAAA-MM-DD, solo para once"),
+       "weekdays": {"type": "array", "items": {"type": "integer"}, "description": "Días para weekly: 0=lunes … 6=domingo"},
+       "every_minutes": I("Minutos entre ejecuciones, solo para interval (mínimo 5)")}, ["name", "prompt", "frequency"])
+def schedule_task(a, ctx):
+    from . import schedule as SC
+    kind = str(a.get("frequency") or "daily").lower().strip()
+    kind = {"una vez": "once", "diaria": "daily", "diario": "daily", "semanal": "weekly", "laborables": "weekdays", "intervalo": "interval"}.get(kind, kind)
+    if kind not in [k for k, _ in SC.KINDS]:
+        raise ToolError("frequency debe ser once, daily, weekdays, weekly o interval.")
+    tm = str(a.get("time") or "09:00").strip()
+    if kind != "interval" and not re.match(r"^\d{1,2}:\d{2}$", tm):
+        raise ToolError("time debe tener el formato HH:MM (por ejemplo 08:30).")
+    days = [int(d) for d in (a.get("weekdays") or []) if str(d).lstrip("-").isdigit() and 0 <= int(d) <= 6]
+    if kind == "weekly" and not days:
+        raise ToolError("Para weekly indica weekdays (0=lunes … 6=domingo).")
+    date = str(a.get("date") or time.strftime("%Y-%m-%d"))
+    t = SC.new_task(str(a["name"]), str(a["prompt"]), kind, tm, date, days, a.get("every_minutes") or 60)
+    if not t["next"]:
+        raise ToolError("Esa fecha y hora ya han pasado (hoy es %s, son las %s)." % (time.strftime("%Y-%m-%d"), time.strftime("%H:%M")))
+    SC.add(t)
+    return "Tarea «%s» programada: %s. Próxima vez: %s. (Se ejecuta mientras Jayth esté abierto.)" % (t["name"], SC.describe(t).lower(), SC.when_text(t["next"]))
+
+
+@tool("list_tasks", "agent", "Lista las tareas programadas del usuario con su próxima ejecución.", {})
+def list_tasks(a, ctx):
+    from . import schedule as SC
+    ts = SC.all_tasks()
+    if not ts:
+        return "No hay tareas programadas."
+    return "\n".join("- %s [id %s]: %s · %s" % (t["name"], t["id"], SC.describe(t),
+                                                ("próxima " + SC.when_text(t.get("next"))) if t.get("enabled", True) and t.get("next") else "en pausa o ya hecha")
+                     for t in ts)
+
+
+@tool("cancel_task", "agent", "Quita una tarea programada (por su id o por su nombre; consulta list_tasks).", {"task": S("Id o nombre de la tarea")}, ["task"])
+def cancel_task(a, ctx):
+    from . import schedule as SC
+    q = str(a.get("task") or "").strip().lower()
+    hit = [t for t in SC.all_tasks() if q and (t["id"].lower() == q or q in t["name"].lower())]
+    if len(hit) != 1:
+        raise ToolError(("No hay ninguna tarea que coincida con «%s»." if not hit else "Varias tareas coinciden con «%s»: usa el id.") % a.get("task"))
+    SC.remove(hit[0]["id"])
+    return "Tarea «%s» quitada." % hit[0]["name"]
 
 
 @tool("use_skill", "agent", "Carga las instrucciones completas de una habilidad de la lista «Habilidades» para seguirlas en la tarea actual.",

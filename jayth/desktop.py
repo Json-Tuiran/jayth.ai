@@ -326,6 +326,9 @@ STEP = {  # herramienta: (infinitivo, pasado, objeto)
     "view_image": ("ver la imagen", "Vio la imagen", lambda a: _b(a.get("path"))),
     "remember": ("recordar", "Recordó", lambda a: "«%s»" % _q(a.get("fact"), 50)),
     "forget": ("olvidar", "Olvidó", lambda a: "«%s»" % _q(a.get("text"), 50)),
+    "schedule_task": ("programar la tarea", "Programó la tarea", lambda a: "«%s»" % _q(a.get("name"), 50)),
+    "list_tasks": ("ver las tareas programadas", "Consultó las tareas programadas", lambda a: ""),
+    "cancel_task": ("quitar la tarea", "Quitó la tarea", lambda a: "«%s»" % _q(a.get("task"), 50)),
     "use_skill": ("usar la habilidad", "Usó la habilidad", lambda a: "«%s»" % _q(a.get("name"), 50)),
 }
 
@@ -2260,6 +2263,7 @@ class Main(QMainWindow):
         _pv.migrate()                        # el antiguo servidor externo único pasa a la lista de servicios
         self._init_peek()
         self._init_quick()
+        self._init_tasks()
         self._tray()
         self.chat.open_session(None)
         self.code.set_project(core.project(cfg, cfg["active_project"]))
@@ -2583,6 +2587,7 @@ class Main(QMainWindow):
         pm.addAction(icon("mat_comentario"), "Personalización", lambda: self.settings("Personalización"))
         pm.addAction(icon("ia_memoria"), "Memoria", lambda: self.settings("Personalización"))
         pm.addAction(icon("ia_controlador"), "Asistentes y habilidades", self.assistants)
+        pm.addAction(icon("acc_refrescar"), "Tareas programadas", self.tasks)
         pm.addAction(icon("ia_controlador"), "Modelos", self.models)
         pm.addAction(icon("hub_conectar"), "Modelos por API…", self.providers)
         pm.addSeparator()
@@ -3278,6 +3283,86 @@ class Main(QMainWindow):
             p.empty = p.add(p._empty_state())
         p.input.setFocus()
         self.sync()
+
+    # ---- tareas programadas
+    def _init_tasks(self):
+        self._task_runs = {}                 # id de conversación -> nombre de la tarea en marcha
+        self._task_queue = []                # tareas pedidas a mano que esperan a que el modelo esté listo
+        self.task_t = QTimer(self, interval=20000, timeout=self._tick_tasks)
+        self.task_t.start()
+        QTimer.singleShot(6000, self._tick_tasks)
+
+    def tasks(self):
+        from .tasks_ui import TasksDialog
+        TasksDialog(self).exec()
+
+    def _model_ready(self):
+        """True si se puede lanzar al agente ya; si el modelo local está apagado, lo enciende y devuelve False."""
+        cfg = core.SET.snapshot()
+        if cfg["llm_mode"] == "external":
+            return True
+        st = core.LLM_MGR.status().get("state")
+        if st == "ready":
+            return True
+        if st == "off":
+            core.LLM_MGR.start()
+            self.llm = {"state": "loading"}
+            self.sync()
+        return False
+
+    def run_task(self, t, manual=False):
+        """Lanza una tarea programada. Devuelve un texto de error o None."""
+        from . import schedule as SC
+        if not core.SET.ready():
+            return "Aún no hay un modelo configurado."
+        if not self._model_ready():
+            if manual and t["id"] not in self._task_queue:
+                self._task_queue.append(t["id"])
+            return "El modelo se está encendiendo: la tarea empezará en cuanto esté listo." if manual else "esperando al modelo"
+        s, err = SC.start(t)
+        if err:
+            return err
+        self._task_runs[s.id] = t["name"]
+        self.task_t.setInterval(4000)        # mientras haya tareas en marcha se mira más a menudo
+        self._sig_chat = None
+        self.refresh_lists()
+        return None
+
+    def _tick_tasks(self):
+        from . import schedule as SC
+        # 1) avisar de las que han terminado
+        for sid, name in list(self._task_runs.items()):
+            s = core.SESSIONS.get(sid)
+            if s is None or s.run is None:
+                self._task_runs.pop(sid)
+                if s is not None:
+                    self.toast("Tarea «%s» terminada." % name, "Ver resultado", lambda sid=sid: self.open_task_result(sid),
+                               ms=15000, icon_name="ui_check", color=C["ok"])
+                    if core.SET.snapshot().get("notifications", True) and not self.isActiveWindow():
+                        self.tray.showMessage(APP_NAME, "Tarea «%s» terminada. Ábrelo para ver el resultado." % name, QSystemTrayIcon.Information, 8000)
+                    self._sig_chat = None
+                    self.refresh_lists()
+        if not self._task_runs:
+            self.task_t.setInterval(20000)
+        # 2) lanzar las que tocan (de una en una: el modelo local atiende una conversación cada vez)
+        if self._task_runs or any(s.run is not None for s in core.SESSIONS.values()):
+            return
+        pending = [t for t in SC.all_tasks() if t["id"] in self._task_queue] + SC.due()
+        for t in pending[:1]:
+            err = self.run_task(t)
+            if err is None and t["id"] in self._task_queue:
+                self._task_queue.remove(t["id"])
+            elif err and err != "esperando al modelo":
+                self.toast("No se pudo ejecutar la tarea «%s»: %s" % (t["name"], err), icon_name="est_aviso", color=C["warn"])
+                SC.update(t["id"], enabled=False)
+
+    def open_task_result(self, sid):
+        if sid not in core.SESSIONS:
+            return
+        self._show()
+        if self.mode != "chat":
+            self.set_mode("chat")
+        self.chat.open_session(sid)
 
     def assistants(self, tab=0):
         from .assistants import AssistantsDialog

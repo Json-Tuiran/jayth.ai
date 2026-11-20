@@ -65,6 +65,7 @@ DEFAULTS = {
     # personalizacion
     "assistants": [],            # asistentes propios: {id, name, instructions, files}
     "skills_disabled": [],       # habilidades apagadas (por su id de carpeta)
+    "tasks": [],                 # tareas programadas (ver schedule.py)
     "memory_enabled": True,      # usar y guardar la memoria entre conversaciones
     "about_me": "",
     "response_style": "",
