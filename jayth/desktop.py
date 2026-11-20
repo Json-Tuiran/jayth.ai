@@ -662,8 +662,8 @@ def user_bubble(ev, compact=False):
     t = TextView(ev["text"], "plain", size="10.5pt")
     t.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)     # la burbuja se ajusta al texto y se parte si no cabe
     v.addWidget(t)
-    box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-    h.addWidget(box, 100)
+    box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)   # tan ancha como su texto; si no cabe, se estrecha
+    h.addWidget(box)
     return wrap
 
 
