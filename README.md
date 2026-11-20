@@ -13,7 +13,7 @@ Creado por **Ing. Jeison Tuiran** · Software libre con licencia [GPL-3.0](LICEN
 
 **Español** · [English](README.en.md)
 
-<p align="center"><img src="docs/img/demo.gif" width="860"
+<p align="center"><img src="docs/img/demo_es.gif" width="860"
   alt="Jayth crea una calculadora en Python: piensa, cuenta lo que hace, escribe el archivo, lo abre, lo comprueba con una captura y responde"></p>
 
 ## ⬇️ Descargar
@@ -74,11 +74,11 @@ Cada enlace baja directamente la última versión para ese sistema. Todas las ve
 **Jayth Code:** explorador con iconos por tipo, vista previa de Markdown, Word, Excel, PowerPoint, PDF e imágenes, y
 el agente trabajando en tu proyecto (los archivos que cambia quedan marcados en verde).
 
-<p align="center"><img src="docs/img/code_dark.png" width="860" alt="Jayth Code: explorador, README formateado y el agente en el panel derecho"></p>
+<p align="center"><img src="docs/img/code_es.png" width="860" alt="Jayth Code: explorador, README formateado y el agente en el panel derecho"></p>
 
 **Navegador integrado:** el agente abre webs, busca, pulsa y rellena formularios a la vista; tú puedes intervenir cuando quieras.
 
-<p align="center"><img src="docs/img/navegador.png" width="860" alt="El agente escribe en el buscador de una tienda con su puntero «Jayth»"></p>
+<p align="center"><img src="docs/img/navegador_es.png" width="860" alt="El agente escribe en el buscador de una tienda con su puntero «Jayth»"></p>
 
 ## Descargar e instalar
 

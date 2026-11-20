@@ -16,7 +16,7 @@ Created by **Ing. Jeison Tuiran** · Free software under the [GPL-3.0](LICENSE) 
 > **Languages:** Jayth's interface is available in **English, Spanish and Portuguese (Brazil)**. It follows your system
 > language and can be changed in *Settings → General → Interface language*.
 
-<p align="center"><img src="docs/img/demo.gif" width="860"
+<p align="center"><img src="docs/img/demo_en.gif" width="860"
   alt="Jayth builds a Python calculator: it thinks, says what it is doing, writes the file, runs it, checks it with a screenshot and answers"></p>
 
 ## ⬇️ Download
@@ -74,11 +74,11 @@ Each link downloads the latest version for that system. All versions and their n
 **Jayth Code:** explorer with file-type icons, previews for Markdown, Word, Excel, PowerPoint, PDF and images, and the
 agent working on your project (the files it changes are marked in green).
 
-<p align="center"><img src="docs/img/code_dark.png" width="860" alt="Jayth Code: explorer, formatted README and the agent on the right"></p>
+<p align="center"><img src="docs/img/code_en.png" width="860" alt="Jayth Code: explorer, formatted README and the agent on the right"></p>
 
 **Built-in browser:** the agent opens websites, searches, clicks and fills in forms in plain sight; you can step in at any time.
 
-<p align="center"><img src="docs/img/navegador.png" width="860" alt="The agent types into a shop's search box with its «Jayth» pointer"></p>
+<p align="center"><img src="docs/img/navegador_en.png" width="860" alt="The agent types into a shop's search box with its «Jayth» pointer"></p>
 
 ## Download and install
 
