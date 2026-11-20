@@ -53,6 +53,7 @@ DEFAULTS = {
     "app_mode": "chat",          # chat | code (ultimo modo usado)
     "layout": {},                # distribucion de paneles: anchos, plegados, lados (la guarda la ventana sola)
     "editor_wrap": False,        # editor de Jayth Code: ajustar las lineas largas al ancho (Alt+Z)
+    "editor_autosave": "delay",  # guardado automatico: delay (tras 1 s sin escribir) | focus (al cambiar de pestaña o ventana) | off
     "preview_modes": {},         # por extension: "preview" o "code" (Markdown y CSV se abren formateados)
     # interfaz
     "ui_language": "auto",       # auto (el del sistema) | es | en | pt  (ver i18n.py; se aplica al reiniciar)
@@ -414,9 +415,9 @@ class Session:
         except Exception:
             pass
 
-    def send(self, text, images=(), files=(), mode=None):
-        """Lanza el agente en un hilo. files: rutas de documentos adjuntos (su texto se incluye en el mensaje).
-        Devuelve None o un mensaje de error."""
+    def send(self, text, images=(), files=(), mode=None, attach_text=None):
+        """Lanza el agente en un hilo. files: rutas de documentos adjuntos (su texto se incluye en el mensaje);
+        attach_text: el texto de los adjuntos ya preparado (al reenviar un mensaje anterior). Devuelve None o un mensaje de error."""
         if self.run is not None:
             return tr("El agente sigue trabajando en esta conversación.")
         cfg = SET.snapshot()
@@ -439,7 +440,7 @@ class Session:
         cfg["_sid"] = self.id
         cfg["_temp"] = self.temp
         cfg["_model_title"] = model_title(active_model(cfg)) if cfg["llm_mode"] == "local" else (cfg.get("external_model") or "")
-        attach = attachments_text(files)
+        attach = attach_text if attach_text is not None else attachments_text(files)
         if cfg["mode"] == "plan":
             self.data["plan"] = []
         run = A.Run(self.data, cfg, self.add_event, paths.IMG_DIR)
@@ -540,6 +541,100 @@ class Session:
             except Exception:
                 pass
         return self.send(ev["text"], ev.get("images") or [])
+
+    # ---- volver a un mensaje anterior (editar, reintentar, rebobinar, ramificar)
+    def _rewrite_events(self):
+        try:
+            if not self.temp:
+                with open(self.epath, "w", encoding="utf-8") as f:
+                    for e in self.events:
+                        f.write(json.dumps(e, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def _user_event(self, ev_i):
+        if not (0 <= ev_i < len(self.events)) or self.events[ev_i]["t"] != "user":
+            raise ValueError(tr("Ese mensaje ya no está en la conversación."))
+        return self.events[ev_i]
+
+    def _user_msg_index(self, ev_i):
+        """Posición en data['messages'] del mensaje del usuario del evento ev_i, contando desde el final (los mensajes
+        antiguos pueden estar resumidos). None si ese mensaje ya forma parte del resumen."""
+        k = sum(1 for e in self.events[ev_i:] if e["t"] == "user")
+        msgs, n = self.data["messages"], 0
+        for idx in range(len(msgs) - 1, -1, -1):
+            if msgs[idx]["role"] == "user" and not msgs[idx].get("_auto"):
+                n += 1
+                if n == k:
+                    return idx
+        return None
+
+    def changes_since(self, ev_i):
+        """Acciones del agente desde el evento ev_i cuyos cambios de archivos aún se pueden deshacer."""
+        from . import harness
+        return [e["id"] for e in self.events[ev_i:] if e["t"] == "tool_result" and e.get("undo") and harness.has_snapshot(self.id, e["id"])]
+
+    def rewind(self, ev_i, undo_files=True):
+        """Vuelve al momento justo antes del mensaje del usuario ev_i: lo quita junto con todo lo que vino después y, si
+        undo_files, deshace los cambios de archivos que hizo el agente desde entonces.
+        Devuelve (mensaje, archivos restaurados); mensaje = {text, images, files, attach}. Lanza ValueError si no se puede."""
+        if self.run is not None:
+            raise ValueError(tr("El agente sigue trabajando en esta conversación."))
+        ev = self._user_event(ev_i)
+        idx = self._user_msg_index(ev_i)
+        if idx is None:
+            raise ValueError(tr("Ese mensaje ya forma parte del resumen de la conversación: no puedo volver a ese punto."))
+        files = []
+        if undo_files:
+            from . import harness
+            for cid in reversed(self.changes_since(ev_i)):
+                files += harness.undo(self.id, cid)
+        content = self.data["messages"][idx].get("content")
+        body = content if isinstance(content, str) else next((c.get("text", "") for c in content or [] if c.get("type") == "text"), "")
+        text = ev.get("text") or ""
+        attach = body[len(text):].lstrip("\n") if body.startswith(text) else ""
+        del self.data["messages"][idx:]
+        with self.cond:
+            del self.events[ev_i:]
+            self._rewrite_events()
+        self.updated = time.time()
+        self.save()
+        return {"text": text, "images": list(ev.get("images") or []), "files": list(ev.get("files") or []), "attach": attach}, sorted(set(files))
+
+    def resend(self, ev_i, text=None, undo_files=True):
+        """Reintentar (text=None) o editar y reenviar un mensaje anterior: vuelve a ese punto y lo envía otra vez,
+        con sus imágenes y adjuntos. Devuelve (error o None, archivos restaurados)."""
+        old, files = self.rewind(ev_i, undo_files)
+        new = old["text"] if text is None else text
+        return self.send(new, old["images"], attach_text=old["attach"]), files
+
+    def fork(self, ev_i):
+        """Conversación nueva con todo lo anterior al mensaje ev_i (para probar otro camino sin perder este).
+        Devuelve (sesión nueva, texto de ese mensaje)."""
+        import copy
+        ev = self._user_event(ev_i)
+        idx = self._user_msg_index(ev_i)
+        if idx is None:
+            raise ValueError(tr("Ese mensaje ya forma parte del resumen de la conversación: no puedo volver a ese punto."))
+        ns = new_session(self.data.get("project"), temp=self.temp)
+        for k in ("assistant", "allowed"):
+            if k in self.data:
+                ns.data[k] = copy.deepcopy(self.data[k])
+        ns.data["messages"] = copy.deepcopy(self.data["messages"][:idx])
+        ns.title = (tr("%s (rama)") % self.title)[:80]
+        ns.data["title_auto"] = None
+        with ns.cond:
+            ns.events = [dict(e) for e in self.events[:ev_i]]
+            ns._rewrite_events()
+        ns.save()
+        return ns, ev.get("text") or ""
+
+    def hide_event(self, ev_i):
+        """Quita de la vista un aviso (p. ej. un error ya resuelto); queda marcado como oculto en el historial."""
+        with self.cond:
+            if 0 <= ev_i < len(self.events):
+                self.events[ev_i]["hidden"] = True
+                self._rewrite_events()
 
     def search_text(self):
         """Texto de la conversacion para el buscador (titulo + mensajes)."""

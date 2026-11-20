@@ -1186,6 +1186,101 @@ class AssistantBlock(QWidget):
         FeedbackDialog(self.window(), "error", tr("Respuesta con problemas:\n\n> %s\n\nQué esperaba: ") % excerpt.replace("\n", "\n> ")).exec()
 
 
+class UserMessage(QWidget):
+    """Mensaje del usuario: la burbuja y, al pasar el ratón, sus acciones (copiar, editar y reenviar, reintentar, volver a
+    este punto, nueva conversación desde aquí), como en los agentes de escritorio actuales."""
+
+    def __init__(self, ev, compact=False, panel=None):
+        super().__init__()
+        self.ev, self.panel = ev, panel
+        self.v = QVBoxLayout(self)
+        self.v.setContentsMargins(0, 0, 0, 0)
+        self.v.setSpacing(0)
+        self.v.addWidget(user_bubble(ev, compact))
+        self.editor = None
+        self.actions = QWidget()
+        ah = QHBoxLayout(self.actions)
+        ah.setContentsMargins(0, 0, 0, 0)
+        ah.setSpacing(2)
+        ah.addStretch(1)
+        self.b_copy = tbtn("acc_copiar", tr("Copiar mensaje"), self.copy, size=14)
+        self.b_edit = tbtn("acc_renombrar", tr("Editar y volver a enviar"), self.start_edit, size=14)
+        self.b_retry = tbtn("acc_refrescar", tr("Reintentar desde aquí"), lambda: self.panel.retry_from(self.ev["i"]), size=14)
+        self.b_more = tbtn("ui_menu_horizontal", tr("Más acciones"), self.more, size=14)
+        for b in (self.b_copy, self.b_edit, self.b_retry, self.b_more):
+            ah.addWidget(b)
+        self.fx = QGraphicsOpacityEffect(self.actions)
+        self.fx.setOpacity(0.0)                       # aparecen al pasar el ratón (el hueco se reserva: nada salta)
+        self.actions.setGraphicsEffect(self.fx)
+        self.v.addWidget(self.actions)
+        if panel is None or "i" not in ev:
+            self.actions.hide()
+
+    def enterEvent(self, e):
+        self.fx.setOpacity(1.0)
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        if not getattr(self, "_menu_open", False):
+            self.fx.setOpacity(0.0)
+        super().leaveEvent(e)
+
+    def copy(self):
+        QGuiApplication.clipboard().setText(self.ev.get("text") or "")
+        self.b_copy.setIcon(icon("ui_check", C["ok"], 14))
+        QTimer.singleShot(1200, lambda: self.b_copy.setIcon(icon("acc_copiar", C["mut"], 14)))
+
+    def more(self):
+        m = QMenu(self)
+        m.addAction(icon("acc_refrescar"), tr("Volver a este punto"), lambda: self.panel.rewind_to(self.ev["i"]))
+        m.addAction(icon("acc_nuevo"), tr("Nueva conversación desde aquí"), lambda: self.panel.fork_from(self.ev["i"]))
+        self._menu_open = True
+        m.exec(self.b_more.mapToGlobal(self.b_more.rect().bottomLeft()))
+        self._menu_open = False
+        if not self.underMouse():
+            self.fx.setOpacity(0.0)
+
+    def start_edit(self):
+        if not self.panel.can_rewind():
+            return
+        if self.editor is None:
+            self.editor = QFrame()
+            self.editor.setObjectName("composerBox")
+            ev = QVBoxLayout(self.editor)
+            ev.setContentsMargins(12, 10, 10, 8)
+            self.edit = QPlainTextEdit(self.ev.get("text") or "")
+            self.edit.setFrameShape(QFrame.NoFrame)
+            lines = (self.ev.get("text") or "").count("\n") + 1
+            self.edit.setFixedHeight(min(240, max(64, 22 * lines + 18)))
+            ev.addWidget(self.edit)
+            r = QHBoxLayout()
+            hint = lbl(tr("Se quitará lo que vino después de este mensaje."), "faint")
+            r.addWidget(hint, 1)
+            r.addWidget(btn(tr("Cancelar"), cb=self.cancel_edit))
+            r.addWidget(btn(tr("Enviar"), "primary", self.submit_edit))
+            ev.addLayout(r)
+            QShortcut(QKeySequence("Ctrl+Return"), self.edit, activated=self.submit_edit)
+            QShortcut(QKeySequence("Escape"), self.edit, activated=self.cancel_edit)
+            self.v.insertWidget(1, self.editor)
+        self.edit.setPlainText(self.ev.get("text") or "")
+        self.v.itemAt(0).widget().hide()
+        self.actions.hide()
+        self.editor.show()
+        self.edit.setFocus()
+        self.edit.moveCursor(QTextCursor.End)
+
+    def cancel_edit(self):
+        if self.editor is not None:
+            self.editor.hide()
+        self.v.itemAt(0).widget().show()
+        self.actions.show()
+
+    def submit_edit(self):
+        text = self.edit.toPlainText().strip()
+        if text:
+            self.panel.edit_from(self.ev["i"], text)
+
+
 def user_bubble(ev, compact=False):
     wrap = QWidget()
     h = QHBoxLayout(wrap)
@@ -1508,6 +1603,9 @@ class ChatPanel(QWidget):
         bl.addWidget(self.ban_txt, 1)
         self.ban_btn = btn(tr("Encender modelo"), "primary", self.main.toggle_llm)
         bl.addWidget(self.ban_btn)
+        bl.addWidget(tbtn("ui_cerrar", tr("Ocultar este aviso (vuelve si cambia algo)"), self._dismiss_banner, size=11), 0, Qt.AlignTop)
+        self._ban_key = self._ban_dismissed = None
+        self._queued = False                 # mensaje esperando a que el modelo termine de encenderse
         iv.addWidget(self.banner)
         self.plan_panel = PlanPanel()
         iv.addWidget(self.plan_panel)
@@ -1802,7 +1900,7 @@ class ChatPanel(QWidget):
             self.turn_blocks = []
             self.turn_images = []
             self.last_tool = None
-            self.add(user_bubble(ev, self.compact))
+            self.add(UserMessage(ev, self.compact, self))
         elif t == "turn_start":
             if self.cur is not None and self.cur.empty():   # un paso anterior sin texto ni pensamiento: fuera su línea de espera
                 self.cur.hide()
@@ -1931,8 +2029,16 @@ class ChatPanel(QWidget):
                     p = str((r.ev.get("args") or {}).get("path", ""))
                     if p:
                         self.file_written.emit(os.path.normpath(p if os.path.isabs(p) else os.path.join(self.workspace(), p)))
+        elif t in ("info", "error") and ev.get("hidden"):
+            pass                                       # aviso que el usuario quitó
         elif t in ("info", "error"):
-            self.add(note(tr("Detenido por ti.") if (t == "info" and ev["text"] == "Detenido.") else ev["text"], t == "error"))
+            w = self.add(note(tr("Detenido por ti.") if (t == "info" and ev["text"] == "Detenido.") else ev["text"], t == "error"))
+            if t == "error" and "i" in ev:
+                # un error se puede reintentar o quitar (p. ej. «no puedo conectar con el modelo» una vez encendido)
+                h = w.layout()
+                h.addWidget(tbtn("acc_refrescar", tr("Reintentar"), self.regenerate, size=13), 0, Qt.AlignTop)
+                h.addWidget(tbtn("ui_cerrar", tr("Quitar este aviso"), lambda _=False, w=w, i=ev["i"]: self._hide_note(w, i), size=11),
+                            0, Qt.AlignTop)
             self._end_steps()
         elif t == "turn_end":
             if self.cur is not None and self.cur.empty():
@@ -2067,6 +2173,127 @@ class ChatPanel(QWidget):
                 QMessageBox.information(self, APP_NAME, err)
             self.open_session(self.sid)
 
+    # ---- tus mensajes: editar y reenviar, reintentar, volver a un punto, conversación nueva desde aquí
+    def can_rewind(self):
+        s = self.session()
+        if s is None:
+            return None
+        if s.run is not None or self.busy:
+            self.main.toast(tr("Espera a que el agente termine (o detenlo) para volver a un mensaje anterior."),
+                            icon_name="est_aviso", color=C["warn"])
+            return None
+        return s
+
+    def _ask_files(self, s, i, question):
+        """Confirma volver a un mensaje. Si el agente cambió archivos desde entonces, pregunta si deshacerlos.
+        Devuelve True (deshacer), False (mantener) o None (cancelado)."""
+        n = len(s.changes_since(i))
+        box = QMessageBox(self)
+        box.setWindowTitle(APP_NAME)
+        box.setIcon(QMessageBox.Question)
+        if not n:
+            box.setText(question)
+            ok = box.addButton(tr("Continuar"), QMessageBox.AcceptRole)
+            box.addButton(tr("Cancelar"), QMessageBox.RejectRole)
+            box.setDefaultButton(ok)
+            box.exec()
+            return False if box.clickedButton() is ok else None
+        box.setText(question + "\n\n" + tr("Después de ese mensaje el agente cambió archivos (%d acciones). ¿Los devuelvo a como estaban?") % n)
+        b_undo = box.addButton(tr("Deshacer esos cambios"), QMessageBox.AcceptRole)
+        b_keep = box.addButton(tr("Mantener los archivos"), QMessageBox.NoRole)
+        box.addButton(tr("Cancelar"), QMessageBox.RejectRole)
+        box.setDefaultButton(b_undo)
+        box.exec()
+        c = box.clickedButton()
+        return True if c is b_undo else False if c is b_keep else None
+
+    def _restored(self, files):
+        if files:
+            for f in files:
+                self.file_written.emit(f)
+            self.main.toast((tr("Restaurado %d archivo.") if len(files) == 1 else tr("Restaurados %d archivos.")) % len(files),
+                            icon_name="acc_refrescar", color=C["ok"])
+
+    def _resend(self, i, text):
+        s = self.can_rewind()
+        if s is None:
+            return
+        if not core.SET.ready():
+            return self.main.fix_not_ready()
+        q = tr("Se quitarán las respuestas a partir de este mensaje y se volverá a enviar.") if text is None else \
+            tr("Se quitará lo que vino después de este mensaje y se enviará la versión editada.")
+        undo = self._ask_files(s, i, q)
+        if undo is None:
+            return
+        try:
+            err, files = s.resend(i, text, undo)
+        except ValueError as e:
+            return QMessageBox.information(self, APP_NAME, str(e))
+        self.open_session(self.sid)
+        self._restored(files)
+        if err:
+            return QMessageBox.information(self, APP_NAME, err)
+        self.busy = True
+        self.stick = True
+        self.sync()
+        self.changed.emit()
+
+    def retry_from(self, i):
+        self._resend(i, None)
+
+    def edit_from(self, i, text):
+        self._resend(i, text)
+
+    def rewind_to(self, i):
+        s = self.can_rewind()
+        if s is None:
+            return
+        undo = self._ask_files(s, i, tr("Se quitarán este mensaje y todo lo que vino después. Tu mensaje volverá al cuadro de "
+                                         "texto para que lo cambies o lo envíes de nuevo."))
+        if undo is None:
+            return
+        try:
+            old, files = s.rewind(i, undo)
+        except ValueError as e:
+            return QMessageBox.information(self, APP_NAME, str(e))
+        self.open_session(self.sid)
+        self._restored(files)
+        self.input.setPlainText(old["text"])
+        self.pending_imgs = [n for n in old["images"] if os.path.isfile(os.path.join(paths.IMG_DIR, n))]
+        self._render_thumbs()
+        if old["files"]:
+            self.main.toast(tr("Los documentos adjuntos de ese mensaje no se recuperan: vuelve a añadirlos si los necesitas."),
+                            icon_name="est_info", ms=8000)
+        self.input.setFocus()
+        self.input.moveCursor(QTextCursor.End)
+        self.changed.emit()
+
+    def fork_from(self, i):
+        s = self.session()
+        if s is None:
+            return
+        try:
+            ns, text = s.fork(i)
+        except ValueError as e:
+            return QMessageBox.information(self, APP_NAME, str(e))
+        self.open_session(ns.id)
+        self.input.setPlainText(text)
+        self.input.setFocus()
+        self.input.moveCursor(QTextCursor.End)
+        self.changed.emit()
+        self.main.toast(tr("Nueva conversación desde ese punto; la original sigue igual."), icon_name="acc_nuevo", ms=5000)
+
+    def _dismiss_banner(self):
+        self._ban_dismissed = self._ban_key
+        self.banner.hide()
+
+    def _hide_note(self, w, i):
+        s = self.session()
+        if s is not None:
+            s.hide_event(i)
+        w.hide()
+        w.deleteLater()
+
     def send(self):
         text = self.input.toPlainText().strip()
         files = list(getattr(self, "pending_files", []))
@@ -2074,6 +2301,13 @@ class ChatPanel(QWidget):
             return
         if not core.SET.ready():
             return self.main.fix_not_ready()
+        if core.SET.snapshot()["llm_mode"] == "local" and self.main.llm.get("state", "off") in ("off", "loading"):
+            # modelo apagado o encendiéndose: se enciende y el mensaje sale solo cuando esté listo (sin error rojo)
+            if self.main.llm.get("state", "off") == "off":
+                self.main.toggle_llm()
+            self._queued = True
+            self.main.toast(tr("Enciendo el modelo; tu mensaje se enviará en cuanto esté listo."), icon_name="est_cargando", ms=6000)
+            return
         if not self.session():
             temp = bool(getattr(self, "temp_next", False))
             aid = getattr(self, "assistant_next", None)
@@ -2418,7 +2652,6 @@ class ChatPanel(QWidget):
         llm = self.main.llm
         st = llm.get("state", "off")
         ext = cfg["llm_mode"] == "external"
-        self.banner.setVisible(st != "ready")
         why = core.not_ready(cfg)
         if why == "model_file":
             m = core.active_model(cfg)
@@ -2437,6 +2670,18 @@ class ChatPanel(QWidget):
             self.ban_txt.setText(tr("El servidor externo no responde.") if ext else (llm.get("error") or tr("El modelo está apagado.")))
             self.ban_btn.setText(tr("Encender modelo"))
             self.ban_btn.setVisible(not ext)
+        # el aviso se puede ocultar con la ×; vuelve a salir solo si cambia lo que dice
+        self._ban_key = (st, why, self.ban_txt.text())
+        if self._ban_dismissed is not None and self._ban_dismissed != self._ban_key:
+            self._ban_dismissed = None
+        self.banner.setVisible(st != "ready" and self._ban_dismissed is None)
+        # mensaje en espera: se envía en cuanto el modelo está listo; si no llega a encenderse, se avisa
+        if self._queued and st == "ready":
+            self._queued = False
+            QTimer.singleShot(0, self.send)
+        elif self._queued and st == "off":
+            self._queued = False
+            self.main.toast(tr("El modelo no se pudo encender; tu mensaje sigue en el cuadro de texto."), icon_name="est_aviso", color=C["warn"])
         self.mode_chip.setText(MODE_LABEL.get(cfg["mode"], cfg["mode"]))
         self.mode_chip.setToolTip(A.MODES.get(cfg["mode"], ""))
         if cfg["mode"] not in ("plan", "readonly"):
@@ -4284,6 +4529,7 @@ class Main(QMainWindow):
                 self._tray_told = True
                 self.tray.showMessage(APP_NAME, tr("%s sigue funcionando aquí. Para cerrarlo, usa «Salir».") % APP_NAME, QSystemTrayIcon.Information, 4000)
             return e.ignore()
+        self.code.tabs.autosave_all()               # con el autoguardado activo, los cambios se guardan sin preguntar
         if self.code.tabs.has_dirty():
             r = QMessageBox.question(self, tr("Cambios sin guardar"), tr("Hay archivos con cambios sin guardar. ¿Guardarlos antes de salir?"),
                                      QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)

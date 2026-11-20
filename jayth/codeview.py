@@ -8,7 +8,7 @@ from PySide6.QtGui import (QColor, QFont, QPainter, QTextFormat, QSyntaxHighligh
 from PySide6.QtWidgets import (QWidget, QPlainTextEdit, QTextEdit, QTabWidget, QTreeView, QFileSystemModel, QVBoxLayout, QHBoxLayout,
                                QLabel, QLineEdit, QMenu, QMessageBox, QInputDialog, QDialog, QFormLayout, QFileDialog, QHeaderView,
                                QAbstractItemView, QScrollArea, QToolButton, QPushButton, QDialogButtonBox, QRadioButton, QButtonGroup,
-                               QStackedWidget, QFrame)
+                               QStackedWidget, QFrame, QApplication)
 from . import core, paths, osys
 from .theme import C, icon, pix
 from .wizard import btn, lbl, browse_row
@@ -225,6 +225,7 @@ class FileTab(QWidget):
         self.DV = DV
         self.path = path
         self.dirty = False
+        self.save_error = ""
         self._loading = False
         self.editor = self.preview = self.stack = None
         self.mode, self._stale = "code", True
@@ -288,6 +289,8 @@ class FileTab(QWidget):
             v.addWidget(self.editor)
         self.reload()
         self.editor.textChanged.connect(self._edited)
+        # autoguardado (ajuste editor_autosave): tras una pausa al escribir, como en los editores modernos
+        self._autosave_t = QTimer(self, singleShot=True, interval=AUTOSAVE_MS, timeout=lambda: self.autosave("delay"))
         if self.stack is not None:
             self.set_mode(self.mode, save=False)
 
@@ -414,6 +417,7 @@ class FileTab(QWidget):
             return
         with open(self.path, "r", encoding="utf-8", errors="replace", newline="") as f:
             text = f.read()
+        self.disk_text = text
         self._loading = True
         pos = self.editor.textCursor().position()
         sb = self.editor.verticalScrollBar().value()
@@ -431,18 +435,56 @@ class FileTab(QWidget):
             self.render_preview()
 
     def _edited(self):
-        if not self._loading and not self.dirty:
+        if self._loading:
+            return
+        if not self.dirty:
             self.dirty = True
+            self.changed.emit()
+        if autosave_mode() == "delay":
+            self._autosave_t.start()                # cada tecla aplaza el guardado: se guarda al hacer una pausa
+
+    def autosave(self, when):
+        """Guarda sola si el ajuste lo pide para este momento («delay»: pausa al escribir; «focus»: al cambiar de pestaña
+        o de ventana, que también vale con «delay»). Si no se puede escribir, lo dice y deja los cambios sin guardar."""
+        mode = autosave_mode()
+        if not self.dirty or mode == "off" or (mode == "focus" and when == "delay"):
+            return
+        try:
+            self.save()
+            self.save_error = ""
+        except OSError as e:
+            self.save_error = tr("No se pudo guardar «%s»: %s") % (os.path.basename(self.path), e.strerror or e)
             self.changed.emit()
 
     def save(self):
         if not self.editor:
             return True
+        text = self.editor.toPlainText()
         with open(self.path, "w", encoding="utf-8", newline="") as f:
-            f.write(self.editor.toPlainText())
+            f.write(text)
+        self.disk_text = text            # el aviso de «cambió fuera» que provoca este guardado se ignora (no recarga)
         self.dirty = False
+        self.save_error = ""
         self.changed.emit()
         return True
+
+    def changed_on_disk(self):
+        """¿El archivo en disco es distinto de lo último que el editor leyó o guardó? (lo cambió otro: el agente, otro programa)"""
+        if self.editor is None:
+            return True
+        try:
+            with open(self.path, "r", encoding="utf-8", errors="replace", newline="") as f:
+                return f.read() != getattr(self, "disk_text", None)
+        except OSError:
+            return False
+
+
+AUTOSAVE_MS = 1000
+
+
+def autosave_mode():
+    """«delay» (tras una pausa al escribir), «focus» (al cambiar de pestaña o de ventana) u «off» (solo con Ctrl+S)."""
+    return core.SET.snapshot().get("editor_autosave", "delay")
 
 
 def _human(n):
@@ -479,6 +521,25 @@ class EditorTabs(QTabWidget):
         self.b_wrap.toggled.connect(self.set_wrap)
         self.setCornerWidget(self.b_wrap, Qt.TopRightCorner)
         QShortcut(QKeySequence("Alt+Z"), self, activated=self.b_wrap.toggle)
+        # autoguardado al cambiar de pestaña o al pasar a otra ventana o programa
+        self._prev_tab = None
+        self.currentChanged.connect(self._tab_changed)
+        app = QApplication.instance()
+        if app is not None:
+            app.applicationStateChanged.connect(lambda st: st != Qt.ApplicationActive and self.autosave_all())
+
+    def _tab_changed(self, i):
+        prev = self._prev_tab
+        self._prev_tab = self.widget(i)
+        if isinstance(prev, FileTab) and prev is not self._prev_tab:
+            try:
+                prev.autosave("focus")
+            except RuntimeError:                # la pestaña ya se cerró
+                pass
+
+    def autosave_all(self):
+        for t in self.tabs():
+            t.autosave("focus")
 
     def set_wrap(self, on):
         self.wrap = bool(on)
@@ -528,13 +589,15 @@ class EditorTabs(QTabWidget):
     def _title(self, t):
         i = self.indexOf(t)
         if i >= 0:
-            self.setTabText(i, ("● " if t.dirty else "") + os.path.basename(t.path))
+            err = getattr(t, "save_error", "")
+            self.setTabText(i, ("⚠ " if err else "● " if t.dirty else "") + os.path.basename(t.path))
+            self.setTabToolTip(i, t.path + ("\n" + err if err else ""))
 
     def _external(self, path):
         for t in self.tabs():
             if os.path.normcase(t.path) == os.path.normcase(path):
-                if not os.path.exists(path):
-                    continue
+                if not os.path.exists(path) or not t.changed_on_disk():
+                    continue                     # nuestro propio guardado (o solo cambió la fecha o los permisos)
                 if t.dirty:
                     if QMessageBox.question(self, tr("Archivo modificado"), tr("«%s» cambió fuera del editor (¿el agente?). ¿Recargarlo y perder tus cambios sin guardar?")
                                             % os.path.basename(path)) != QMessageBox.StandardButton.Yes:

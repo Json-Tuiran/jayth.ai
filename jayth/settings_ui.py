@@ -314,6 +314,13 @@ class SettingsDialog(QDialog):
         if osys.WIN:      # en macOS y Linux se usa siempre la barra del sistema (semáforos de macOS, decoraciones del escritorio)
             self.field(v, "custom_titlebar", tr("Barra de título integrada en la ventana"), "bool",
                        help=tr("Como en las apps de escritorio modernas. Si la desactivas se usa la barra de Windows (al reiniciar %s).") % APP_NAME)
+        self._section(v, tr("Editor de %s Code") % APP_NAME)
+        self.field(v, "editor_autosave", tr("Guardado automático de los archivos"), "choice",
+                   choices=[(tr("Al hacer una pausa al escribir (1 segundo)"), "delay"),
+                            (tr("Al cambiar de pestaña o de ventana"), "focus"),
+                            (tr("Desactivado: guardar con Ctrl+S"), "off")],
+                   help=tr("Con el guardado desactivado, las pestañas con cambios sin guardar llevan un punto (●) y %s pregunta antes de "
+                           "cerrarlas.") % APP_NAME)
         self._section(v, tr("Inicio y ventana"))
         self.field(v, "start_with_windows", tr("Abrir %s al iniciar %s (minimizado en la bandeja)") % (APP_NAME, SYSTEM), "bool")
         self.field(v, "autostart_llm", tr("Encender el modelo al abrir %s") % APP_NAME, "bool",
