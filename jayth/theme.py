@@ -32,6 +32,7 @@ QSS_T = """
 * { font-family: 'Segoe UI'; font-size: 10pt; color: %(tx)s; }
 QMainWindow, QDialog, #central, #chatHolder, #main { background: %(bg)s; }
 QWidget#sidebar { background: %(side)s; }
+QFrame#recBar { background: %(panel2)s; border-radius: 10px; }
 QFrame#quickBox { background: %(panel)s; border: 1px solid %(line)s; border-radius: 16px; }
 QLineEdit#quickEdit { background: transparent; border: none; font-size: 13pt; padding: 4px 0; }
 QWidget#canvas { background: %(bg)s; border-left: 1px solid %(line)s; }

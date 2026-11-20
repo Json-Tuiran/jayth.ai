@@ -149,6 +149,53 @@ class Spinner(QLabel):
         self.setPixmap(p)
 
 
+class WaveBars(QWidget):
+    """Onda de audio: barras que avanzan de derecha a izquierda con el volumen del micrófono. En modo «procesando»
+    las barras ondulan suavemente (mientras la voz se pasa a texto)."""
+
+    def __init__(self, bars=48):
+        super().__init__()
+        from collections import deque
+        self.levels = deque([0.0] * bars, maxlen=bars)
+        self.busy = False
+        self.phase = 0.0
+        self.setMinimumHeight(28)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    def push(self, level):
+        self.levels.append(max(0.0, min(1.0, level)))
+        self.update()
+
+    def set_busy(self, on):
+        self.busy = on
+        self.update()
+
+    def tick(self):
+        self.phase += 0.35
+        self.update()
+
+    def paintEvent(self, e):
+        from PySide6.QtGui import QPainter, QColor
+        import math
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        n = len(self.levels)
+        w, h = self.width(), self.height()
+        step = w / float(n)
+        bw = max(2.0, step * 0.55)
+        col = QColor(C["acc"] if not self.busy else C["mut"])
+        p.setPen(Qt.NoPen)
+        for i, lv in enumerate(self.levels):
+            if self.busy:
+                lv = 0.25 + 0.2 * math.sin(self.phase + i * 0.45)
+            bh = max(3.0, lv * (h - 4))
+            x = i * step + (step - bw) / 2
+            col.setAlphaF(0.45 + 0.55 * (i / float(n)))       # lo más reciente (a la derecha) más intenso
+            p.setBrush(col)
+            p.drawRoundedRect(x, (h - bh) / 2, bw, bh, bw / 2, bw / 2)
+        p.end()
+
+
 class Toast(QFrame):
     """Aviso flotante dentro de la ventana (abajo a la derecha) con accion opcional."""
 
@@ -1309,6 +1356,25 @@ class ChatPanel(QWidget):
         self.input.pasted_files.connect(self.add_paths)
         self.input.focus.connect(lambda f: (self.box.setProperty("focus", f), restyle(self.box)))
         self.input.textChanged.connect(self._sync_send)
+        # franja de grabación: punto rojo, tiempo y onda que se mueve con la voz
+        self.rec_bar = QFrame()
+        self.rec_bar.setObjectName("recBar")
+        rb = QHBoxLayout(self.rec_bar)
+        rb.setContentsMargins(10, 4, 4, 4)
+        rb.setSpacing(10)
+        self.rec_dot = QLabel()
+        self.rec_dot.setFixedSize(10, 10)
+        rb.addWidget(self.rec_dot)
+        self.rec_time = QLabel("0:00")
+        self.rec_time.setObjectName("muted")
+        self.rec_time.setMinimumWidth(36)
+        rb.addWidget(self.rec_time)
+        self.rec_wave = WaveBars()
+        rb.addWidget(self.rec_wave, 1)
+        self.rec_cancel = tbtn("ui_cerrar", "Descartar la grabación", lambda: self.cancel_dictation(), size=12)
+        rb.addWidget(self.rec_cancel)
+        self.rec_bar.hide()
+        bv.addWidget(self.rec_bar)
         bv.addWidget(self.input)
         row = QHBoxLayout()
         row.setSpacing(6)
@@ -2006,38 +2072,65 @@ class ChatPanel(QWidget):
             return self.main.toast("No se pudo usar el micrófono: %s" % e, icon_name="est_aviso", color=C["warn"])
         self._rec_t0 = time.time()
         self._rec_ph = self.input.placeholderText()
+        self.input.setPlaceholderText("Escuchando… habla con normalidad y pulsa ■ para terminar")
         self.mic_btn.setIcon(icon("trans_detener", C["bad"], 14))
         self.mic_btn.setToolTip("Terminar el dictado")
-        self._rec_timer = QTimer(self, interval=500, timeout=self._rec_tick)
+        self.rec_wave.set_busy(False)
+        self.rec_cancel.show()
+        self.rec_bar.show()
+        self._rec_timer = QTimer(self, interval=45, timeout=self._rec_tick)     # ~22 veces por segundo: la onda fluye
         self._rec_timer.start()
         self._rec_tick()
 
     def _rec_tick(self):
         if self._rec is None:
+            if self.rec_wave.busy:                # pasando a texto: las barras ondulan
+                self.rec_wave.tick()
             return
-        secs = int(time.time() - self._rec_t0)
-        self.input.setPlaceholderText("Escuchando… %d s · pulsa el micrófono para terminar" % secs)
-        if secs >= 180:                       # tope de tres minutos por dictado
+        secs = time.time() - self._rec_t0
+        self.rec_wave.push(self._rec.level())
+        self.rec_time.setText("%d:%02d" % (int(secs) // 60, int(secs) % 60))
+        on = int(secs * 2) % 2 == 0               # punto rojo que palpita
+        self.rec_dot.setStyleSheet("background:%s; border-radius:5px" % (C["bad"] if on else C["bad_bg"]))
+        if secs >= 180:                           # tope de tres minutos por dictado
             self._stop_dictation()
+
+    def cancel_dictation(self):
+        """Descarta lo grabado sin transcribirlo."""
+        if self._rec is not None:
+            self._rec.cancel()
+        self._rec = None
+        self._end_rec_ui()
+
+    def _end_rec_ui(self):
+        if getattr(self, "_rec_timer", None):
+            self._rec_timer.stop()
+        self.rec_bar.hide()
+        self.rec_wave.set_busy(False)
+        self.mic_btn.setEnabled(True)
+        self.mic_btn.setIcon(icon("voz_microfono", C["mut"], 16))
+        self.mic_btn.setToolTip("Dictar con el micrófono")
+        self.input.setPlaceholderText(getattr(self, "_rec_ph", "Escribe un mensaje…"))
 
     def _stop_dictation(self):
         from . import voice
         rec, self._rec = self._rec, None
-        if getattr(self, "_rec_timer", None):
-            self._rec_timer.stop()
         self.mic_btn.setIcon(icon("voz_microfono", C["mut"], 16))
         self.mic_btn.setToolTip("Dictar con el micrófono")
         path = rec.stop() if rec else None
         if not path:
-            self.input.setPlaceholderText(getattr(self, "_rec_ph", "Escribe un mensaje…"))
+            self._end_rec_ui()
             return self.main.toast("No se grabó nada.", icon_name="est_aviso", color=C["warn"])
+        self.rec_wave.set_busy(True)              # la franja sigue a la vista mientras se transcribe
+        self.rec_cancel.hide()
+        self.rec_dot.setStyleSheet("background:%s; border-radius:5px" % C["acc"])
+        self.rec_time.setText("…")
         self.input.setPlaceholderText("Pasando tu voz a texto…")
         self.mic_btn.setEnabled(False)
         cfg = core.SET.snapshot()
 
         def done(r):
-            self.mic_btn.setEnabled(True)
-            self.input.setPlaceholderText(getattr(self, "_rec_ph", "Escribe un mensaje…"))
+            self._end_rec_ui()
             if isinstance(r, Exception):
                 return self.main.toast(str(r), icon_name="est_aviso", color=C["warn"])
             if not str(r).strip():
@@ -2064,7 +2157,8 @@ class ChatPanel(QWidget):
             if isinstance(r, Exception):
                 return self.main.toast("No se pudo preparar el dictado: %s" % str(r)[:200], icon_name="est_aviso", color=C["warn"])
             self.main.toast("Dictado listo: pulsa el micrófono y habla.", icon_name="ui_check", color=C["ok"], ms=9000)
-        run_bg(voice.ensure_stt, done)
+        model = core.SET.snapshot().get("voice_model") or "base"
+        run_bg(lambda: voice.ensure_stt(model=model), done)
 
     def _sync_send(self):
         has = bool(self.input.toPlainText().strip() or self.pending_imgs or getattr(self, "pending_files", []))
@@ -2104,7 +2198,8 @@ class ChatPanel(QWidget):
         self._fit_model_chip()                                          # modelo · esfuerzo (se cambian en el mismo menú)
         self.model_chip.setToolTip("%s\nEsfuerzo %s: %s\nPulsa para cambiar de modelo o de esfuerzo." % (
             ("%s · %s" % (core.model_title(m), core.model_quant(m))) if (m and not ext) else name, label.lower(), desc))
-        self.input.setPlaceholderText("Pide algo sobre el proyecto…" if self.project_id else "Escribe un mensaje…")
+        if not self.rec_bar.isVisible():         # mientras se dicta, la caja dice «Escuchando…» / «Pasando tu voz a texto…»
+            self.input.setPlaceholderText("Pide algo sobre el proyecto…" if self.project_id else "Escribe un mensaje…")
         self._sync_send()
 
 
