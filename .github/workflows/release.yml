@@ -146,3 +146,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash packaging/enlaces_release.sh "$GITHUB_REF_NAME" out
+
+  # winget («winget install JeisonTuiran.Jayth»): al publicar una versión se abre sola la petición que actualiza la ficha
+  # en microsoft/winget-pkgs. Se activa al configurar el secreto WINGET_TOKEN (ver packaging/WINGET.md); la primera
+  # versión de la ficha se envía a mano. Si falla, la Release ya está publicada y no se marca como error.
+  winget:
+    name: Actualizar winget
+    needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      WINGET_ON: ${{ secrets.WINGET_TOKEN != '' }}
+    steps:
+      - name: Enviar la versión a winget-pkgs
+        if: env.WINGET_ON == 'true'
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: JeisonTuiran.Jayth
+          installers-regex: 'Jayth-Setup-[0-9.]+-x64\.exe$'
+          release-tag: ${{ github.ref_name }}
+          token: ${{ secrets.WINGET_TOKEN }}
