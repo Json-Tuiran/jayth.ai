@@ -492,6 +492,10 @@ class SettingsDialog(QDialog):
         self.field(v, "mlock", "Bloquear el modelo en la RAM (evita que el sistema lo mueva al disco)", "bool",
                    help="Útil si tienes RAM de sobra; si no, puede ralentizar el equipo.")
         self.field(v, "llm_port", "Puerto local del motor", "int", min=1024, max=65535)
+        self._section(v, "Descargas")
+        self.field(v, "download_connections", "Conexiones simultáneas al descargar modelos", "int", min=1, max=16,
+                   help="Varias conexiones aprovechan mejor tu internet (como un gestor de descargas). Pon 1 si tu red "
+                        "o tu router van mal con muchas conexiones a la vez.")
 
     def p_agent(self, v):
         self.field(v, "mode", "Permisos por defecto", "choice", choices=[(d, k) for k, d in A.MODES.items()])

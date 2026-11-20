@@ -316,14 +316,157 @@ def sha256_file(path, progress=None, stop=None):
     return h.hexdigest()
 
 
-def download(url, dest, size=0, sha256="", progress=None, stop=None, retries=8):
-    """Descarga url -> dest. Reanuda desde dest.part. progress(hecho, total, fase)."""
+PARALLEL_MIN = 48 << 20         # por debajo de este tamaño no compensa abrir varias conexiones
+DEFAULT_CONNECTIONS = 6
+
+
+class _NoRanges(Exception):
+    """El servidor no admite descargar por partes: se usa una sola conexión."""
+
+
+def connections():
+    """Conexiones simultáneas por descarga (ajuste del usuario; 1 = como antes)."""
+    try:
+        from . import core
+        return max(1, min(16, int(core.SET.snapshot().get("download_connections", DEFAULT_CONNECTIONS))))
+    except Exception:
+        return DEFAULT_CONNECTIONS
+
+
+def _download_parallel(url, part, size, progress, stop, n, retries):
+    """Descarga por trozos con n conexiones a la vez, escribiendo cada trozo en su sitio de part.
+    Lo hecho se guarda en part.json: si se corta o se detiene, al volver a llamarla sigue donde iba."""
+    state_path = part + ".json"
+    state = None
+    try:
+        with open(state_path, encoding="utf-8") as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        pass
+    resume = bool(state and state.get("size") == size and int(state.get("piece") or 0) > 0 and os.path.isfile(part) and os.path.getsize(part) == size)
+    # al menos 4 trozos por conexión (así todas trabajan hasta el final), de 4 a 64 MB cada uno
+    piece = int(state["piece"]) if resume else max(4 << 20, min(64 << 20, (size // (n * 4)) >> 20 << 20))
+    pieces = [(s, min(s + piece, size)) for s in range(0, size, piece)]
+    done = [0] * len(pieces)
+    if resume:
+        done = [min(int(x), e - s) for x, (s, e) in zip(state.get("done", []), pieces)] + [0] * max(0, len(pieces) - len(state.get("done", [])))
+    else:
+        # una descarga anterior de una sola conexión: lo que ya tenía (el principio del archivo) no se vuelve a bajar
+        have = os.path.getsize(part) if os.path.isfile(part) else 0
+        have = have if have < size else 0
+        done = [max(0, min(e, have) - s) for s, e in pieces]
+        with open(part, "ab" if have else "wb") as f:
+            f.truncate(size)                 # el archivo ya mide lo que medirá; cada trozo se escribe en su sitio
+    lock = threading.Lock()
+    todo = [i for i, (s, e) in enumerate(pieces) if done[i] < e - s]
+    err, quit_ = [], threading.Event()
+
+    def save():
+        tmp = state_path + ".tmp"
+        with lock:
+            data = {"size": size, "piece": piece, "done": list(done), "url": url}
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp, state_path)
+
+    def worker():
+        with open(part, "r+b") as fh:
+            while not quit_.is_set():
+                with lock:
+                    if not todo:
+                        return
+                    i = todo.pop(0)
+                s, e = pieces[i]
+                attempt = 0
+                while done[i] < e - s and not quit_.is_set():
+                    off = s + done[i]
+                    hdr = dict(UA, Range="bytes=%d-%d" % (off, e - 1))
+                    try:
+                        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=60) as r:
+                            if r.status != 206:
+                                raise _NoRanges()
+                            fh.seek(off)
+                            while not quit_.is_set():
+                                b = r.read(min(CHUNK, e - s - done[i]))
+                                if not b:
+                                    break
+                                fh.write(b)
+                                with lock:
+                                    done[i] += len(b)
+                                if done[i] >= e - s:
+                                    break
+                        attempt = 0 if done[i] >= e - s else attempt
+                    except _NoRanges:
+                        err.append(_NoRanges())
+                        quit_.set()
+                        return
+                    except (urllib.error.URLError, http.client.HTTPException, ConnectionError, TimeoutError, OSError) as ex:
+                        if isinstance(ex, urllib.error.HTTPError) and ex.code in (401, 403, 404):
+                            err.append(RuntimeError("No se puede descargar (%s): %s" % (ex.code, url)))
+                            quit_.set()
+                            return
+                        attempt += 1
+                        if attempt > retries:
+                            err.append(RuntimeError("Falló la descarga tras %d intentos: %s" % (retries, ex)))
+                            quit_.set()
+                            return
+                        for _ in range(min(30, 2 ** attempt) * 4):
+                            if quit_.is_set():
+                                return
+                            time.sleep(0.25)
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(max(1, min(n, len(todo))))]
+    for t in threads:
+        t.start()
+    last_save = time.time()
+    while any(t.is_alive() for t in threads):
+        if stop is not None and stop.is_set():
+            quit_.set()
+        if progress and not quit_.is_set():
+            with lock:
+                got = sum(done)
+            progress(got, size, "descargando")
+        if time.time() - last_save > 2:
+            save()
+            last_save = time.time()
+        time.sleep(0.2)
+    for t in threads:
+        t.join(1)
+    save()
+    if stop is not None and stop.is_set():
+        raise Cancelled()
+    if err:
+        raise err[0]
+    if sum(done) != size:
+        raise RuntimeError("La descarga quedó incompleta; vuelve a intentarlo y seguirá donde iba.")
+    if progress:
+        progress(size, size, "descargando")
+    try:
+        os.remove(state_path)
+    except OSError:
+        pass
+
+
+def download(url, dest, size=0, sha256="", progress=None, stop=None, retries=8, conns=None):
+    """Descarga url -> dest. Reanuda desde dest.part. progress(hecho, total, fase).
+    Los archivos grandes de tamaño conocido se bajan por varias conexiones a la vez (como un gestor de descargas):
+    una sola conexión a menudo no aprovecha toda la línea."""
     if os.path.isfile(dest) and (not size or os.path.getsize(dest) == size):
         if progress:
             progress(size or os.path.getsize(dest), size or os.path.getsize(dest), "ya descargado")
         return dest
     os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
     part = dest + ".part"
+    n = conns or connections()
+    if size and (os.path.isfile(part + ".json") or (n > 1 and size >= PARALLEL_MIN)):
+        try:
+            _download_parallel(url, part, size, progress, stop, n, retries)
+            return _finish(part, dest, size, sha256, progress, stop)
+        except _NoRanges:
+            for p in (part, part + ".json"):     # el servidor no admite trozos: de cero, con una conexión
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
     attempt = 0
     while True:
         have = os.path.getsize(part) if os.path.isfile(part) else 0
@@ -370,6 +513,10 @@ def download(url, dest, size=0, sha256="", progress=None, stop=None, retries=8):
                 if stop is not None and stop.is_set():
                     raise Cancelled()
                 time.sleep(1)
+    return _finish(part, dest, size, sha256, progress, stop)
+
+
+def _finish(part, dest, size, sha256, progress, stop):
     if size and os.path.getsize(part) != size:
         raise RuntimeError("Tamaño incorrecto tras descargar %s" % os.path.basename(dest))
     if sha256:
