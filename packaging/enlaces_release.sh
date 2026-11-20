@@ -27,6 +27,8 @@ join() { local out="" x; for x in "$@"; do if [ -n "$x" ]; then out="${out:+$out
 row() { local links; links="$(join "${@:2}")"; if [ -n "$links" ]; then printf '| %s | %s |\n' "$1" "$links"; fi; }
 
 {
+  # novedades de la versión, si se escribieron en packaging/novedades/<etiqueta>.md
+  if [ -f "packaging/novedades/$TAG.md" ]; then cat "packaging/novedades/$TAG.md"; echo; fi
   echo "## Descargar Jayth $V"
   echo
   echo "| Sistema | Descarga directa |"
