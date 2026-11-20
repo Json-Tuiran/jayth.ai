@@ -297,6 +297,9 @@ def recommend_model(rated, min_speed=3.0):
     ok = [e for e in rated if e["fit"] == "ok"]
     if not ok:
         return None
+    # el agente de Jayth trabaja con herramientas: entre los que caben se prefieren los que saben usarlas
+    agents = [e for e in ok if e.get("tools")]
+    ok = agents or ok
     fast = [e for e in ok if e["speed"] >= min_speed]
     if fast:
         return max(fast, key=lambda e: (capability(e), e.get("downloads", 0)))

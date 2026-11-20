@@ -75,20 +75,59 @@ def active_params(name, total):
     return total
 
 
-def _entry(repo, total, active=None, vision=False, ctx=0, downloads=0, created="", pipeline=""):
+# Lo que el modelo sabe hacer se lee de su plantilla de conversación (la publica Hugging Face con el GGUF):
+# si admite herramientas es «agéntico» (lo que necesita el agente de Jayth) y si tiene modo de pensar, razona.
+_TOOLS_TPL = re.compile(r"\btools\b|tool_calls?|\[AVAILABLE_TOOLS\]|<tools>|<\|tool")
+_THINK_TPL = re.compile(r"enable_thinking|<think>|reasoning_content|reasoning_effort|<\|channel\|>|thinking")
+# sin plantilla (catálogo sin conexión): familias conocidas por usar herramientas
+_TOOLS_NAME = re.compile(r"(?i)qwen[23]|qwq|gpt-oss|gemma-?4|llama-?3\.[1-9]|llama-?4|mistral|ministral|devstral|magistral|granite|glm-?4|"
+                         r"glm-?5|kimi|hermes|nemotron|command-r|deepseek-v3|deepseek-r1|minimax|phi-?4|lfm2|seed-oss|hunyuan")
+_CODE_ONLY = re.compile(r"(?i)coder|codestral|devstral|codegemma|codellama|starcoder|deepseek-coder")
+
+
+def _entry(repo, total, active=None, vision=False, ctx=0, downloads=0, created="", pipeline="", template=None):
     name = pretty_name(repo)
     act = active or active_params(repo, total)
+    tools = bool(_TOOLS_TPL.search(template)) if template else bool(_TOOLS_NAME.search(repo))
+    think = bool(_THINK_TPL.search(template)) if template else False
+    think = think or bool(re.search(r"(?i)thinking|reason|-r1|magistral|qwq", repo))
+    audio = pipeline == "any-to-any"
     tags = []
+    if tools:
+        tags.append("agente")
     if vision:
         tags.append("visión")
-    if re.search(r"(?i)coder|code|devstral|codestral", repo):
+    if audio:
+        tags.append("audio")
+    if _CODE_ONLY.search(repo) or re.search(r"(?i)\bcode\b", name):
         tags.append("código")
-    if re.search(r"(?i)thinking|reason|r1|magistral|qwq", repo):
+    if think:
         tags.append("razonamiento")
     if act < total * 0.6:
         tags.append("MoE")
     return {"repo": repo, "name": name, "lab": lab_of(repo), "params": total, "active": act, "vision": bool(vision),
-            "ctx": ctx, "downloads": downloads, "created": created, "tags": tags}
+            "tools": tools, "audio": audio, "ctx": ctx, "downloads": downloads, "created": created, "tags": tags}
+
+
+def kind_text(e):
+    """Etiqueta corta del tipo de modelo para la tabla del catálogo."""
+    parts = []
+    if e.get("tools"):
+        parts.append("Agente")
+    if e.get("vision"):
+        parts.append("Visión" + (" y audio" if e.get("audio") else ""))
+    if "código" in e.get("tags", []):
+        parts.append("Código")
+    if "razonamiento" in e.get("tags", []):
+        parts.append("Razona")
+    return " · ".join(parts) or "Texto"
+
+
+def matches_kind(e, kind):
+    """Filtro «Tipo» del catálogo."""
+    tags = e.get("tags", [])
+    return {"all": True, "agent": bool(e.get("tools")), "multi": bool(e.get("vision") or e.get("audio")),
+            "general": "código" not in tags, "code": "código" in tags, "reason": "razonamiento" in tags}.get(kind, True)
 
 
 def discover_models(limit=150):
@@ -117,7 +156,8 @@ def discover_models(limit=150):
                     continue
                 seen.update({rid.lower(), key})
                 out.append(_entry(rid, float(total), vision=pipe in ("image-text-to-text", "any-to-any"), ctx=g.get("context_length") or 0,
-                                  downloads=it.get("downloads") or 0, created=str(it.get("createdAt") or "")[:10], pipeline=pipe))
+                                  downloads=it.get("downloads") or 0, created=str(it.get("createdAt") or "")[:10], pipeline=pipe,
+                                  template=str(g.get("chat_template") or "") or None))
     return out
 
 
@@ -127,7 +167,7 @@ def catalog(cache_path, max_age=24 * 3600, refresh=False):
         if not refresh and os.path.isfile(cache_path) and time.time() - os.path.getmtime(cache_path) < max_age:
             with open(cache_path, encoding="utf-8") as f:
                 data = json.load(f)
-            if data:
+            if data and all("tools" in e for e in data):     # una caché anterior sin el tipo de modelo se renueva
                 return data
     except (OSError, ValueError):
         pass
@@ -143,7 +183,11 @@ def catalog(cache_path, max_age=24 * 3600, refresh=False):
         pass
     try:
         with open(cache_path, encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        for e in data:                       # caché antigua sin conexión: el tipo se deduce del nombre
+            if "tools" not in e:
+                e.update({k: v for k, v in _entry(e["repo"], e["params"], e.get("active"), e.get("vision")).items() if k in ("tools", "audio", "tags")})
+        return data
     except (OSError, ValueError):
         return [_entry(r, t, a, v) for r, t, a, v in OFFLINE_CATALOG]
 

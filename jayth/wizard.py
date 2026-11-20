@@ -181,10 +181,24 @@ class SetupWizard(QDialog):
         self.cat_search.setClearButtonEnabled(True)
         self.cat_search.textChanged.connect(self._fill_catalog)
         frow.addWidget(self.cat_search, 1)
+        # tipo de modelo (qué sabe hacer) y si va bien en este equipo: dos filtros independientes
+        self.cat_kind = QComboBox()
+        for t, k, tip in (("Todos los tipos", "all", ""),
+                          ("Agéntico (usa herramientas)", "agent", "Sabe llamar a herramientas: lo que necesita el agente de Jayth para trabajar con archivos, comandos y la web."),
+                          ("Multimodal (ve imágenes)", "multi", "Entiende imágenes (y algunos también audio): capturas, fotos, documentos escaneados…"),
+                          ("Uso general", "general", "Para conversar, escribir, resumir y responder (sin los modelos solo de programación)."),
+                          ("Programación", "code", "Especializados en escribir y revisar código."),
+                          ("Razonamiento", "reason", "Piensan antes de responder: mejores en problemas de varios pasos, algo más lentos.")):
+            self.cat_kind.addItem(t, k)
+            if tip:
+                self.cat_kind.setItemData(self.cat_kind.count() - 1, tip, Qt.ToolTipRole)
+        self.cat_kind.setToolTip("Qué sabe hacer el modelo")
+        self.cat_kind.currentIndexChanged.connect(self._fill_catalog)
+        frow.addWidget(self.cat_kind)
         self.cat_filter = QComboBox()
-        for t, k in (("Todos los modelos", "all"), ("Caben en tu equipo", "fit"), ("Rápidos en tu equipo", "fast"),
-                     ("Con visión (imágenes)", "vision"), ("Para programar", "code"), ("Con razonamiento", "reason")):
+        for t, k in (("Todos (caben o no)", "all"), ("Caben en tu equipo", "fit"), ("Rápidos en tu equipo", "fast")):
             self.cat_filter.addItem(t, k)
+        self.cat_filter.setToolTip("Según la memoria y la velocidad de tu equipo")
         self.cat_filter.currentIndexChanged.connect(self._fill_catalog)
         frow.addWidget(self.cat_filter)
         self.cat_lab = QComboBox()
@@ -192,10 +206,10 @@ class SetupWizard(QDialog):
         self.cat_lab.currentIndexChanged.connect(self._fill_catalog)
         frow.addWidget(self.cat_lab)
         hv.addLayout(frow)
-        self.cat_table = QTableWidget(0, 5)
-        self.cat_table.setHorizontalHeaderLabels(["Modelo", "Laboratorio", "Descarga", "Velocidad aprox.", "En tu equipo"])
+        self.cat_table = QTableWidget(0, 6)
+        self.cat_table.setHorizontalHeaderLabels(["Modelo", "Tipo", "Laboratorio", "Descarga", "Velocidad aprox.", "En tu equipo"])
         self.cat_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        for c in range(1, 5):
+        for c in range(1, 6):
             self.cat_table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeToContents)
         self.cat_table.verticalHeader().setVisible(False)
         self.cat_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -456,7 +470,7 @@ class SetupWizard(QDialog):
         if not getattr(self, "rated", None):
             return
         q = self.cat_search.text().strip().lower()
-        flt, lab = self.cat_filter.currentData(), self.cat_lab.currentData()
+        flt, lab, kind = self.cat_filter.currentData(), self.cat_lab.currentData(), self.cat_kind.currentData()
         rec = self.rec_model
         order = {"ok": 0, "tight": 1, "no": 2}
         rows = []
@@ -465,9 +479,7 @@ class SetupWizard(QDialog):
                 continue
             if lab and e["lab"] != lab:
                 continue
-            if (flt == "fit" and e["fit"] == "no") or (flt == "fast" and (e["fit"] == "no" or e["speed"] < 3)) or \
-               (flt == "vision" and not e["vision"]) or (flt == "code" and "código" not in e["tags"]) or \
-               (flt == "reason" and "razonamiento" not in e["tags"]):
+            if (flt == "fit" and e["fit"] == "no") or (flt == "fast" and (e["fit"] == "no" or e["speed"] < 3)) or not P.matches_kind(e, kind):
                 continue
             rows.append(e)
         rows.sort(key=lambda e: (e is not rec, order[e["fit"]], -HW.capability(e)))
@@ -483,20 +495,28 @@ class SetupWizard(QDialog):
                 tip.append("MoE: usa ~%.1f mil millones por palabra (por eso va más rápido de lo que su tamaño sugiere)" % (e["active"] / 1e9))
             if e.get("ctx"):
                 tip.append("Contexto máximo: %s tokens" % format(int(e["ctx"]), ",").replace(",", "."))
+            if e.get("tools"):
+                tip.append("Agéntico: sabe usar herramientas (archivos, comandos, web…), como necesita el agente de Jayth")
+            elif "tools" in e:
+                tip.append("No usa herramientas: sirve para conversar, pero el agente no podrá actuar con él")
             if e["tags"]:
                 tip.append("Destaca en: " + ", ".join(e["tags"]))
             it.setToolTip("\n".join(tip))
             self.cat_table.setItem(i, 0, it)
-            self.cat_table.setItem(i, 1, QTableWidgetItem(e["lab"]))
-            self.cat_table.setItem(i, 2, QTableWidgetItem(HW.human(e["size"])))
+            ki = QTableWidgetItem(P.kind_text(e))
+            ki.setForeground(QColor(C["acc"] if e.get("tools") else C["mut"]))
+            ki.setToolTip("Agente = usa herramientas · Visión = entiende imágenes · Razona = piensa antes de responder")
+            self.cat_table.setItem(i, 1, ki)
+            self.cat_table.setItem(i, 2, QTableWidgetItem(e["lab"]))
+            self.cat_table.setItem(i, 3, QTableWidgetItem(HW.human(e["size"])))
             sp = e["speed"]
             st = QTableWidgetItem(("~%.0f tok/s" % sp) if sp >= 10 else ("~%.1f tok/s" % sp) if sp >= 0.1 else "—")
             st.setToolTip("Velocidad aproximada al escribir la respuesta en este equipo (estimación).")
-            self.cat_table.setItem(i, 3, st)
+            self.cat_table.setItem(i, 4, st)
             if self.hw:
                 fi = QTableWidgetItem(FIT_TXT[e["fit"]])
                 fi.setForeground(QColor(FIT_COL[e["fit"]]))
-                self.cat_table.setItem(i, 4, fi)
+                self.cat_table.setItem(i, 5, fi)
         self.cat_table.blockSignals(False)
         if self.cur_repo:
             self.cat_table.blockSignals(True)
