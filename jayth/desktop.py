@@ -2509,6 +2509,7 @@ class Main(QMainWindow):
         self._init_peek()
         self._init_quick()
         self._init_tasks()
+        QTimer.singleShot(3000, self._caps_in_background)
         self._tray()
         self.chat.open_session(None)
         self.code.set_project(core.project(cfg, cfg["active_project"]))
@@ -3455,10 +3456,12 @@ class Main(QMainWindow):
         ext = cfg["llm_mode"] == "external"
         grp = QActionGroup(m)
         for md in cfg["models"]:
-            a = m.addAction(core.model_title(md) + ("\t" + core.model_quant(md) if core.model_quant(md) else ""))
+            caps = core.model_caps(md, compute=False)     # lo guardado (se lee del archivo en segundo plano al abrir Jayth)
+            right = " · ".join(x for x in (core.model_quant(md), core.caps_text(caps, short=True)) if x)
+            a = m.addAction(core.model_title(md) + ("\t" + right if right else ""))
             a.setCheckable(True)
             a.setChecked(not ext and md["id"] == cfg["active_model"])
-            a.setToolTip(md.get("path", ""))
+            a.setToolTip(md.get("path", "") + (("\n" + core.caps_text(caps)) if caps else ""))
             grp.addAction(a)
             a.triggered.connect(lambda _=False, i=md["id"]: self._use_model(i))
         # modelos por API de los servicios guardados (OpenAI, Claude, Gemini, Ollama…)
@@ -3629,8 +3632,23 @@ class Main(QMainWindow):
         core.SET.update({"active_model": mid, "llm_mode": "local"})
         self.llm = {"state": "off"}
         self.sync()
+        self.warn_if_not_agent(core.active_model(core.SET.snapshot()))
         if QMessageBox.question(self, APP_NAME, "¿Encender el nuevo modelo ahora?") == QMessageBox.StandardButton.Yes:
             self.toggle_llm()
+
+    def warn_if_not_agent(self, m):
+        """Avisa si el modelo elegido no sabe usar herramientas (el agente no podrá actuar con él)."""
+        caps = core.model_caps(m) if m else None
+        if caps and not caps.get("tools"):
+            self.toast("«%s» no usa herramientas: podrás conversar con él, pero el agente no podrá trabajar con archivos, "
+                       "comandos ni la web. Para eso elige un modelo agéntico." % core.model_title(m),
+                       "Ver modelos", lambda: self.setup("model"), ms=15000, icon_name="est_aviso", color=C["warn"])
+
+    def _caps_in_background(self):
+        """Lee del GGUF el tipo de los modelos que aún no lo tienen guardado (o cuyo archivo cambió)."""
+        todo = [m for m in core.SET.snapshot()["models"] if os.path.isfile(m.get("path", "")) and core.model_caps(m, compute=False) is None]
+        if todo:
+            run_bg(lambda: [core.model_caps(m) for m in todo], lambda r: None)
 
     def poll(self):
         self.refresh_lists()

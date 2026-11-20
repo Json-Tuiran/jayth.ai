@@ -1008,9 +1008,9 @@ class ModelsDialog(QDialog):
         v = QVBoxLayout(self)
         v.addWidget(lbl("Modelos instalados", "h1"))
         v.addWidget(lbl("El modelo activo es el que usa el agente. Cambiarlo apaga el modelo actual.", "muted"))
-        self.t = QTableWidget(0, 5)
-        self.t.setHorizontalHeaderLabels(["", "Modelo", "Variante", "Tamaño", "Archivo"])
-        self.t.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.t = QTableWidget(0, 6)
+        self.t.setHorizontalHeaderLabels(["", "Modelo", "Tipo", "Variante", "Tamaño", "Archivo"])
+        self.t.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
         self.t.verticalHeader().setVisible(False)
         self.t.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.t.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -1037,11 +1037,26 @@ class ModelsDialog(QDialog):
             ok = os.path.isfile(m.get("path", ""))
             self.t.setItem(i, 0, QTableWidgetItem("●" if m["id"] == cfg["active_model"] else ""))
             self.t.setItem(i, 1, QTableWidgetItem(core.model_title(m) + ("" if ok else "  (archivo no encontrado)")))
-            self.t.setItem(i, 2, QTableWidgetItem(core.model_quant(m)))
-            self.t.setItem(i, 3, QTableWidgetItem(HW.human(m.get("size", 0))))
-            self.t.setItem(i, 4, QTableWidgetItem(m.get("path", "")))
-            self.t.item(i, 4).setToolTip(m.get("path", ""))
-        for c in (0, 1, 2, 3):
+            caps = core.model_caps(m) if ok else None          # leído del propio archivo (y guardado)
+            ki = QTableWidgetItem(core.caps_text(caps) if caps else "—")
+            from PySide6.QtGui import QColor
+            if caps:
+                ki.setForeground(QColor(C["acc"] if caps.get("tools") else C["warn"]))
+                tip = ["Agente: sabe usar herramientas (archivos, comandos, web…)" if caps.get("tools") else
+                       "No usa herramientas: puedes conversar con él, pero el agente no podrá actuar"]
+                tip.append("Visión: tiene su proyector de imágenes" if caps.get("vision") else "Sin visión (no tiene proyector de imágenes)")
+                if caps.get("think"):
+                    tip.append("Razona antes de responder")
+                if caps.get("ctx"):
+                    tip.append("Contexto máximo del modelo: %s tokens" % format(caps["ctx"], ",").replace(",", "."))
+                tip.append("(Leído de la plantilla dentro del archivo)" if caps.get("source") == "gguf" else "(Deducido del nombre)")
+                ki.setToolTip("\n".join(tip))
+            self.t.setItem(i, 2, ki)
+            self.t.setItem(i, 3, QTableWidgetItem(core.model_quant(m)))
+            self.t.setItem(i, 4, QTableWidgetItem(HW.human(m.get("size", 0))))
+            self.t.setItem(i, 5, QTableWidgetItem(m.get("path", "")))
+            self.t.item(i, 5).setToolTip(m.get("path", ""))
+        for c in (0, 1, 2, 3, 4):
             self.t.resizeColumnToContents(c)
 
     def _sel(self):
@@ -1056,6 +1071,11 @@ class ModelsDialog(QDialog):
             core.SET.update({"active_model": m["id"], "llm_mode": "local"})
             self.changed = True
             self.refresh()
+            caps = core.model_caps(m)
+            if caps and not caps.get("tools"):
+                QMessageBox.information(self, "Modelo sin herramientas",
+                                        "«%s» no usa herramientas: podrás conversar con él, pero el agente no podrá trabajar con "
+                                        "archivos, comandos ni la web. Para eso elige un modelo agéntico." % core.model_title(m))
 
     def add(self):
         w = SetupWizard(self, start="model")

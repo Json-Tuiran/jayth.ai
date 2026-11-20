@@ -243,6 +243,63 @@ def model_quant(m):
     return "" if q == f else q
 
 
+# ---------------------------------------------------------------- qué sabe hacer un modelo instalado
+def _file_sig(path):
+    try:
+        st = os.stat(path)
+        return "%d-%d" % (st.st_size, int(st.st_mtime))
+    except OSError:
+        return ""
+
+
+def read_caps(m):
+    """Lee del propio GGUF (sin internet) si el modelo usa herramientas y si razona; la visión depende de que tenga
+    instalado su proyector (mmproj). Tarda ~1-2 s por el vocabulario: el resultado se guarda en el modelo."""
+    from . import gguf, provision as P
+    path = m.get("path", "")
+    caps = {"sig": _file_sig(path), "vision": bool(m.get("mmproj") and os.path.isfile(m["mmproj"]))}
+    try:
+        meta = gguf.read_meta(path, {"tokenizer.chat_template", "general.architecture"})
+        tpl = str(meta.get("tokenizer.chat_template") or "")
+        caps.update(tools=bool(P._TOOLS_TPL.search(tpl)) if tpl else bool(P._TOOLS_NAME.search(m.get("repo") or path)),
+                    think=bool(P._THINK_TPL.search(tpl)) if tpl else False, arch=str(meta.get("general.architecture") or ""),
+                    ctx=next((int(v) for k, v in meta.items() if k.endswith(".context_length") and isinstance(v, int)), 0), source="gguf")
+    except (OSError, ValueError):
+        name = m.get("repo") or path                      # archivo ilegible o ausente: se deduce del nombre
+        caps.update(tools=bool(P._TOOLS_NAME.search(name)), think=False, arch="", ctx=0, source="nombre")
+    return caps
+
+
+def model_caps(m, compute=True):
+    """Capacidades guardadas del modelo; si faltan o el archivo cambió, se leen (compute=False: solo lo guardado)."""
+    if not m:
+        return None
+    c = m.get("caps")
+    if c and c.get("sig") == _file_sig(m.get("path", "")):
+        c = dict(c)
+        c["vision"] = bool(m.get("mmproj") and os.path.isfile(m["mmproj"]))     # el proyector se puede añadir o quitar luego
+        return c
+    if not compute:
+        return None
+    c = read_caps(m)
+    models = SET.snapshot()["models"]
+    for x in models:
+        if x.get("id") == m.get("id"):
+            x["caps"] = c
+    SET.update({"models": models})
+    return c
+
+
+def caps_text(c, short=False):
+    """«Agente · Visión · Razona» (o «Solo conversación» si no usa herramientas)."""
+    if not c:
+        return ""
+    parts = (["Agente"] if c.get("tools") else []) + (["Visión"] if c.get("vision") else []) + (["Razona"] if c.get("think") else [])
+    if not c.get("tools"):
+        parts.insert(0, "Solo conversación" if not short else "Sin herramientas")
+    return " · ".join(parts)
+
+
 EFFORTS = [("low", "Bajo", "Responde directo, sin razonar antes. Lo más rápido."),
            ("medium", "Medio", "Razona antes de responder. Mejor en tareas con varios pasos."),
            ("high", "Alto", "Razona a fondo y con más margen de respuesta. Para lo difícil; es lo más lento.")]
