@@ -20,6 +20,8 @@ DEFAULTS = {
     "models": [],
     "active_model": "",
     "models_dir": paths.MODELS_DEFAULT,
+    "models_ignored": [],        # archivos que el usuario quitó de la lista: no se vuelven a añadir solos
+    "models_scan_init": False,   # ya se hizo la primera revisión de la carpeta de modelos
     "llama_exe": "",
     "llama_tag": "",
     "backend": "cpu",            # cpu | cuda | vulkan
@@ -160,7 +162,15 @@ class Settings:
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self.v, f, indent=2, ensure_ascii=False)
-        os.replace(tmp, self.path)
+        for attempt in range(20):
+            try:
+                os.replace(tmp, self.path)
+                return
+            except PermissionError:
+                # Windows: el antivirus o el indexador pueden tener el archivo abierto un instante tras escribirlo
+                if attempt == 19:
+                    raise
+                time.sleep(0.05)
 
     def snapshot(self):
         with self.lock:
@@ -170,13 +180,13 @@ class Settings:
 
     def ready(self):
         """True si hay un proveedor de modelo utilizable."""
-        v = self.snapshot()
-        if not v["setup_done"]:
-            return False
-        if v["llm_mode"] == "external":
-            return bool(v["external_url"])
-        m = active_model(v)
-        return bool(m and os.path.isfile(m.get("path", "")) and os.path.isfile(v["llama_exe"]))
+        return not_ready(self.snapshot()) == ""
+
+    def update_model(self, mid, **kw):
+        """Cambia unos campos de un modelo de la lista (sin pisar lo que otro hilo haya cambiado en los demás)."""
+        with self.lock:
+            self.v["models"] = [dict(x, **kw) if x.get("id") == mid else x for x in self.v["models"]]
+            self._save()
 
     # --- registro de modelos
     def add_model(self, m, activate=True):
@@ -225,6 +235,33 @@ def active_model(cfg):
         if m.get("id") == cfg.get("active_model"):
             return m
     return None
+
+
+def not_ready(cfg):
+    """Por qué no se puede usar todavía el modelo: "" (todo bien), "setup" (sin configurar), "no_model" (no hay
+    ninguno elegido), "model_file" (su archivo no está donde se guardó) o "engine" (falta llama-server)."""
+    if not cfg["setup_done"]:
+        return "setup"
+    if cfg["llm_mode"] == "external":
+        return "" if cfg["external_url"] else "setup"
+    m = active_model(cfg)
+    if not m:
+        return "no_model"
+    from .relocate import files_ok
+    if not files_ok(m):
+        return "model_file"
+    return "" if os.path.isfile(cfg["llama_exe"]) else "engine"
+
+
+def models_dir(cfg=None):
+    """Carpeta para las descargas nuevas: la elegida o, si su disco no está conectado, la predeterminada."""
+    d = (cfg or SET.snapshot()).get("models_dir") or paths.MODELS_DEFAULT
+    anchor = os.path.splitdrive(os.path.abspath(d))[0] or ""
+    if osys.WIN and anchor and not os.path.isdir(anchor + "\\"):
+        return paths.MODELS_DEFAULT
+    from .relocate import _drive_of
+    drv = "" if osys.WIN else _drive_of(d)
+    return paths.MODELS_DEFAULT if drv and not os.path.isdir(drv) else d
 
 
 def model_title(m):
@@ -282,11 +319,7 @@ def model_caps(m, compute=True):
     if not compute:
         return None
     c = read_caps(m)
-    models = SET.snapshot()["models"]
-    for x in models:
-        if x.get("id") == m.get("id"):
-            x["caps"] = c
-    SET.update({"models": models})
+    SET.update_model(m.get("id"), caps=c)
     return c
 
 
@@ -666,9 +699,16 @@ class LLM:
         m = active_model(cfg)
         if not m:
             return "No hay ningún modelo elegido. Añade uno en «Modelos»."
-        for path, label in ((cfg["llama_exe"], "llama-server"), (m.get("path"), "el modelo «%s»" % m.get("name"))):
-            if not path or not os.path.isfile(path):
-                return "No encuentro %s (%s). Abre el asistente de configuración." % (label, path or "sin configurar")
+        from . import relocate
+        if not relocate.files_ok(m) or (m.get("mmproj") and not os.path.isfile(m["mmproj"])):
+            relocate.run("guess")                   # ¿se movió? primero los sitios evidentes (es instantáneo)
+            cfg = SET.snapshot()
+            m = active_model(cfg)
+        if not relocate.files_ok(m):
+            return ("No encuentro el archivo del modelo «%s» (%s). Si lo moviste de carpeta o de disco, Jayth lo busca solo; "
+                    "también puedes indicarle dónde está en Modelos → Localizar…" % (model_title(m) or m.get("name"), m.get("path") or "sin ruta"))
+        if not cfg["llama_exe"] or not os.path.isfile(cfg["llama_exe"]):
+            return "No encuentro llama-server (%s). Abre el asistente de configuración." % (cfg["llama_exe"] or "sin configurar")
         have = os.path.getsize(m["path"])
         if m.get("size") and have < int(m["size"]) and not re.search(r"-\d{5}-of-\d{5}\.gguf$", m["path"]):
             return "El archivo del modelo aún está incompleto (%.1f de %.1f GB). Espera a que termine la descarga." % (have / 1024 ** 3, int(m["size"]) / 1024 ** 3)

@@ -1827,7 +1827,7 @@ class ChatPanel(QWidget):
         if self.busy or (not text and not self.pending_imgs and not files):
             return
         if not core.SET.ready():
-            return self.main.setup()
+            return self.main.fix_not_ready()
         if not self.session():
             temp = bool(getattr(self, "temp_next", False))
             aid = getattr(self, "assistant_next", None)
@@ -2172,8 +2172,15 @@ class ChatPanel(QWidget):
         st = llm.get("state", "off")
         ext = cfg["llm_mode"] == "external"
         self.banner.setVisible(st != "ready")
-        if not core.SET.ready():
-            self.ban_txt.setText("Aún no hay un modelo configurado.")
+        why = core.not_ready(cfg)
+        if why == "model_file":
+            m = core.active_model(cfg)
+            self.ban_txt.setText("No encuentro el archivo de «%s» donde estaba. Si lo moviste de carpeta o de disco, lo busco yo."
+                                 % (core.model_title(m) or m.get("name")))
+            self.ban_btn.setText("Buscarlo")
+            self.ban_btn.show()
+        elif why:
+            self.ban_txt.setText("Aún no hay un modelo configurado." if why != "engine" else "Falta el motor llama.cpp.")
             self.ban_btn.setText("Configurar")
             self.ban_btn.show()
         elif st == "loading":
@@ -2509,7 +2516,7 @@ class Main(QMainWindow):
         self._init_peek()
         self._init_quick()
         self._init_tasks()
-        QTimer.singleShot(3000, self._caps_in_background)
+        self._init_models()
         self._tray()
         self.chat.open_session(None)
         self.code.set_project(core.project(cfg, cfg["active_project"]))
@@ -3638,11 +3645,101 @@ class Main(QMainWindow):
 
     def warn_if_not_agent(self, m):
         """Avisa si el modelo elegido no sabe usar herramientas (el agente no podrá actuar con él)."""
-        caps = core.model_caps(m) if m else None
+        caps = core.model_caps(m, compute=False) if m else None
         if caps and not caps.get("tools"):
             self.toast("«%s» no usa herramientas: podrás conversar con él, pero el agente no podrá trabajar con archivos, "
                        "comandos ni la web. Para eso elige un modelo agéntico." % core.model_title(m),
                        "Ver modelos", lambda: self.setup("model"), ms=15000, icon_name="est_aviso", color=C["warn"])
+
+    # --- modelos que cambiaron de sitio (ver relocate.py)
+    def _init_models(self):
+        from . import relocate as R
+        self._deep_busy = self._deep_done = False
+        self._start_when_found = False
+        self._told = set()
+        self._drives = set(R.drives())
+        self.models_t = QTimer(self, interval=60000, timeout=self._tick_models)
+        self.models_t.start()
+        # al abrir: enlazar lo que se movió, añadir lo que se haya pegado en la carpeta de modelos y leer los tipos
+        QTimer.singleShot(2500, lambda: self.check_models("quick" if R.problems(core.SET.snapshot()) else "guess",
+                                                          add_new=True, then=lambda rep: self._caps_in_background()))
+
+    def check_models(self, level="quick", folders=None, add_new=False, explicit=False, then=None, deep=True):
+        """Busca en segundo plano los modelos que no están en su sitio y avisa de lo que haya arreglado. Si con la
+        búsqueda rápida no aparecen, sigue con todos los discos (una vez por sesión)."""
+        from . import relocate as R
+
+        def done(rep):
+            if isinstance(rep, Exception):
+                rep = {"pending": True, "error": str(rep)}
+            self._models_report(rep)
+            if rep.get("missing") and deep and level != "deep" and not self._deep_busy and not self._deep_done:
+                self._deep_busy = True
+                act = core.active_model(core.SET.snapshot())
+                if act and (rep.get("by_id") or {}).get(act["id"], ("",))[0] == "missing":
+                    self.toast("Busco «%s» en todos tus discos; puede tardar unos minutos. Si sabes dónde está, indícalo en "
+                               "Modelos → Localizar…" % (core.model_title(act) or act.get("name")), "Ver modelos", self.models,
+                               ms=12000, icon_name="acc_buscar", color=C["acc"])
+                run_bg(lambda: R.run("deep"), self._deep_finished)
+            if then:
+                then(rep)
+        run_bg(lambda: R.run(level, folders, add_new, explicit), done)
+
+    def _deep_finished(self, rep):
+        self._deep_busy, self._deep_done = False, True
+        if isinstance(rep, Exception):
+            return
+        self._models_report(rep, final=True)
+
+    def _models_report(self, rep, final=False):
+        from . import relocate as R
+        if rep.get("error"):
+            return
+        text = R.summary(rep)
+        if text:
+            self.toast(text, "Ver modelos", self.models, ms=14000, icon_name="ui_check", color=C["ok"])
+            self.sync()
+            if self._start_when_found and core.SET.ready():
+                self._start_when_found = False
+                self.toggle_llm()
+        # lo que sigue pendiente se cuenta una sola vez (no en cada revisión)
+        news = {}
+        for t, d in rep.get("copying") or []:
+            news[("copying", t)] = {"copying": [(t, d)]}
+        for t, d in rep.get("offline") or []:
+            news[("offline", t)] = {"offline": [(t, d)]}
+        if final:
+            for t in rep.get("missing") or []:
+                news[("missing", t)] = {"missing": [t]}
+        for k, part in news.items():
+            if k not in self._told:
+                self._told.add(k)
+                self.toast(R.pending_text(part), "Ver modelos", self.models, ms=16000, icon_name="est_aviso", color=C["warn"])
+        for k in list(self._told):        # si se resolvió, se volverá a avisar si reaparece
+            if k[0] in ("copying", "offline") and not any(t == k[1] for t, _ in rep.get(k[0]) or []) and not rep.get("error"):
+                self._told.discard(k)
+
+    def _tick_models(self):
+        """Cada minuto, solo si falta algo: mira los sitios evidentes; si se conectó un disco, lo recorre entero."""
+        from . import relocate as R
+        if not R.problems(core.SET.snapshot()):
+            return
+        now = set(R.drives())
+        new, self._drives = now - self._drives, now
+        copying = any(k[0] == "copying" for k in self._told)
+        self.check_models("quick" if copying else "guess", folders=sorted(new) or None, deep=False)
+
+    def fix_not_ready(self):
+        """Lo que haya que hacer para poder usar el modelo: buscar su archivo si se movió, o el asistente."""
+        cfg = core.SET.snapshot()
+        why = core.not_ready(cfg)
+        if why == "model_file":
+            m = core.active_model(cfg)
+            self._start_when_found = True
+            self.toast("Busco «%s»: ya no está en %s." % (core.model_title(m) or m.get("name"), os.path.dirname(m.get("path", "")) or "su carpeta"),
+                       ms=6000, icon_name="acc_buscar", color=C["acc"])
+            return self.check_models("quick")
+        return self.setup()
 
     def _caps_in_background(self):
         """Lee del GGUF el tipo de los modelos que aún no lo tienen guardado (o cuyo archivo cambió)."""
@@ -3724,7 +3821,7 @@ class Main(QMainWindow):
 
     def toggle_llm(self):
         if not core.SET.ready():
-            return self.setup()
+            return self.fix_not_ready()
         if self.llm.get("state", "off") == "off":
             err = core.LLM_MGR.start()
             if err:
@@ -3755,6 +3852,9 @@ class Main(QMainWindow):
         a = core.SET.snapshot()
         if a.get("quick_hotkey") != b.get("quick_hotkey"):
             self._apply_hotkey(tell=True)
+        if a.get("models_dir") != b.get("models_dir") and a.get("models_dir"):
+            # nueva carpeta de modelos: enlazar los que se movieron allí y añadir los que ya hubiera dentro
+            self.check_models("guess", folders=[a["models_dir"]], add_new=True, explicit=True)
         if (a["theme"], a["font_scale"]) != (b["theme"], b["font_scale"]):
             return self._swap_window()
         self.poll()
@@ -3847,6 +3947,8 @@ def selftest(app):
     ok("icon", lambda: os.path.isfile(paths.ICON) or "falta " + paths.ICON)
     ok("modules", lambda: [m for m in ("certifi", "pypdf") + (() if osys.WIN else ("mss", "pynput")) if not importlib.util.find_spec(m)] or None)
     ok("certifi", lambda: os.path.isfile(__import__("certifi").where()) or "sin certificados")
+    # buscar modelos movidos y leer su tipo (se importan dentro de funciones: comprobar que van en el paquete)
+    ok("models_relocate", lambda: (importlib.import_module("jayth.relocate").drives(), importlib.import_module("jayth.gguf")) and None)
     ok("hardware", lambda: HW.summary(HW.detect()) and None)
     ok("engine", lambda: bool(P.LLAMA_PATTERNS) or "sin motores")
     ok("spanish", lambda: install_spanish(app) or "sin traducción de Qt al español")
@@ -3955,7 +4057,10 @@ def main():
         w.showMaximized()                  # siempre a pantalla completa
     if core.SET.load_error:
         QTimer.singleShot(500, lambda: QMessageBox.warning(w, APP_NAME, core.SET.load_error))
-    if not core.SET.ready() and "--no-wizard" not in sys.argv:
+    why = core.not_ready(cfg)
+    if why == "model_file":           # el modelo se movió: lo busca la revisión del arranque (no hace falta el asistente)
+        w._start_when_found = bool(cfg["autostart_llm"] or "--start-llm" in sys.argv)
+    elif why and "--no-wizard" not in sys.argv:
         QTimer.singleShot(300, w.setup)
     elif (cfg["autostart_llm"] or "--start-llm" in sys.argv) and cfg["llm_mode"] == "local":
         core.LLM_MGR.start()

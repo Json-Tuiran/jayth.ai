@@ -9,6 +9,7 @@ from . import core, paths, osys, hardware as HW, provision as P, agent as A, con
 from .theme import C, restyle, icon
 from .widgets import fit_to_screen, scrollable
 from PySide6.QtCore import QSize
+from PySide6.QtGui import QColor
 
 # ---------------------------------------------------------------- utilidades
 _bridges = []
@@ -209,8 +210,10 @@ class SetupWizard(QDialog):
         self.cat_table = QTableWidget(0, 6)
         self.cat_table.setHorizontalHeaderLabels(["Modelo", "Tipo", "Laboratorio", "Descarga", "Velocidad aprox.", "En tu equipo"])
         self.cat_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        # las demás columnas se ajustan UNA vez tras rellenar la tabla (_fit_catalog_columns): en modo «ajustar al
+        # contenido» Qt volvía a medir todas las filas con cada celda escrita y el asistente se congelaba ~35 s
         for c in range(1, 6):
-            self.cat_table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeToContents)
+            self.cat_table.horizontalHeader().setSectionResizeMode(c, QHeaderView.Interactive)
         self.cat_table.verticalHeader().setVisible(False)
         self.cat_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.cat_table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -251,7 +254,7 @@ class SetupWizard(QDialog):
         hv.addWidget(self.chk_del_orig)
         self.chk_mm = QCheckBox("Incluir visión (permite que el modelo vea imágenes y capturas de pantalla)")
         hv.addWidget(self.chk_mm)
-        self.dest = QLineEdit(self.cfg["models_dir"])
+        self.dest = QLineEdit(core.models_dir(self.cfg))
         self.dest.textChanged.connect(self._update_disk)
         hv.addWidget(lbl("Carpeta donde guardar los modelos:", "muted"))
         hv.addLayout(browse_row(self.dest, folder=True, parent=self))
@@ -485,6 +488,7 @@ class SetupWizard(QDialog):
         rows.sort(key=lambda e: (e is not rec, order[e["fit"]], -HW.capability(e)))
         from PySide6.QtGui import QColor
         self.cat_table.blockSignals(True)
+        self.cat_table.setUpdatesEnabled(False)
         self.cat_table.setRowCount(len(rows))
         for i, e in enumerate(rows):
             name = e["name"] + ("   ★ recomendado" if e is rec else "")
@@ -517,6 +521,8 @@ class SetupWizard(QDialog):
                 fi = QTableWidgetItem(FIT_TXT[e["fit"]])
                 fi.setForeground(QColor(FIT_COL[e["fit"]]))
                 self.cat_table.setItem(i, 5, fi)
+        self._fit_catalog_columns()
+        self.cat_table.setUpdatesEnabled(True)
         self.cat_table.blockSignals(False)
         if self.cur_repo:
             self.cat_table.blockSignals(True)
@@ -525,6 +531,18 @@ class SetupWizard(QDialog):
         n_ok = sum(e["fit"] == "ok" for e in self.rated)
         if not self.cur_repo:
             self.repo_desc.setText("%d modelos de %d laboratorios · %d caben en tu equipo." % (len(self.rated), len({e["lab"] for e in self.rated}), n_ok))
+
+    def _fit_catalog_columns(self):
+        """Ancho de las columnas según su contenido, medido una sola vez (con un texto por valor distinto, no por fila)."""
+        fm = self.cat_table.fontMetrics()
+        hh = self.cat_table.horizontalHeader()
+        for c in range(1, 6):
+            texts = {self.cat_table.horizontalHeaderItem(c).text()}
+            for i in range(self.cat_table.rowCount()):
+                it = self.cat_table.item(i, c)
+                if it:
+                    texts.add(it.text())
+            hh.resizeSection(c, max(fm.horizontalAdvance(t) for t in texts) + 26)
 
     def _cat_selected(self):
         rows = self.cat_table.selectionModel().selectedRows()
@@ -635,7 +653,7 @@ class SetupWizard(QDialog):
 
     def _update_disk(self):
         q = self._selected_quant()
-        free = HW.disk_free(self.dest.text() or paths.MODELS_DEFAULT)
+        free = HW.disk_free(self.dest.text() or core.models_dir(self.cfg))
         need = (q["size"] if q else 0) + (self.info["mmproj"][0]["size"] if self.info and self.info["mmproj"] and self.chk_mm.isChecked() else 0)
         warn = "  ⚠ no hay espacio suficiente" if q and need > free else ""
         self.disk_lbl.setText("Necesita %s · libre en esa unidad: %s%s" % (HW.human(need), HW.human(free), warn))
@@ -712,7 +730,7 @@ class SetupWizard(QDialog):
         if not q or self.local.get("format") != "hf":
             return
         need, final = CV.plan_space(self.local, q["label"])
-        dest = self.cfg["models_dir"] or paths.MODELS_DEFAULT
+        dest = self.dest.text() or core.models_dir(self.cfg)
         free = HW.disk_free(dest)
         self.f_info.setText(self.f_info.text().split("\n")[0] + "\nResultado ~%s en %s · durante la conversión hacen falta ~%s libres (hay %s)%s." % (
             HW.human(final), dest, HW.human(need), HW.human(free), "  ⚠ no hay espacio suficiente" if need > free else ""))
@@ -773,9 +791,9 @@ class SetupWizard(QDialog):
                 return QMessageBox.warning(self, "Formato no compatible", self.local["why_not"])
             if fmt == "hf" and self.f_quant.currentData():
                 need, _ = CV.plan_space(self.local, self.f_quant.currentData()["label"])
-                if need > HW.disk_free(self.cfg["models_dir"] or paths.MODELS_DEFAULT):
+                if need > HW.disk_free(self.dest.text() or core.models_dir(self.cfg)):
                     return QMessageBox.warning(self, "Falta espacio", "Para convertir hacen falta ~%s libres en %s." % (
-                        HW.human(need), self.cfg["models_dir"] or paths.MODELS_DEFAULT))
+                        HW.human(need), self.dest.text() or core.models_dir(self.cfg)))
             if fmt == "gguf" and self.f_mm.text() and not os.path.isfile(self.f_mm.text()):
                 return QMessageBox.warning(self, "Archivo no encontrado", "El proyector de visión indicado no existe.")
         elif self._selected_quant() is None:
@@ -811,7 +829,7 @@ class SetupWizard(QDialog):
         if self.r_hf.isChecked() and self._selected_quant() and self._selected_quant().get("convert"):
             # formato original: descargar sus archivos, preparar el convertidor y crear el GGUF en este equipo
             q, info = self._selected_quant(), self.info
-            models = self.dest.text() or paths.MODELS_DEFAULT
+            models = self.dest.text() or core.models_dir(self.cfg)
             src = os.path.join(models, info["repo"].replace("/", "__") + "__original")
             out = os.path.join(models, info["repo"].replace("/", "__") + "__gguf")
             files = info["original"]["files"]
@@ -831,14 +849,14 @@ class SetupWizard(QDialog):
         elif self.r_file.isChecked() and (self.local or {}).get("format") == "hf":
             q = self.f_quant.currentData()
             info = self.local
-            out = os.path.join(self.dest.text() or paths.MODELS_DEFAULT, re.sub(r"[^\w.-]+", "_", info["name"]) + "__gguf")
+            out = os.path.join(self.dest.text() or core.models_dir(self.cfg), re.sub(r"[^\w.-]+", "_", info["name"]) + "__gguf")
             self._conversion_steps(job, info["path"], out, q["label"], info.get("vision"), threads, delete_src=False, name=info["name"])
             self.pending_model = {"id": re.sub(r"[^\w.-]+", "_", "local_" + info["name"] + "_" + q["label"]), "name": info["name"],
                                   "quant": q["label"], "path": "", "mmproj": "", "repo": "", "file": "", "size": int(q["size"]),
                                   "added": time.time(), "converted_from": info["path"]}
         elif self.r_hf.isChecked():
             q, info = self._selected_quant(), self.info
-            folder = os.path.join(self.dest.text() or paths.MODELS_DEFAULT, info["repo"].replace("/", "__"))
+            folder = os.path.join(self.dest.text() or core.models_dir(self.cfg), info["repo"].replace("/", "__"))
             for k, part in enumerate(q["parts"]):
                 job.add("Modelo %s%s" % (q["label"], " parte %d/%d" % (k + 1, len(q["parts"])) if len(q["parts"]) > 1 else ""),
                         lambda pr, st, res, part=part: P.download(P.hf_url(info["repo"], part["file"]), os.path.join(folder, os.path.basename(part["file"])),
@@ -858,7 +876,7 @@ class SetupWizard(QDialog):
                                   "quant": P.quant_label(os.path.basename(p)), "path": p, "mmproj": os.path.normpath(self.f_mm.text()) if self.f_mm.text() else "",
                                   "repo": "", "file": os.path.basename(p), "size": os.path.getsize(p), "added": time.time()}
         self.pending_cfg = {"backend": "cpu" if self.chk_own.isChecked() and backend == "cpu" else backend, "threads": self.threads.value(),
-                            "n_ctx": self.ctx.currentData(), "models_dir": self.dest.text() or paths.MODELS_DEFAULT}
+                            "n_ctx": self.ctx.currentData(), "models_dir": self.dest.text() or core.models_dir(self.cfg)}
         self._start_job(job)
 
     def _conversion_steps(self, job, src, out, quant, vision, threads, delete_src=False, name=""):
@@ -1015,31 +1033,136 @@ class ModelsDialog(QDialog):
         self.t.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.t.setSelectionMode(QAbstractItemView.SingleSelection)
         self.t.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.t.setWordWrap(False)
+        self.t.setTextElideMode(Qt.ElideMiddle)      # rutas largas: se ve el principio y el nombre del archivo
         self.t.doubleClicked.connect(self.activate)
+        self.t.itemSelectionChanged.connect(self._sel_changed)
         v.addWidget(self.t, 1)
+        self.note = lbl("", "muted")
+        self.note.setWordWrap(True)
+        self.note.hide()
+        v.addWidget(self.note)
         row = QHBoxLayout()
         row.addWidget(btn("Usar este", "primary", self.activate, "ui_check"))
         row.addWidget(btn("Añadir modelo…", cb=self.add, ico="acc_anadir"))
-        row.addWidget(btn("Abrir carpeta", cb=self.open_folder, ico="act_carpeta_abierta"))
+        self.b_locate = btn("Localizar…", cb=self.locate, ico="acc_buscar")
+        self.b_locate.setToolTip("Indicar dónde está ahora el archivo de este modelo (si lo moviste de carpeta o de disco)")
+        row.addWidget(self.b_locate)
+        b_scan = btn("Buscar en una carpeta…", cb=self.scan_folder, ico="act_carpeta_abierta")
+        b_scan.setToolTip("Enlazar los modelos que moviste a esa carpeta y añadir los que haya dentro")
+        row.addWidget(b_scan)
         row.addStretch(1)
-        row.addWidget(btn("Quitar de la lista", cb=lambda: self.remove(False), ico="ui_cerrar"))
-        row.addWidget(btn("Borrar archivos…", "danger", lambda: self.remove(True), "acc_eliminar"))
-        row.addWidget(btn("Cerrar", cb=self.accept))
+        row.addWidget(btn("Abrir carpeta", cb=self.open_folder, ico="act_carpeta_abierta"))
         v.addLayout(row)
+        row2 = QHBoxLayout()
+        row2.addWidget(btn("Quitar de la lista", cb=lambda: self.remove(False), ico="ui_cerrar"))
+        row2.addWidget(btn("Borrar archivos…", "danger", lambda: self.remove(True), "acc_eliminar"))
+        row2.addStretch(1)
+        row2.addWidget(btn("Cerrar", cb=self.accept))
+        v.addLayout(row2)
         self.changed = False
+        self.states = {}                 # id -> lo que se sabe de un modelo cuyo archivo falta
+        self._stop = False
+        self._caps_busy = False
         self.refresh()
+        self._sel_changed()
+        from . import relocate as R
+        if R.problems(core.SET.snapshot()):
+            self._search("quick")
+
+    # --- modelos que no están en su sitio
+    def _search(self, level, folders=None, add_new=False, explicit=False):
+        from . import relocate as R
+        miss = R.problems(core.SET.snapshot())
+        for m in miss:
+            self.states[m["id"]] = "buscando…"
+        if miss:
+            self.note.setText("Buscando %s en %s…" % (
+                "«%s»" % core.model_title(miss[0]) if len(miss) == 1 else "%d modelos" % len(miss),
+                "tus discos (puede tardar unos minutos)" if level == "deep" else "las carpetas habituales"))
+            self.note.show()
+        self.refresh()
+        run_bg(lambda: R.run(level, folders, add_new, explicit, stop=lambda: self._stop),
+               lambda rep: self._found(rep, level))
+
+    def _found(self, rep, level):
+        from . import relocate as R
+        if self._stop:
+            return
+        if isinstance(rep, Exception):
+            rep = {"missing": [], "error": str(rep)}
+        if R.summary(rep):
+            self.changed = True
+        self.states = {}
+        for mid, (st, drive) in (rep.get("by_id") or {}).items():
+            self.states[mid] = {"copying": "se está copiando", "offline": "el disco %s no está conectado" % drive,
+                                "missing": "buscando…" if level != "deep" else "archivo no encontrado"}.get(st, "")
+        text = " ".join(x for x in (R.summary(rep), R.pending_text(rep) if level == "deep" or not rep.get("missing") else "") if x)
+        self.note.setText(text)
+        self.note.setVisible(bool(text))
+        self.refresh()
+        if rep.get("missing") and level != "deep":
+            self._search("deep")
+
+    def _sel_changed(self):
+        from . import relocate as R
+        m = self._sel()
+        self.b_locate.setEnabled(bool(m) and (not R.files_ok(m) or bool(m.get("mmproj") and not os.path.isfile(m["mmproj"]))))
+
+    def locate(self):
+        from . import relocate as R
+        m = self._sel()
+        if not m:
+            return
+        start = os.path.dirname(m.get("path", "")) if os.path.isdir(os.path.dirname(m.get("path", ""))) else core.models_dir()
+        if not R.files_ok(m):
+            p, _ = QFileDialog.getOpenFileName(self, "¿Dónde está ahora «%s»?" % core.model_title(m), start,
+                                               "Modelo GGUF (%s);;Modelos GGUF (*.gguf)" % (os.path.basename(m.get("path", "")) or "*.gguf"))
+            if not p:
+                return
+            err = R.relink(m["id"], os.path.normpath(p))
+            if err:
+                return QMessageBox.warning(self, "No se pudo usar ese archivo", err)
+        else:                            # solo falta el proyector de visión
+            p, _ = QFileDialog.getOpenFileName(self, "¿Dónde está el proyector de visión de «%s»?" % core.model_title(m), start,
+                                               "Proyector de visión (*mmproj*.gguf);;Modelos GGUF (*.gguf)")
+            if not p:
+                return
+            core.SET.update_model(m["id"], mmproj=os.path.normpath(p), mmproj_sig=R.sig(p))
+        self.states.pop(m["id"], None)
+        self.changed = True
+        self.note.setText("Listo: «%s» vuelve a apuntar a su archivo." % core.model_title(m))
+        self.note.show()
+        self.refresh()
+
+    def scan_folder(self):
+        d = QFileDialog.getExistingDirectory(self, "Carpeta donde están tus modelos", core.models_dir())
+        if d:
+            self._search("guess", folders=[os.path.normpath(d)], add_new=True, explicit=True)
+
+    def done(self, r):
+        self._stop = True                # la búsqueda en segundo plano se detiene al cerrar
+        super().done(r)
 
     def refresh(self):
         cfg = core.SET.snapshot()
         ms = cfg["models"]
         self.t.setRowCount(len(ms))
+        from . import relocate as R
+        todo = []
         for i, m in enumerate(ms):
-            ok = os.path.isfile(m.get("path", ""))
+            ok = R.files_ok(m)
             self.t.setItem(i, 0, QTableWidgetItem("●" if m["id"] == cfg["active_model"] else ""))
-            self.t.setItem(i, 1, QTableWidgetItem(core.model_title(m) + ("" if ok else "  (archivo no encontrado)")))
-            caps = core.model_caps(m) if ok else None          # leído del propio archivo (y guardado)
-            ki = QTableWidgetItem(core.caps_text(caps) if caps else "—")
-            from PySide6.QtGui import QColor
+            st = self.states.get(m["id"]) or ("" if ok else "archivo no encontrado")
+            name = QTableWidgetItem(core.model_title(m) + ("  (%s)" % st if st else ""))
+            if st:
+                name.setForeground(QColor(C["warn"]))
+                name.setToolTip("Estaba en: %s\nPulsa «Localizar…» si sabes dónde está ahora." % m.get("path", ""))
+            self.t.setItem(i, 1, name)
+            caps = core.model_caps(m, compute=False) if ok else None      # leído del propio archivo (y guardado)
+            if ok and caps is None:
+                todo.append(m)
+            ki = QTableWidgetItem(core.caps_text(caps) if caps else ("leyendo…" if ok else "—"))
             if caps:
                 ki.setForeground(QColor(C["acc"] if caps.get("tools") else C["warn"]))
                 tip = ["Agente: sabe usar herramientas (archivos, comandos, web…)" if caps.get("tools") else
@@ -1058,6 +1181,14 @@ class ModelsDialog(QDialog):
             self.t.item(i, 5).setToolTip(m.get("path", ""))
         for c in (0, 1, 2, 3, 4):
             self.t.resizeColumnToContents(c)
+        if todo and not self._caps_busy:     # el tipo se lee del archivo (1-2 s por modelo): en segundo plano
+            self._caps_busy = True
+
+            def got(_):
+                self._caps_busy = False
+                if not self._stop:
+                    self.refresh()
+            run_bg(lambda: [core.model_caps(m) for m in todo], got)
 
     def _sel(self):
         rows = self.t.selectionModel().selectedRows()
@@ -1071,7 +1202,7 @@ class ModelsDialog(QDialog):
             core.SET.update({"active_model": m["id"], "llm_mode": "local"})
             self.changed = True
             self.refresh()
-            caps = core.model_caps(m)
+            caps = core.model_caps(m, compute=False)
             if caps and not caps.get("tools"):
                 QMessageBox.information(self, "Modelo sin herramientas",
                                         "«%s» no usa herramientas: podrás conversar con él, pero el agente no podrá trabajar con "
@@ -1115,6 +1246,10 @@ class ModelsDialog(QDialog):
                     os.remove(f)
                 except OSError as e:
                     QMessageBox.warning(self, "No se pudo borrar", str(e))
+        elif m.get("path") and os.path.isfile(m["path"]):
+            # quitado de la lista sin borrar: que la revisión de la carpeta de modelos no lo vuelva a añadir
+            ign = core.SET.snapshot().get("models_ignored") or []
+            core.SET.update({"models_ignored": ign + [m["path"]]})
         core.SET.remove_model(m["id"])
         self.changed = True
         self.refresh()
