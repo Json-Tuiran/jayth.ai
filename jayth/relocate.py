@@ -20,6 +20,7 @@ Dónde se busca, de lo más rápido a lo más lento:
 """
 import os, re, time, string
 from . import paths, osys
+from .i18n import tr
 
 SIZE_ONLY_MIN = 50 << 20      # por debajo, coincidir solo por tamaño (archivo renombrado) no sería fiable
 NEW_MIN = 30 << 20            # un .gguf más pequeño no es un modelo (vocabularios sueltos, pruebas)
@@ -580,16 +581,16 @@ def relink(mid, path):
     from . import core
     m = next((x for x in core.SET.snapshot()["models"] if x.get("id") == mid), None)
     if not m:
-        return "Ese modelo ya no está en la lista."
+        return tr("Ese modelo ya no está en la lista.")
     try:
         with open(path, "rb") as f:
             gguf_ok = f.read(4) == b"GGUF"
     except OSError:
         gguf_ok = False
     if not gguf_ok:
-        return "Ese archivo no es un modelo GGUF válido (o todavía se está copiando)."
+        return tr("Ese archivo no es un modelo GGUF válido (o todavía se está copiando).")
     if not all(os.path.isfile(x) for x in split_parts(path)):
-        return "Faltan partes del modelo junto a ese archivo (%s)." % os.path.basename(split_parts(path)[-1])
+        return tr("Faltan partes del modelo junto a ese archivo (%s).") % os.path.basename(split_parts(path)[-1])
     kw = {"path": path, "file": os.path.basename(path), "path_sig": sig(path)}
     if m.get("mmproj") and not os.path.isfile(m["mmproj"]):
         folder = os.path.dirname(path)
@@ -610,19 +611,19 @@ def summary(rep):
     out = []
     fx = rep.get("fixed") or []
     if len(fx) == 1:
-        out.append("Encontré «%s» en su nueva carpeta (%s) y lo actualicé." % (fx[0][0], os.path.dirname(fx[0][1])))
+        out.append(tr("Encontré «%s» en su nueva carpeta (%s) y lo actualicé.") % (fx[0][0], os.path.dirname(fx[0][1])))
     elif fx:
-        out.append("Encontré %d modelos que habías movido y los actualicé." % len(fx))
+        out.append(tr("Encontré %d modelos que habías movido y los actualicé.") % len(fx))
     for t, p in rep.get("vision") or []:
-        out.append("Encontré el proyector de visión de «%s» en %s." % (t, os.path.dirname(p)))
+        out.append(tr("Encontré el proyector de visión de «%s» en %s.") % (t, os.path.dirname(p)))
     if rep.get("models_dir"):
-        out.append("Las próximas descargas irán a %s, donde están ahora tus modelos." % rep["models_dir"])
+        out.append(tr("Las próximas descargas irán a %s, donde están ahora tus modelos.") % rep["models_dir"])
     ad = rep.get("added") or []
     if ad:
-        out.append(("Añadí «%s», que estaba en tu carpeta de modelos." % ad[0]) if len(ad) == 1 else
-                   "Añadí %d modelos que estaban en tu carpeta de modelos: %s." % (len(ad), ", ".join(ad)))
+        out.append((tr("Añadí «%s», que estaba en tu carpeta de modelos.") % ad[0]) if len(ad) == 1 else
+                   tr("Añadí %d modelos que estaban en tu carpeta de modelos: %s.") % (len(ad), ", ".join(ad)))
     for t in rep.get("lost_vision") or []:
-        out.append("«%s» quedó sin visión: su proyector (mmproj) no estaba junto a él." % t)
+        out.append(tr("«%s» quedó sin visión: su proyector (mmproj) no estaba junto a él.") % t)
     return " ".join(out)
 
 
@@ -630,12 +631,13 @@ def pending_text(rep):
     """Lo que sigue sin resolverse, explicado."""
     out = []
     for t, _ in rep.get("copying") or []:
-        out.append("«%s» todavía se está copiando; lo enlazaré en cuanto termine." % t)
+        out.append(tr("«%s» todavía se está copiando; lo enlazaré en cuanto termine.") % t)
     for t, d in rep.get("offline") or []:
-        out.append("«%s» está en el disco %s, que no está conectado. Conéctalo y volverá a funcionar sin hacer nada más." % (t, d))
+        out.append(tr("«%s» está en el disco %s, que no está conectado. Conéctalo y volverá a funcionar sin hacer nada más.") % (t, d))
     ms = rep.get("missing") or []
     if ms:
-        out.append(("No encuentro «%s» en ningún disco. " % ms[0] if len(ms) == 1 else
-                    "No encuentro %d modelos en ningún disco (%s). " % (len(ms), ", ".join(ms))) +
-                   "Si lo tienes en otro sitio, indícalo en Modelos → Localizar…; si lo borraste, quítalo de la lista.")
+        out.append(tr("No encuentro «%s» en ningún disco. Si lo tienes en otro sitio, indícalo en Modelos → Localizar…; "
+                      "si lo borraste, quítalo de la lista.") % ms[0] if len(ms) == 1 else
+                   tr("No encuentro %d modelos en ningún disco (%s). Si lo tienes en otro sitio, indícalo en Modelos → "
+                      "Localizar…; si lo borraste, quítalo de la lista.") % (len(ms), ", ".join(ms)))
     return " ".join(out)

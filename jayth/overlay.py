@@ -17,6 +17,7 @@ from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QLinearGradient, QRadi
 from PySide6.QtWidgets import QWidget
 from . import core, osys
 from .theme import C
+from .i18n import tr
 
 FLAGS = (Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowTransparentForInput | Qt.NoDropShadowWindowHint
          | Qt.WindowDoesNotAcceptFocus)
@@ -191,7 +192,7 @@ class _Pointer(QWidget):
 
 class _Notice(QWidget):
     """Aviso arriba en el centro: el agente tiene el control y cómo quitárselo."""
-    TEXT = "Jayth está usando el ratón y el teclado  ·  para detenerlo, lleva el ratón a la esquina superior izquierda"
+    TEXT = tr("Jayth está usando el ratón y el teclado  ·  para detenerlo, lleva el ratón a la esquina superior izquierda")
 
     def __init__(self, ov):
         super().__init__(None)

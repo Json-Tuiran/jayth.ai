@@ -13,8 +13,9 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QStacke
 from . import osys
 from .theme import C, icon
 from .widgets import TextView, ElidedLabel
+from .i18n import tr
 
-KIND_LABEL = {"html": "Página web", "markdown": "Documento", "svg": "Dibujo", "code": "Código"}
+KIND_LABEL = {"html": tr("Página web"), "markdown": tr("Documento"), "svg": tr("Dibujo"), "code": tr("Código")}
 _WEB = [None]          # None = sin probar, False = no disponible, o la clase QWebEngineView
 
 
@@ -81,24 +82,24 @@ class CanvasPanel(QWidget):
         self.sub.setObjectName("faint")
         col.addWidget(self.sub)
         h.addLayout(col, 1)
-        self.b_prev = _tb("ui_chevron_derecha", "Versión anterior", lambda: self.go(self.idx - 1), 13)
+        self.b_prev = _tb("ui_chevron_derecha", tr("Versión anterior"), lambda: self.go(self.idx - 1), 13)
         self.b_prev.setIcon(icon("ui_chevron_derecha", C["mut"], 13).pixmap(13, 13).transformed(QTransform().rotate(180)))
-        self.b_next = _tb("ui_chevron_derecha", "Versión siguiente", lambda: self.go(self.idx + 1), 13)
+        self.b_next = _tb("ui_chevron_derecha", tr("Versión siguiente"), lambda: self.go(self.idx + 1), 13)
         self.ver = QLabel()
         self.ver.setObjectName("faint")
         for w in (self.b_prev, self.ver, self.b_next):
             h.addWidget(w)
-        self.b_view = QPushButton("Código")
+        self.b_view = QPushButton(tr("Código"))
         self.b_view.setProperty("kind", "flat")
         self.b_view.setCheckable(True)
-        self.b_view.setToolTip("Cambiar entre la vista previa y el código")
+        self.b_view.setToolTip(tr("Cambiar entre la vista previa y el código"))
         self.b_view.toggled.connect(self._toggle_source)
         h.addWidget(self.b_view)
-        h.addWidget(_tb("acc_copiar", "Copiar el contenido", self.copy))
-        h.addWidget(_tb("acc_descargar", "Guardar como…", self.save_as))
-        self.b_browser = _tb("acc_abrir_externo", "Abrir en el navegador", self.open_external)
+        h.addWidget(_tb("acc_copiar", tr("Copiar el contenido"), self.copy))
+        h.addWidget(_tb("acc_descargar", tr("Guardar como…"), self.save_as))
+        self.b_browser = _tb("acc_abrir_externo", tr("Abrir en el navegador"), self.open_external)
         h.addWidget(self.b_browser)
-        h.addWidget(_tb("ui_cerrar", "Cerrar el lienzo", self.close_panel, 13))
+        h.addWidget(_tb("ui_cerrar", tr("Cerrar el lienzo"), self.close_panel, 13))
         v.addWidget(head)
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
@@ -153,7 +154,7 @@ class CanvasPanel(QWidget):
         n = len(self.paths)
         self.title.setText(self.item["title"])
         self.sub.setText(KIND_LABEL.get(kind, kind) + (" · %s" % self.item["language"] if self.item.get("language") else ""))
-        self.ver.setText("v%d de %d" % (self.idx + 1, n))
+        self.ver.setText(tr("v%d de %d") % (self.idx + 1, n))
         for w in (self.b_prev, self.b_next, self.ver):
             w.setVisible(n > 1)
         self.b_prev.setEnabled(self.idx > 0)
@@ -194,12 +195,12 @@ class CanvasPanel(QWidget):
             box = QWidget()
             bv = QVBoxLayout(box)
             bv.setAlignment(Qt.AlignCenter)
-            msg = QLabel("La vista previa de páginas web se abre en tu navegador.")
+            msg = QLabel(tr("La vista previa de páginas web se abre en tu navegador."))
             msg.setObjectName("muted")
             msg.setAlignment(Qt.AlignCenter)
             msg.setWordWrap(True)
             bv.addWidget(msg)
-            b = QPushButton("Abrir en el navegador")
+            b = QPushButton(tr("Abrir en el navegador"))
             b.setProperty("kind", "primary")
             b.clicked.connect(lambda *_: self.open_external())
             bv.addWidget(b, 0, Qt.AlignCenter)
@@ -216,7 +217,7 @@ class CanvasPanel(QWidget):
     def copy(self):
         QGuiApplication.clipboard().setText(self.text())
         if self.main is not None:
-            self.main.toast("Copiado.", ms=1800, icon_name="ui_check", color=C["ok"])
+            self.main.toast(tr("Copiado."), ms=1800, icon_name="ui_check", color=C["ok"])
 
     def save_as(self):
         if not self.paths:
@@ -225,11 +226,11 @@ class CanvasPanel(QWidget):
         ext = os.path.splitext(src)[1]
         base = self.main.current_panel().workspace() if self.main is not None else os.path.expanduser("~")
         name = re.sub(r'[\\/:*?"<>|]+', " ", self.item["title"]).strip() or "lienzo"
-        dst, _ = QFileDialog.getSaveFileName(self, "Guardar como", os.path.join(base, name + ext), "Archivo (*%s);;Todos (*.*)" % ext)
+        dst, _ = QFileDialog.getSaveFileName(self, tr("Guardar como"), os.path.join(base, name + ext), tr("Archivo (*%s);;Todos (*.*)") % ext)
         if dst:
             shutil.copyfile(src, dst)
             if self.main is not None:
-                self.main.toast("Guardado en %s" % dst, icon_name="ui_check", color=C["ok"])
+                self.main.toast(tr("Guardado en %s") % dst, icon_name="ui_check", color=C["ok"])
 
     def open_external(self):
         if self.paths:

@@ -3,6 +3,7 @@
 """Deteccion del hardware y recomendacion de cuantizacion / motor en Windows, macOS y Linux."""
 import os, re, shutil, ctypes, platform, subprocess
 from . import osys
+from .i18n import tr
 
 GB = 1024 ** 3
 NO_WINDOW = osys.NO_WINDOW
@@ -78,9 +79,9 @@ def cpu_name():
         if m:
             return m.group(2).strip()
         m = re.search(r"Model name:\s*(.+)", _run(["lscpu"]))
-        return m.group(1).strip() if m else (platform.processor() or "CPU desconocida")
+        return m.group(1).strip() if m else (platform.processor() or tr("CPU desconocida"))
     except Exception:
-        return "CPU desconocida"
+        return tr("CPU desconocida")
 
 
 def physical_cores():
@@ -317,7 +318,7 @@ def human(n):
 
 
 def summary(hw):
-    g = ", ".join("%s (%s)" % (x["name"], human(x["vram"])) for x in hw["nvidia"]) or (", ".join(hw["gpus"]) or "sin GPU dedicada")
+    g = ", ".join("%s (%s)" % (x["name"], human(x["vram"])) for x in hw["nvidia"]) or (", ".join(hw["gpus"]) or tr("sin GPU dedicada"))
     if hw.get("unified"):
-        g += " · memoria unificada"
-    return "%s · %d núcleos · RAM %s · GPU: %s" % (hw["cpu"], hw["cores"], human(hw["ram"]), g)
+        g += " · " + tr("memoria unificada")
+    return tr("%s · %d núcleos · RAM %s · GPU: %s") % (hw["cpu"], hw["cores"], human(hw["ram"]), g)

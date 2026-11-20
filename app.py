@@ -14,7 +14,28 @@ if not os.environ.get("SSL_CERT_FILE"):
     except ImportError:
         pass
 
-from jayth.desktop import main
+
+def _updating():
+    """Si ahora mismo se instala una actualización, no se abre a medias: avisa y el instalador abre Jayth al terminar."""
+    from jayth import updater
+    if not updater.installing():
+        return False
+    try:
+        open(updater.REOPEN, "w").close()
+    except OSError:
+        pass
+    from jayth.i18n import tr
+    msg = tr("%s se está actualizando y se abrirá solo en unos segundos.") % "Jayth"
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, msg, "Jayth", 0x40)
+    else:
+        print(msg)
+    return True
+
 
 if __name__ == "__main__":
+    if "--selftest" not in sys.argv and _updating():
+        sys.exit(0)
+    from jayth.desktop import main
     main()

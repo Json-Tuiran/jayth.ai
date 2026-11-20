@@ -11,3 +11,6 @@ build/
 dist/
 *.AppImage
 *.dmg
+
+# partes de traducción ya combinadas en assets/i18n (ver tools_i18n/catalogo.py)
+tools_i18n/partes/

@@ -4,6 +4,7 @@
 familia de modelo, puntos de restauración (deshacer), procesos en segundo plano, lectura de documentos y cliente MCP."""
 import os, re, json, time, uuid, shlex, shutil, zipfile, threading, subprocess, html
 from . import paths, osys
+from .i18n import tr
 
 NO_WINDOW = osys.NO_WINDOW
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".next", ".idea", ".vscode", "target", ".mypy_cache"}
@@ -342,7 +343,7 @@ class MCPServer:
         try:
             self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, **osys.popen_kwargs())
         except OSError as e:
-            raise MCPError("No se pudo ejecutar «%s»: %s. ¿Está instalado?" % (self.command, e.strerror or e))
+            raise MCPError(tr("No se pudo ejecutar «%s»: %s. ¿Está instalado?") % (self.command, e.strerror or e))
         self._stderr = []
         threading.Thread(target=self._reader, daemon=True).start()
         threading.Thread(target=self._err_reader, daemon=True).start()
@@ -360,7 +361,7 @@ class MCPServer:
 
     def _died(self):
         tail = " | ".join(l for l in self._stderr[-4:] if l)[:400]
-        return "El conector %s se cerró%s%s" % (self.name, (" (código %s)" % self.proc.returncode) if self.proc and self.proc.poll() is not None else "",
+        return tr("El conector %s se cerró%s%s") % (self.name, (tr(" (código %s)") % self.proc.returncode) if self.proc and self.proc.poll() is not None else "",
                                                  (": " + tail) if tail else ".")
 
     def _reader(self):
@@ -396,7 +397,7 @@ class MCPServer:
                 if not self.alive():
                     raise MCPError(self._died())
                 if time.time() > end:
-                    raise MCPError("El conector %s no respondió a %s en %d s." % (self.name, method, timeout))
+                    raise MCPError(tr("El conector %s no respondió a %s en %d s.") % (self.name, method, timeout))
         finally:
             self._waiting.pop(rid, None)
         if w["msg"] is None:
@@ -443,10 +444,10 @@ class MCPHttpServer:
         except urllib.error.HTTPError as e:
             body = e.read(500).decode("utf-8", "replace")
             if e.code in (401, 403):
-                raise MCPError("El conector %s rechazó la conexión (HTTP %d): revisa la clave o el token en sus cabeceras." % (self.name, e.code))
-            raise MCPError("El conector %s respondió HTTP %d: %s" % (self.name, e.code, body[:200]))
+                raise MCPError(tr("El conector %s rechazó la conexión (HTTP %d): revisa la clave o el token en sus cabeceras.") % (self.name, e.code))
+            raise MCPError(tr("El conector %s respondió HTTP %d: %s") % (self.name, e.code, body[:200]))
         except Exception as e:
-            raise MCPError("No se pudo conectar con %s (%s): %s" % (self.name, self.url, getattr(e, "reason", e)))
+            raise MCPError(tr("No se pudo conectar con %s (%s): %s") % (self.name, self.url, getattr(e, "reason", e)))
         self.session = r.headers.get("Mcp-Session-Id") or self.session
         if obj.get("id") is None:
             return None
@@ -461,7 +462,7 @@ class MCPHttpServer:
                         continue
                     if msg.get("id") == obj["id"]:
                         return msg
-            raise MCPError("El conector %s cerró la respuesta sin contestar." % self.name)
+            raise MCPError(tr("El conector %s cerró la respuesta sin contestar.") % self.name)
         raw = r.read()
         return json.loads(raw.decode("utf-8")) if raw.strip() else {}
 

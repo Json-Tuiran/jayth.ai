@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QWidget, QLabel, QFrame, QHBoxLayout, QVBoxLayout,
 from . import core, osys
 from .theme import C, pix, icon
 from .widgets import TextView, Collapsible
+from .i18n import tr
 
 
 def animations_on():
@@ -82,29 +83,29 @@ def activity_kind(tool):
 
 # frases mientras el modelo prepara el siguiente paso (todavía sin escribir nada)
 WAIT = {
-    "start": ("Leyendo tu mensaje", "Entendiendo lo que necesitas", "Preparando la respuesta"),
-    "write": ("Repasando los cambios", "Revisando el código", "Pensando el siguiente paso"),
-    "run": ("Revisando la salida", "Comprobando el resultado", "Analizando lo que pasó"),
-    "read": ("Analizando el contenido", "Revisando lo que encontré", "Atando cabos"),
-    "web": ("Leyendo los resultados", "Comparando fuentes", "Sacando conclusiones"),
-    "look": ("Mirando la pantalla", "Observando los detalles", "Decidiendo dónde actuar"),
-    "other": ("Revisando los resultados", "Pensando el siguiente paso"),
+    "start": (tr("Leyendo tu mensaje"), tr("Entendiendo lo que necesitas"), tr("Preparando la respuesta")),
+    "write": (tr("Repasando los cambios"), tr("Revisando el código"), tr("Pensando el siguiente paso")),
+    "run": (tr("Revisando la salida"), tr("Comprobando el resultado"), tr("Analizando lo que pasó")),
+    "read": (tr("Analizando el contenido"), tr("Revisando lo que encontré"), tr("Atando cabos")),
+    "web": (tr("Leyendo los resultados"), tr("Comparando fuentes"), tr("Sacando conclusiones")),
+    "look": (tr("Mirando la pantalla"), tr("Observando los detalles"), tr("Decidiendo dónde actuar")),
+    "other": (tr("Revisando los resultados"), tr("Pensando el siguiente paso")),
 }
 WAIT_ICON = {"start": "mat_comentario", "write": "pan_editor_codigo", "run": "cod_terminal", "read": "acc_examinar",
              "web": "herr_espacio_mundo", "look": "vista_captura", "other": "ia_controlador"}
 # frases mientras razona (la primera depende de lo último que hizo)
-THINK = ("Pensando", "Razonando", "Dándole vueltas", "Atando cabos", "Evaluando opciones", "Planificando los pasos")
-THINK_FIRST = {"start": "Pensando", "write": "Repasando el código", "run": "Analizando la salida", "read": "Analizando lo que leí",
-               "web": "Sacando conclusiones", "look": "Interpretando la imagen", "other": "Pensando"}
+THINK = (tr("Pensando"), tr("Razonando"), tr("Dándole vueltas"), tr("Atando cabos"), tr("Evaluando opciones"), tr("Planificando los pasos"))
+THINK_FIRST = {"start": tr("Pensando"), "write": tr("Repasando el código"), "run": tr("Analizando la salida"), "read": tr("Analizando lo que leí"),
+               "web": tr("Sacando conclusiones"), "look": tr("Interpretando la imagen"), "other": tr("Pensando")}
 
 
 def think_phrases(kind):
-    first = THINK_FIRST.get(kind, "Pensando")
+    first = THINK_FIRST.get(kind, tr("Pensando"))
     return (first,) + tuple(p for p in THINK if p != first)
 
 
 def thought_for(seconds):
-    return "Pensó durante %s" % fmt_secs(seconds) if seconds >= 1 else "Pensó un momento"
+    return tr("Pensó durante %s") % fmt_secs(seconds) if seconds >= 1 else tr("Pensó un momento")
 
 
 # ---------------------------------------------------------------- piezas animadas
@@ -272,11 +273,11 @@ class ActivityLine(QWidget):
         self.chev.hide()
         h.addWidget(self.chev)
         h.addStretch(1)
-        self.phrases, self.t_start, self.live, self.expandable = ("Pensando",), time.time(), False, False
+        self.phrases, self.t_start, self.live, self.expandable = (tr("Pensando"),), time.time(), False, False
         self.set_open(False)
 
     def run(self, phrases, t_start, icon_name="ia_controlador", live=True):
-        self.phrases, self.t_start, self.live = tuple(phrases) or ("Pensando",), t_start, live
+        self.phrases, self.t_start, self.live = tuple(phrases) or (tr("Pensando"),), t_start, live
         self.ico.set_icon(icon_name, C["acc"] if live else C["mut"])
         self.ico.set_active(live)
         self.txt.set_color(C["mut"])
@@ -302,7 +303,7 @@ class ActivityLine(QWidget):
         self.expandable = on
         self.chev.setVisible(on)
         self.setCursor(Qt.PointingHandCursor if on else Qt.ArrowCursor)
-        self.setToolTip("Clic para ver lo que pensó" if on else "")
+        self.setToolTip(tr("Clic para ver lo que pensó") if on else "")
 
     def set_open(self, on):
         self.chev.setPixmap(pix("ui_chevron_abajo" if on else "ui_chevron_derecha", C["faint"], 10))
@@ -358,7 +359,7 @@ def host_of(w):
     return None
 
 
-def copy_text(text, msg="Copiado"):
+def copy_text(text, msg=tr("Copiado")):
     QGuiApplication.clipboard().setText(text)
     QToolTip.showText(QCursor.pos(), msg)
 
@@ -368,17 +369,17 @@ def path_menu(parent, path):
     host = host_of(parent)
     m = QMenu(parent)
     if os.path.isdir(path):
-        m.addAction(icon("act_carpeta_abierta"), "Abrir la carpeta", lambda: osys.open_path(path))
+        m.addAction(icon("act_carpeta_abierta"), tr("Abrir la carpeta"), lambda: osys.open_path(path))
     elif os.path.isfile(path):
         if host is not None and getattr(host, "can_edit", None) and host.can_edit(path):
-            m.addAction(icon("pan_editor_codigo"), "Abrir en el editor", lambda: host.open_in_editor(path))
-        m.addAction(icon("acc_abrir_externo"), "Abrir", lambda: osys.open_path(path))
-        m.addAction(icon("act_carpeta_abierta"), "Mostrar en la carpeta", lambda: osys.reveal(path))
+            m.addAction(icon("pan_editor_codigo"), tr("Abrir en el editor"), lambda: host.open_in_editor(path))
+        m.addAction(icon("acc_abrir_externo"), tr("Abrir"), lambda: osys.open_path(path))
+        m.addAction(icon("act_carpeta_abierta"), tr("Mostrar en la carpeta"), lambda: osys.reveal(path))
     else:
-        a = m.addAction(icon("est_info"), "Todavía no existe")
+        a = m.addAction(icon("est_info"), tr("Todavía no existe"))
         a.setEnabled(False)
     m.addSeparator()
-    m.addAction(icon("acc_copiar"), "Copiar la ruta", lambda: copy_text(path, "Ruta copiada"))
+    m.addAction(icon("acc_copiar"), tr("Copiar la ruta"), lambda: copy_text(path, tr("Ruta copiada")))
     m.exec(QCursor.pos())
 
 
@@ -500,7 +501,7 @@ class RichText(TextView):
             c = QTextCursor(doc)                        # botón de copiar justo detrás
             c.setPosition(end)
             c.insertText("\u2009", plain)
-            c.insertImage(self._img("acc_copiar", "jcopy:%d" % i, "Copiar la ruta"))
+            c.insertImage(self._img("acc_copiar", "jcopy:%d" % i, tr("Copiar la ruta")))
             if self._exists(p):                         # y su icono delante
                 c = QTextCursor(doc)
                 c.setPosition(start)
@@ -530,18 +531,18 @@ class RichText(TextView):
         if s.startswith(("jpath:", "jcopy:")):
             p = self._link_path(s)
             if p:
-                copy_text(p, "Ruta copiada") if s.startswith("jcopy:") else path_menu(self, p)
+                copy_text(p, tr("Ruta copiada")) if s.startswith("jcopy:") else path_menu(self, p)
             return
         super()._open_link(url)
 
     def _hover(self, url):
         s = url.toString() if url is not None else ""
         if s.startswith("jcopy:"):
-            QToolTip.showText(QCursor.pos(), "Copiar la ruta", self)
+            QToolTip.showText(QCursor.pos(), tr("Copiar la ruta"), self)
         elif s.startswith("jpath:"):
             p = self._link_path(s)
             if p:
-                QToolTip.showText(QCursor.pos(), p + "\nClic: abrir, mostrar en la carpeta o copiar", self)
+                QToolTip.showText(QCursor.pos(), tr("%s\nClic: abrir, mostrar en la carpeta o copiar") % p, self)
 
     def createMimeDataFromSelection(self):
         """Al copiar texto seleccionado, sin los iconos ni los espacios finos de las rutas."""
@@ -681,8 +682,8 @@ class CodeBlock(QFrame):
         self.lang_lbl.setObjectName("codeLang")
         hh.addWidget(self.lang_lbl)
         hh.addStretch(1)
-        self.b_run = _small_btn("cod_terminal", "Ejecutar", "Ejecutar en una terminal", self._run)
-        self.b_copy = _small_btn("acc_copiar", "Copiar", "Copiar el código", self._copy)
+        self.b_run = _small_btn("cod_terminal", tr("Ejecutar"), tr("Ejecutar en una terminal"), self._run)
+        self.b_copy = _small_btn("acc_copiar", tr("Copiar"), tr("Copiar el código"), self._copy)
         hh.addWidget(self.b_run)
         hh.addWidget(self.b_copy)
         v.addWidget(head)
@@ -698,7 +699,7 @@ class CodeBlock(QFrame):
         ext = LANG_EXT.get(lang, "")
         if lang != self.lang:
             self.lang = lang
-            self.lang_lbl.setText(LANG_NAME.get(ext) or (lang if lang else "Código"))
+            self.lang_lbl.setText(LANG_NAME.get(ext) or (lang if lang else tr("Código")))
             self.b_run.setVisible(lang in SHELL_LANGS)
         if ext != self.ext:
             self.ext = ext
@@ -714,12 +715,12 @@ class CodeBlock(QFrame):
         return "```%s\n%s\n```" % (self.lang or "", self.code or "")
 
     def _copy(self):
-        copy_text(self.code or "", "Código copiado")
-        _flash(self.b_copy, "Copiado")
+        copy_text(self.code or "", tr("Código copiado"))
+        _flash(self.b_copy, tr("Copiado"))
 
     def _run(self):
         if _run(self, clean_cmd(self.code or "")):
-            _flash(self.b_run, "Enviado")
+            _flash(self.b_run, tr("Enviado"))
 
 
 class CommandRow(QFrame):
@@ -741,8 +742,8 @@ class CommandRow(QFrame):
         self.view.setStyleSheet("QTextBrowser#textView { background: transparent; border: none; padding: 0; margin: 0; "
                                 "font-family: '%s'; font-size: 9.5pt; color: %s; }" % (osys.mono_font(), C["tx"]))
         h.addWidget(self.view, 1, Qt.AlignVCenter)
-        self.b_copy = _small_btn("acc_copiar", "", "Copiar el comando", self._copy)
-        self.b_run = _small_btn("hub_lanzar", "Ejecutar", "Ejecutar en una terminal", self._run)
+        self.b_copy = _small_btn("acc_copiar", "", tr("Copiar el comando"), self._copy)
+        self.b_run = _small_btn("hub_lanzar", tr("Ejecutar"), tr("Ejecutar en una terminal"), self._run)
         h.addWidget(self.b_copy, 0, Qt.AlignVCenter)
         h.addWidget(self.b_run, 0, Qt.AlignVCenter)
 
@@ -756,12 +757,12 @@ class CommandRow(QFrame):
         return "```\n%s\n```" % (self.cmd or "")
 
     def _copy(self):
-        copy_text(self.cmd or "", "Comando copiado")
+        copy_text(self.cmd or "", tr("Comando copiado"))
         _flash(self.b_copy, "")
 
     def _run(self):
         if _run(self, self.cmd or ""):
-            _flash(self.b_run, "Enviado")
+            _flash(self.b_run, tr("Enviado"))
 
 
 class MessageView(QWidget):

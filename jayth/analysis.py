@@ -10,6 +10,7 @@ Las figuras que el script deja abiertas (o muestra con plt.show()) se guardan co
 """
 import os, sys, json, time, shutil, subprocess, tempfile, threading
 from . import paths, osys
+from .i18n import tr
 
 HOME = os.path.join(paths.RUNTIME_DIR, "analysis")
 PACKAGES = ["pandas", "matplotlib", "openpyxl", "numpy"]
@@ -111,7 +112,7 @@ def make_env(HOME, PACKAGES, progress=None, stop=None):
         extract_archive(dl, tmp)
         found = next((os.path.join(r, f) for r, _, fs in os.walk(tmp) for f in fs if f == osys.exe("uv")), None)
         if not found:
-            raise RuntimeError("El paquete de uv no contiene %s" % osys.exe("uv"))
+            raise RuntimeError(tr("El paquete de uv no contiene %s") % osys.exe("uv"))
         shutil.move(found, uv)
         shutil.rmtree(tmp, ignore_errors=True)
         shutil.rmtree(os.path.join(HOME, "downloads"), ignore_errors=True)
@@ -122,17 +123,17 @@ def make_env(HOME, PACKAGES, progress=None, stop=None):
     def run(cmd, label):
         r = subprocess.run(cmd, capture_output=True, env=env, **osys.popen_kwargs())
         if r.returncode != 0:
-            raise RuntimeError("%s falló: %s" % (label, (r.stdout + r.stderr).decode("utf-8", "replace")[-600:]))
+            raise RuntimeError(tr("%s falló: %s") % (label, (r.stdout + r.stderr).decode("utf-8", "replace")[-600:]))
     py = os.path.join(HOME, "env", "Scripts", "python.exe") if osys.WIN else os.path.join(HOME, "env", "bin", "python")
     if not os.path.isfile(py):
         venv = [uv, "venv", "--python", "3.12", os.path.join(HOME, "env")]
         try:
-            run(venv, "Preparar Python")
+            run(venv, tr("Preparar Python"))
         except RuntimeError:                     # mismo tropiezo de uv en Windows que en el convertidor: el segundo intento funciona
             shutil.rmtree(os.path.join(HOME, "env"), ignore_errors=True)
-            run(venv, "Preparar Python")
+            run(venv, tr("Preparar Python"))
     pr(0, 0, "instalando " + ", ".join(PACKAGES))
-    run([uv, "pip", "install", "--python", py] + list(PACKAGES), "Instalar " + ", ".join(PACKAGES))
+    run([uv, "pip", "install", "--python", py] + list(PACKAGES), tr("Instalar %s") % ", ".join(PACKAGES))
     try:
         run([uv, "cache", "clean"], "limpiar")
     except RuntimeError:

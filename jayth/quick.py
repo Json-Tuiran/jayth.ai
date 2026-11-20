@@ -8,6 +8,7 @@ from PySide6.QtGui import QPixmap, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QToolButton
 from . import APP_NAME, theme
 from .theme import C, icon
+from .i18n import tr
 
 WIN = sys.platform == "win32"
 DEFAULT_HOTKEY = "Ctrl+Alt+J"
@@ -62,7 +63,7 @@ class GlobalHotkey(QObject):
             return False
         parsed = parse_hotkey(self.combo)
         if not parsed:
-            self.error = "Atajo no válido: usa una combinación como Ctrl+Alt+Space."
+            self.error = tr("Atajo no válido: usa una combinación como Ctrl+Alt+Space.")
             return False
         if WIN:
             ready, res = threading.Event(), {}
@@ -84,7 +85,7 @@ class GlobalHotkey(QObject):
             ready.wait(3)
             if not res.get("ok"):
                 self._tid = None
-                self.error = "El atajo %s ya lo usa otro programa. Elige otro en Ajustes." % self.combo
+                self.error = tr("El atajo %s ya lo usa otro programa. Elige otro en Ajustes.") % self.combo
                 return False
             return True
         try:
@@ -93,7 +94,7 @@ class GlobalHotkey(QObject):
             self._listener.start()
             return True
         except Exception as e:
-            self.error = "No se pudo activar el atajo global: %s" % e
+            self.error = tr("No se pudo activar el atajo global: %s") % e
             return False
 
     def active(self):
@@ -117,7 +118,7 @@ class QuickWindow(QWidget):
     def __init__(self):
         super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setWindowTitle("%s · pregunta rápida" % APP_NAME)
+        self.setWindowTitle(tr("%s · pregunta rápida") % APP_NAME)
         self.shot = None
         outer = QVBoxLayout(self)
         outer.setContentsMargins(14, 14, 14, 14)
@@ -134,7 +135,7 @@ class QuickWindow(QWidget):
         row.addWidget(logo)
         self.edit = QLineEdit()
         self.edit.setObjectName("quickEdit")
-        self.edit.setPlaceholderText("Pregunta a %s…" % APP_NAME)
+        self.edit.setPlaceholderText(tr("Pregunta a %s…") % APP_NAME)
         self.edit.setFrame(False)
         self.edit.returnPressed.connect(self._send)
         self.edit.installEventFilter(self)
@@ -144,10 +145,10 @@ class QuickWindow(QWidget):
         self.b_shot.setCheckable(True)
         self.b_shot.setIcon(icon("vista_captura", C["mut"], 15))
         self.b_shot.setIconSize(QSize(15, 15))
-        self.b_shot.setText("Con captura")
+        self.b_shot.setText(tr("Con captura"))
         self.b_shot.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.b_shot.setToolTip("Adjunta una imagen de lo que había en tu pantalla al abrir esta ventana (Ctrl+S)")
-        self.b_shot.setAccessibleName("Con captura")
+        self.b_shot.setToolTip(tr("Adjunta una imagen de lo que había en tu pantalla al abrir esta ventana (Ctrl+S)"))
+        self.b_shot.setAccessibleName(tr("Con captura"))
         self.b_shot.toggled.connect(self._sync)
         row.addWidget(self.b_shot)
         v.addLayout(row)
@@ -155,7 +156,7 @@ class QuickWindow(QWidget):
         self.thumb.setObjectName("preview")
         self.thumb.hide()
         v.addWidget(self.thumb, 0, Qt.AlignLeft)
-        self.hint = QLabel("Enter para enviar · Esc para cerrar")
+        self.hint = QLabel(tr("Enter para enviar · Esc para cerrar"))
         self.hint.setObjectName("faint")
         v.addWidget(self.hint)
         self.setFixedWidth(680)
@@ -217,7 +218,7 @@ class QuickWindow(QWidget):
         if not text and not shot:
             return
         self.hide()
-        self.submit.emit(text or "¿Qué ves en esta captura de mi pantalla?", shot)
+        self.submit.emit(text or tr("¿Qué ves en esta captura de mi pantalla?"), shot)
 
     def eventFilter(self, obj, ev):
         if obj is self.edit and ev.type() == QEvent.KeyPress:

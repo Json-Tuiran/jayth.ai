@@ -7,13 +7,15 @@ from collections import Counter
 from . import tools as T
 from . import harness as H
 from . import osys
+from . import i18n
+from .i18n import tr
 
 MODES = {
-    "readonly": "Solo lectura: no puede escribir, ejecutar ni usar la red.",
-    "plan": "Planificar: investiga y propone un plan; no cambia nada hasta que lo apruebes.",
-    "ask": "Preguntar: lee solo; todo lo demás pide tu aprobación.",
-    "edits": "Editar archivos: escribe libremente; ejecutar, red y control piden aprobación.",
-    "auto": "Automático: hace todo sin preguntar (salvo acciones peligrosas).",
+    "readonly": tr("Solo lectura: no puede escribir, ejecutar ni usar la red."),
+    "plan": tr("Planificar: investiga y propone un plan; no cambia nada hasta que lo apruebes."),
+    "ask": tr("Preguntar: lee solo; todo lo demás pide tu aprobación."),
+    "edits": tr("Editar archivos: escribe libremente; ejecutar, red y control piden aprobación."),
+    "auto": tr("Automático: hace todo sin preguntar (salvo acciones peligrosas)."),
 }
 
 WORKFLOW = """Eres Jayth, un agente que trabaja en el ordenador del usuario (%(os)s, terminal %(shell)s) con herramientas reales. Hoy es %(date)s.
@@ -84,6 +86,9 @@ def system_prompt(cfg):
     lang = {"es": "español", "en": "inglés", "pt": "portugués", "fr": "francés", "de": "alemán", "it": "italiano"}.get(cfg.get("response_language"))
     if lang:
         p += "\nResponde siempre en %s." % lang
+    elif (cfg.get("response_language") or "auto") == "auto" and i18n.LANG != "es":   # ante la duda, el idioma de su interfaz
+        p += "\nSi no está claro en qué idioma escribe el usuario, responde en %s (el idioma de su interfaz)." % (
+            {"en": "inglés", "pt": "portugués de Brasil"}.get(i18n.LANG, "inglés"))
     if not cfg.get("web_access", True):
         p += "\nNo tienes acceso a internet en esta sesión."
     if cfg.get("mode") == "plan":
@@ -423,7 +428,7 @@ class Run:
         if self.cfg.get("llm_mode") == "external":
             payload["model"] = self.cfg.get("external_model") or "local"
             payload.pop("cache_prompt")
-        self.emit({"t": "info", "text": "La conversación es larga: estoy resumiendo la parte antigua para liberar memoria del modelo…"})
+        self.emit({"t": "info", "text": tr("La conversación es larga: estoy resumiendo la parte antigua para liberar memoria del modelo…")})
         try:
             res = llm_stream(base, key, payload, self.holder, lambda k, t: None)
             summary = res["content"].strip()
@@ -629,18 +634,18 @@ class Run:
                     self._flush()
                     if self.stop.is_set():
                         break
-                    self.emit({"t": "error", "text": "No puedo conectar con el modelo en %s (%s). %s" % (
-                        base, e, "Comprueba que ese servidor esté encendido." if external else "Enciéndelo con el botón «Encender modelo».")})
+                    self.emit({"t": "error", "text": tr("No puedo conectar con el modelo en %s (%s). %s") % (
+                        base, e, tr("Comprueba que ese servidor esté encendido.") if external else tr("Enciéndelo con el botón «Encender modelo»."))})
                     break
                 except LLMError as e:
                     self._flush()
-                    self.emit({"t": "error", "text": "Error del modelo: %s" % e})
+                    self.emit({"t": "error", "text": tr("Error del modelo: %s") % e})
                     break
                 except Exception as e:
                     self._flush()
                     if self.stop.is_set():
                         break
-                    self.emit({"t": "error", "text": "Conexión con el modelo interrumpida: %s: %s" % (type(e).__name__, e)})
+                    self.emit({"t": "error", "text": tr("Conexión con el modelo interrumpida: %s: %s") % (type(e).__name__, e)})
                     break
                 self._flush()
                 if self.stop.is_set():
@@ -669,7 +674,7 @@ class Run:
                 self.emit({"t": "assistant_end", "text": text_out})
                 if not calls:
                     if not text_out.strip():
-                        self.emit({"t": "info", "text": "El modelo no escribió respuesta" + (" (se alcanzó el límite de tokens; sube «longitud máxima» o desactiva el pensamiento)." if res["finish"] == "length" else ".")})
+                        self.emit({"t": "info", "text": tr("El modelo no escribió respuesta") + (tr(" (se alcanzó el límite de tokens; sube «longitud máxima» o desactiva el pensamiento).") if res["finish"] == "length" else ".")})
                     break
                 images = []
                 for call in calls:
@@ -695,12 +700,12 @@ class Run:
                 if self.stop.is_set():
                     break
             else:
-                self.emit({"t": "info", "text": "Se alcanzó el máximo de %s pasos. Escribe «continúa» si quieres seguir." % self.cfg["max_steps"]})
+                self.emit({"t": "info", "text": tr("Se alcanzó el máximo de %s pasos. Escribe «continúa» si quieres seguir.") % self.cfg["max_steps"]})
         except T.Abort as e:
             self.emit({"t": "error", "text": str(e)})
             self.stop.set()
         except Exception as e:
-            self.emit({"t": "error", "text": "Error interno: %s: %s" % (type(e).__name__, e)})
+            self.emit({"t": "error", "text": tr("Error interno: %s: %s") % (type(e).__name__, e)})
         finally:
             self._flush()
             self._repair()

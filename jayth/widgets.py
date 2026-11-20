@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QTextBrowser, QFrame, QLayout, QSizePolicy, QHBox
                                QToolButton, QPushButton, QStyledItemDelegate, QScrollArea, QDialog)
 from PySide6.QtCore import QObject, QEvent
 from .theme import C, pix
+from .i18n import tr
 
 
 # ---------------------------------------------------------------- ventanas que caben en la pantalla
@@ -351,7 +352,7 @@ class Collapsible(QWidget):
                 self.fade.raise_()
             if fold:
                 self.btn.setIcon(_icon("ui_chevron_abajo" if not self.expanded else "ui_chevron_arriba", C["tx"], 12))
-                self.btn.setToolTip("Mostrar todo" if not self.expanded else "Mostrar menos")
+                self.btn.setToolTip(tr("Mostrar todo") if not self.expanded else tr("Mostrar menos"))
                 self.btn.move((w - self.btn.width()) // 2, h - self.btn.height() - 2)
                 self.btn.show()
                 self.btn.raise_()

@@ -17,12 +17,13 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextB
                                QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy)
 from . import paths, osys
 from .theme import C, icon
+from .i18n import tr
 
 TEXT_PREVIEW = {".md", ".markdown", ".html", ".htm", ".svg", ".csv"}      # texto con vista previa (y «Código» para editarlo)
 DOCS = {".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pdf"}             # solo lectura
-DOC_KIND = {".docx": "Documento de Word", ".docm": "Documento de Word", ".xlsx": "Hoja de Excel", ".xlsm": "Hoja de Excel",
-            ".pptx": "Presentación de PowerPoint", ".pdf": "Documento PDF", ".md": "Markdown", ".markdown": "Markdown",
-            ".html": "Página web", ".htm": "Página web", ".svg": "Dibujo SVG", ".csv": "Tabla CSV"}
+DOC_KIND = {".docx": tr("Documento de Word"), ".docm": tr("Documento de Word"), ".xlsx": tr("Hoja de Excel"), ".xlsm": tr("Hoja de Excel"),
+            ".pptx": tr("Presentación de PowerPoint"), ".pdf": tr("Documento PDF"), ".md": "Markdown", ".markdown": "Markdown",
+            ".html": tr("Página web"), ".htm": tr("Página web"), ".svg": tr("Dibujo SVG"), ".csv": tr("Tabla CSV")}
 MAX_DOC = 80 * 1024 * 1024
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -93,7 +94,7 @@ def docx_html(path):
     with zipfile.ZipFile(path) as z:
         doc = _xml(z, "word/document.xml")
         if doc is None:
-            raise ValueError("no es un documento de Word válido")
+            raise ValueError(tr("no es un documento de Word válido"))
         rels = _rels(z, "word/document.xml")
         styles, style_num, based = {}, {}, {}
         st = _xml(z, "word/styles.xml")
@@ -226,9 +227,9 @@ def docx_html(path):
 
         def table(t):
             rows = []
-            for tr in t.findall(W + "tr"):
+            for fila in t.findall(W + "tr"):
                 cells = []
-                for tc in tr.findall(W + "tc"):
+                for tc in fila.findall(W + "tc"):
                     span = tc.find(W + "tcPr/" + W + "gridSpan")
                     inner = "".join(para(p) for p in tc.findall(W + "p")) or "&nbsp;"
                     inner = re.sub(r"^<p[^>]*>|</p>$", "", inner) if inner.count("<p") == 1 else inner
@@ -246,7 +247,7 @@ def docx_html(path):
             elif el.tag == W + "sdt":
                 for p in el.iter(W + "p"):
                     out.append(para(p))
-        return "".join(out) or "<p><i>(documento vacío)</i></p>"
+        return "".join(out) or tr("<p><i>(documento vacío)</i></p>")
 
 
 # ---------------------------------------------------------------- Excel
@@ -272,7 +273,7 @@ def xlsx_html(path, max_rows=1500, max_cols=40):
     with zipfile.ZipFile(path) as z:
         wb = _xml(z, "xl/workbook.xml")
         if wb is None:
-            raise ValueError("no es una hoja de Excel válida")
+            raise ValueError(tr("no es una hoja de Excel válida"))
         rels = _rels(z, "xl/workbook.xml")
         shared = []
         ss = _xml(z, "xl/sharedStrings.xml")
@@ -292,12 +293,12 @@ def xlsx_html(path, max_rows=1500, max_cols=40):
         out = []
         sheets = wb.find(S + "sheets")
         for sh in (sheets.findall(S + "sheet") if sheets is not None else []):
-            name = sh.get("name") or "Hoja"
+            name = sh.get("name") or tr("Hoja")
             target = rels.get(sh.get(R + "id"))
             root = _xml(z, target) if target else None
             out.append("<h2>%s</h2>" % esc(name))
             if root is None:
-                out.append("<p><i>(hoja sin datos)</i></p>")
+                out.append(tr("<p><i>(hoja sin datos)</i></p>"))
                 continue
             grid, ncols, more = [], 0, 0
             for row in root.iter(S + "row"):
@@ -320,7 +321,7 @@ def xlsx_html(path, max_rows=1500, max_cols=40):
                     elif t == "inlineStr":
                         v = "".join(x.text or "" for x in c.iter(S + "t"))
                     elif t == "b":
-                        v = "VERDADERO" if v == "1" else "FALSO"
+                        v = tr("VERDADERO") if v == "1" else tr("FALSO")
                     elif t in (None, "n") and v is not None:
                         if c.get("s") in dates:
                             try:
@@ -336,7 +337,7 @@ def xlsx_html(path, max_rows=1500, max_cols=40):
             while grid and not grid[-1]:
                 grid.pop()
             if not grid:
-                out.append("<p><i>(hoja vacía)</i></p>")
+                out.append(tr("<p><i>(hoja vacía)</i></p>"))
                 continue
             rows = []
             for r, vals in enumerate(grid):
@@ -348,8 +349,8 @@ def xlsx_html(path, max_rows=1500, max_cols=40):
                 rows.append("<tr>%s</tr>" % "".join(cells))
             out.append('<table border="1" cellspacing="0" cellpadding="5">%s</table>' % "".join(rows))
             if more:
-                out.append("<p><i>… y %d filas más (ábrela con su programa para verla entera).</i></p>" % more)
-        return "".join(out) or "<p><i>(libro vacío)</i></p>"
+                out.append(tr("<p><i>… y %d filas más (ábrela con su programa para verla entera).</i></p>") % more)
+        return "".join(out) or tr("<p><i>(libro vacío)</i></p>")
 
 
 # ---------------------------------------------------------------- PowerPoint
@@ -358,7 +359,7 @@ def pptx_html(path):
     with zipfile.ZipFile(path) as z:
         pres = _xml(z, "ppt/presentation.xml")
         if pres is None:
-            raise ValueError("no es una presentación de PowerPoint válida")
+            raise ValueError(tr("no es una presentación de PowerPoint válida"))
         prels = _rels(z, "ppt/presentation.xml")
         ids = pres.find(P + "sldIdLst")
         order = [prels.get(s.get(R + "id")) for s in (ids.findall(P + "sldId") if ids is not None else [])]
@@ -396,14 +397,14 @@ def pptx_html(path):
                         parts.append('<p><img src="%s" width="420"></p>' % url)
                 elif el.tag == A + "tbl":
                     rows = []
-                    for tr in el.findall(A + "tr"):
+                    for fila in el.findall(A + "tr"):
                         rows.append("<tr>%s</tr>" % "".join("<td>%s</td>" % ("<br>".join(esc("".join(t.text or "" for t in p.iter(A + "t")))
-                                                                                      for p in tc.iter(A + "p")) or "&nbsp;") for tc in tr.findall(A + "tc")))
+                                                                                      for p in tc.iter(A + "p")) or "&nbsp;") for tc in fila.findall(A + "tc")))
                     parts.append('<table border="1" cellspacing="0" cellpadding="5">%s</table>' % "".join(rows))
             out.append('<table width="100%%" cellspacing="0" cellpadding="18" border="1" style="margin-bottom:14px"><tr><td>'
-                       '<p style="color:%s; font-size:9pt">Diapositiva %d</p>%s%s</td></tr></table><p>&nbsp;</p>' % (
-                           C["faint"], n, ("<h2>%s</h2>" % title) if title else "", "".join(parts) or "<p><i>(sin texto)</i></p>"))
-        return "".join(out) or "<p><i>(presentación vacía)</i></p>"
+                       '<p style="color:%s; font-size:9pt">%s</p>%s%s</td></tr></table><p>&nbsp;</p>' % (
+                           C["faint"], tr("Diapositiva %d") % n, ("<h2>%s</h2>" % title) if title else "", "".join(parts) or tr("<p><i>(sin texto)</i></p>")))
+        return "".join(out) or tr("<p><i>(presentación vacía)</i></p>")
 
 
 # ---------------------------------------------------------------- piezas de la interfaz
@@ -518,8 +519,8 @@ class ImageView(QWidget):
         self.zoom_lbl = QLabel()
         self.zoom_lbl.setObjectName("faint")
         h.addWidget(self.zoom_lbl)
-        for text, tip, cb in (("−", "Alejar (Ctrl + rueda)", lambda: self.zoom_by(1 / 1.25)), ("+", "Acercar (Ctrl + rueda)", lambda: self.zoom_by(1.25)),
-                              ("Ajustar", "Ajustar a la ventana", self.fit), ("100 %", "Tamaño real", lambda: self.set_zoom(1.0))):
+        for text, tip, cb in (("−", tr("Alejar (Ctrl + rueda)"), lambda: self.zoom_by(1 / 1.25)), ("+", tr("Acercar (Ctrl + rueda)"), lambda: self.zoom_by(1.25)),
+                              (tr("Ajustar"), tr("Ajustar a la ventana"), self.fit), ("100 %", tr("Tamaño real"), lambda: self.set_zoom(1.0))):
             b = QToolButton()
             b.setText(text)
             b.setToolTip(tip)
@@ -543,7 +544,7 @@ class ImageView(QWidget):
 
     def set_pixmap(self, pm, info=""):
         self.src, self.svg = pm, None
-        self.info.setText(info or ("%d × %d" % (pm.width(), pm.height()) if not pm.isNull() else "No se pudo leer la imagen."))
+        self.info.setText(info or ("%d × %d" % (pm.width(), pm.height()) if not pm.isNull() else tr("No se pudo leer la imagen.")))
         self._render()
 
     def set_svg(self, data, info=""):
@@ -551,13 +552,13 @@ class ImageView(QWidget):
         r = QSvgRenderer(QByteArray(data))
         if not r.isValid():
             self.src, self.svg = QPixmap(), None
-            self.info.setText("El SVG tiene errores y no se puede dibujar (míralo en «Código»).")
+            self.info.setText(tr("El SVG tiene errores y no se puede dibujar (míralo en «Código»)."))
             self.lbl.clear()
             return
         self.svg = r
         s = r.defaultSize()
         self.src = QPixmap(max(1, s.width()), max(1, s.height()))
-        self.info.setText(info or "%d × %d (vectorial)" % (s.width(), s.height()))
+        self.info.setText(info or tr("%d × %d (vectorial)") % (s.width(), s.height()))
         self._render()
 
     def fit(self):
@@ -679,6 +680,6 @@ def document_html(path):
     if ext == ".pdf":
         from . import harness
         txt = harness.read_document(path, limit=400000)
-        return "".join("<h3>%s</h3>" % esc(b[4:-4]) if b.startswith("--- ") else "<p>%s</p>" % esc(b).replace("\n", "<br>")
+        return "".join("<h3>%s</h3>" % esc(tr("Página %s") % b[11:-4]) if b.startswith("--- ") else "<p>%s</p>" % esc(b).replace("\n", "<br>")
                        for b in re.split(r"(--- Página \d+ ---)", txt) if b.strip())
-    raise ValueError("formato no soportado")
+    raise ValueError(tr("formato no soportado"))

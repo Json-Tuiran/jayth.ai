@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QWidget, QPlainTextEdit, QTextEdit, QTabWidget, Q
 from . import core, paths, osys
 from .theme import C, icon, pix
 from .wizard import btn, lbl, browse_row
+from .i18n import tr
 
 MONO = QFont(osys.mono_font(), 10)
 MONO.setStyleHint(QFont.Monospace)
@@ -243,9 +244,9 @@ class FileTab(QWidget):
             return
         if ext in DV.DOCS:                                   # documento de Office o PDF: solo lectura
             self.kind = "doc"
-            v.addWidget(self._bar("%s · solo lectura" % DV.DOC_KIND.get(ext, "Documento"), toggle=False))
+            v.addWidget(self._bar(tr("%s · solo lectura") % DV.DOC_KIND.get(ext, tr("Documento")), toggle=False))
             if size > DV.MAX_DOC:
-                v.addWidget(self._note("Es muy grande para verlo aquí (%s). Ábrelo con su programa." % _human(size)), 1)
+                v.addWidget(self._note(tr("Es muy grande para verlo aquí (%s). Ábrelo con su programa.") % _human(size)), 1)
                 return
             self.preview = DV.web_preview() if ext == ".pdf" else None
             if self.preview is not None:                 # si el visor de PDF no puede con él, se muestra su texto
@@ -260,7 +261,7 @@ class FileTab(QWidget):
             head = f.read(4096)
         if b"\0" in head or size > 3_000_000:
             self.kind = "none"
-            v.addWidget(self._note("No se muestra: %s (%s)." % ("archivo binario" if b"\0" in head else "archivo demasiado grande", _human(size))), 1)
+            v.addWidget(self._note(tr("No se muestra: %s (%s).") % (tr("archivo binario") if b"\0" in head else tr("archivo demasiado grande"), _human(size))), 1)
             return
         self.editor = CodeEditor()
         self.hl = Highlighter(self.editor.document(), ext if ext in LANG else os.path.basename(path).lower())
@@ -305,10 +306,10 @@ class FileTab(QWidget):
         b = QToolButton()
         b.setObjectName("chip")
         b.setIcon(icon("acc_abrir_externo", C["mut"], 13))
-        b.setText("Abrir con su programa")
+        b.setText(tr("Abrir con su programa"))
         b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         b.setCursor(Qt.PointingHandCursor)
-        b.setToolTip("Abrirlo con el programa del sistema (Word, Excel, el visor de imágenes…)")
+        b.setToolTip(tr("Abrirlo con el programa del sistema (Word, Excel, el visor de imágenes…)"))
         b.clicked.connect(lambda: osys.open_path(self.path))
         return b
 
@@ -335,15 +336,15 @@ class FileTab(QWidget):
             sh = QHBoxLayout(seg)
             sh.setContentsMargins(3, 3, 3, 3)
             sh.setSpacing(2)
-            self.b_prev, self.b_code = QPushButton("Vista previa"), QPushButton("Código")
+            self.b_prev, self.b_code = QPushButton(tr("Vista previa")), QPushButton(tr("Código"))
             for b, m in ((self.b_prev, "preview"), (self.b_code, "code")):
                 b.setObjectName("segBtn")
                 b.setCheckable(True)
                 b.setCursor(Qt.PointingHandCursor)
                 b.clicked.connect(lambda _=False, m=m: self.set_mode(m))
                 sh.addWidget(b)
-            self.b_prev.setToolTip("Ver el archivo ya formateado")
-            self.b_code.setToolTip("Ver y editar el texto del archivo")
+            self.b_prev.setToolTip(tr("Ver el archivo ya formateado"))
+            self.b_code.setToolTip(tr("Ver y editar el texto del archivo"))
             h.addWidget(seg)
         h.addWidget(self._open_btn())
         return bar
@@ -400,7 +401,7 @@ class FileTab(QWidget):
                     p.show_text(text)
             self._stale = False
         except Exception as e:                                # documento dañado o formato raro: se dice, no se rompe
-            msg = "No pude mostrar la vista previa: %s" % e
+            msg = tr("No pude mostrar la vista previa: %s") % e
             if isinstance(p, DV.Reader):
                 p.show_html("<p><i>%s</i></p>" % DV.esc(msg))
             elif hasattr(p, "info"):
@@ -458,9 +459,9 @@ class EditorTabs(QTabWidget):
         self.setDocumentMode(True)
         self.watch = QFileSystemWatcher(self)
         self.watch.fileChanged.connect(self._external)
-        self.welcome = lbl("Abre un archivo del árbol o pide al agente que cree uno.\nLos cambios del agente aparecen aquí al instante.", "muted")
+        self.welcome = lbl(tr("Abre un archivo del árbol o pide al agente que cree uno.\nLos cambios del agente aparecen aquí al instante."), "muted")
         self.welcome.setAlignment(Qt.AlignCenter)
-        self.addTab(self.welcome, "Inicio")
+        self.addTab(self.welcome, tr("Inicio"))
         QShortcut(QKeySequence("Ctrl+S"), self, activated=self.save_current)
         QShortcut(QKeySequence("Ctrl+W"), self, activated=lambda: self.close_tab(self.currentIndex()))
         # ajustar las líneas largas al ancho (se recuerda); Alt+Z como en otros editores
@@ -469,12 +470,12 @@ class EditorTabs(QTabWidget):
         self.b_wrap.setCheckable(True)
         self.b_wrap.setChecked(self.wrap)
         self.b_wrap.setIcon(icon("uij_alinear_izq", C["mut"], 14))
-        self.b_wrap.setText("Ajustar líneas")
+        self.b_wrap.setText(tr("Ajustar líneas"))
         self.b_wrap.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.b_wrap.setObjectName("chip")
         self.b_wrap.setCursor(Qt.PointingHandCursor)
-        self.b_wrap.setToolTip("Ajustar las líneas largas al ancho del editor, sin desplazarse de lado  ·  Alt+Z\n"
-                               "(sin ajustar: barra de abajo o Mayús + rueda para ver el final de cada línea)")
+        self.b_wrap.setToolTip(tr("Ajustar las líneas largas al ancho del editor, sin desplazarse de lado  ·  Alt+Z\n"
+                                  "(sin ajustar: barra de abajo o Mayús + rueda para ver el final de cada línea)"))
         self.b_wrap.toggled.connect(self.set_wrap)
         self.setCornerWidget(self.b_wrap, Qt.TopRightCorner)
         QShortcut(QKeySequence("Alt+Z"), self, activated=self.b_wrap.toggle)
@@ -503,7 +504,7 @@ class EditorTabs(QTabWidget):
         try:
             t = FileTab(path)
         except OSError as e:
-            QMessageBox.warning(self, "No se pudo abrir", str(e))
+            QMessageBox.warning(self, tr("No se pudo abrir"), str(e))
             return
         if self.indexOf(self.welcome) >= 0:
             self.removeTab(self.indexOf(self.welcome))
@@ -515,7 +516,7 @@ class EditorTabs(QTabWidget):
         x = QToolButton()
         x.setIcon(icon("ui_cerrar", C["faint"], 9))
         x.setFixedSize(18, 18)
-        x.setToolTip("Cerrar (Ctrl+W)")
+        x.setToolTip(tr("Cerrar (Ctrl+W)"))
         x.clicked.connect(lambda _=False, t=t: self.close_tab(self.indexOf(t)))
         self.tabBar().setTabButton(i, self.tabBar().ButtonPosition.RightSide, x)
         t.changed.connect(lambda t=t: self._title(t))
@@ -535,7 +536,7 @@ class EditorTabs(QTabWidget):
                 if not os.path.exists(path):
                     continue
                 if t.dirty:
-                    if QMessageBox.question(self, "Archivo modificado", "«%s» cambió fuera del editor (¿el agente?). ¿Recargarlo y perder tus cambios sin guardar?"
+                    if QMessageBox.question(self, tr("Archivo modificado"), tr("«%s» cambió fuera del editor (¿el agente?). ¿Recargarlo y perder tus cambios sin guardar?")
                                             % os.path.basename(path)) != QMessageBox.StandardButton.Yes:
                         continue
                 t.reload()
@@ -558,7 +559,7 @@ class EditorTabs(QTabWidget):
         if not isinstance(w, FileTab):
             return
         if w.dirty:
-            r = QMessageBox.question(self, "Cambios sin guardar", "¿Guardar «%s» antes de cerrarlo?" % os.path.basename(w.path),
+            r = QMessageBox.question(self, tr("Cambios sin guardar"), tr("¿Guardar «%s» antes de cerrarlo?") % os.path.basename(w.path),
                                      QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
             if r == QMessageBox.StandardButton.Cancel:
                 return
@@ -568,7 +569,7 @@ class EditorTabs(QTabWidget):
         self.removeTab(i)
         w.deleteLater()
         if not self.tabs():
-            self.addTab(self.welcome, "Inicio")
+            self.addTab(self.welcome, tr("Inicio"))
 
     def close_all(self):
         for t in self.tabs():
@@ -604,7 +605,7 @@ class Terminal(QWidget):
         t.setObjectName("faint")
         bar.addWidget(t)
         bar.addStretch(1)
-        for ico, tip, cb in (("trans_detener", "Detener el comando (reinicia la sesión)", self.restart), ("acc_eliminar", "Limpiar", lambda: self.out.clear())):
+        for ico, tip, cb in (("trans_detener", tr("Detener el comando (reinicia la sesión)"), self.restart), ("acc_eliminar", tr("Limpiar"), lambda: self.out.clear())):
             b = QToolButton()
             b.setIcon(icon(ico, C["mut"], 14))
             b.setToolTip(tip)
@@ -625,7 +626,7 @@ class Terminal(QWidget):
         row.addWidget(self.prompt)
         self.inp = QLineEdit()
         self.inp.setFont(MONO)
-        self.inp.setPlaceholderText("Escribe un comando y pulsa Enter (↑ ↓ historial)")
+        self.inp.setPlaceholderText(tr("Escribe un comando y pulsa Enter (↑ ↓ historial)"))
         self.inp.setStyleSheet("QLineEdit { background: transparent; border: none; font-family: %s; font-size: 9.5pt; }" % MONO_CSS)
         self.inp.returnPressed.connect(self.run_input)
         self.inp.installEventFilter(self)
@@ -679,7 +680,7 @@ class Terminal(QWidget):
             self.proc = None
 
     def restart(self):
-        self.out.appendPlainText("^C  (sesión reiniciada)")
+        self.out.appendPlainText(tr("^C  (sesión reiniciada)"))
         self.start(self.cwd)
 
     def _send(self, line):
@@ -745,18 +746,18 @@ class Terminal(QWidget):
 class ProjectDialog(QDialog):
     def __init__(self, parent=None, proj=None):
         super().__init__(parent)
-        self.setWindowTitle("Editar proyecto" if proj else "Nuevo proyecto")
+        self.setWindowTitle(tr("Editar proyecto") if proj else tr("Nuevo proyecto"))
         self.resize(560, 360)
         self.proj = proj
         v = QVBoxLayout(self)
-        v.addWidget(lbl("Editar proyecto" if proj else "Nuevo proyecto", "h1"))
-        v.addWidget(lbl("El agente trabajará dentro de la carpeta del proyecto y seguirá sus instrucciones.", "muted"))
+        v.addWidget(lbl(tr("Editar proyecto") if proj else tr("Nuevo proyecto"), "h1"))
+        v.addWidget(lbl(tr("El agente trabajará dentro de la carpeta del proyecto y seguirá sus instrucciones."), "muted"))
         f = QFormLayout()
         self.name = QLineEdit(proj["name"] if proj else "")
-        self.name.setPlaceholderText("Mi app de notas")
-        f.addRow("Nombre:", self.name)
-        self.r_new = QRadioButton("Crear una carpeta nueva en Documentos\\Jayth\\Proyectos")
-        self.r_old = QRadioButton("Usar una carpeta existente")
+        self.name.setPlaceholderText(tr("Mi app de notas"))
+        f.addRow(tr("Nombre:"), self.name)
+        self.r_new = QRadioButton(tr("Crear una carpeta nueva en Documentos\\Jayth\\Proyectos"))
+        self.r_old = QRadioButton(tr("Usar una carpeta existente"))
         g = QButtonGroup(self)
         g.addButton(self.r_new)
         g.addButton(self.r_old)
@@ -768,16 +769,16 @@ class ProjectDialog(QDialog):
             self.r_new.setChecked(True)
         f.addRow(self.r_new)
         f.addRow(self.r_old)
-        f.addRow("Carpeta:", browse_row(self.path, folder=True, parent=self))
+        f.addRow(tr("Carpeta:"), browse_row(self.path, folder=True, parent=self))
         self.instr = QPlainTextEdit(proj.get("instructions", "") if proj else "")
-        self.instr.setPlaceholderText("Ej.: Es una app web en React con TypeScript. Usa pnpm. Escribe pruebas para cada función nueva.")
+        self.instr.setPlaceholderText(tr("Ej.: Es una app web en React con TypeScript. Usa pnpm. Escribe pruebas para cada función nueva."))
         self.instr.setFixedHeight(90)
-        f.addRow("Instrucciones:", self.instr)
+        f.addRow(tr("Instrucciones:"), self.instr)
         v.addLayout(f)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.Ok).setText("Guardar" if proj else "Crear proyecto")
+        bb.button(QDialogButtonBox.Ok).setText(tr("Guardar") if proj else tr("Crear proyecto"))
         bb.button(QDialogButtonBox.Ok).setProperty("kind", "primary")
-        bb.button(QDialogButtonBox.Cancel).setText("Cancelar")
+        bb.button(QDialogButtonBox.Cancel).setText(tr("Cancelar"))
         bb.accepted.connect(self._ok)
         bb.rejected.connect(self.reject)
         v.addWidget(bb)
@@ -789,12 +790,12 @@ class ProjectDialog(QDialog):
         name = self.name.text().strip()
         if self.r_new.isChecked():
             if not name:
-                return QMessageBox.warning(self, "Falta el nombre", "Escribe un nombre para el proyecto.")
+                return QMessageBox.warning(self, tr("Falta el nombre"), tr("Escribe un nombre para el proyecto."))
             path = os.path.join(paths.WORKSPACE_DEFAULT, "Proyectos", re.sub(r'[<>:"/\\|?*]+', "_", name))
         else:
             path = self.path.text().strip()
             if not path:
-                return QMessageBox.warning(self, "Falta la carpeta", "Elige la carpeta del proyecto.")
+                return QMessageBox.warning(self, tr("Falta la carpeta"), tr("Elige la carpeta del proyecto."))
             name = name or os.path.basename(os.path.normpath(path))
         if self.proj:
             core.SET.update_project(self.proj["id"], name=name, path=os.path.normpath(path), instructions=self.instr.toPlainText())

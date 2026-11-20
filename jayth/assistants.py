@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineE
                                QTabWidget, QFileDialog, QMessageBox, QCheckBox)
 from . import APP_NAME, core, paths
 from .wizard import btn, lbl
+from .i18n import tr
 
 SKILLS_DIR = os.path.join(paths.DATA, "skills")
 KNOWLEDGE_LIMIT = 12000          # caracteres de archivos de referencia que van directos a las instrucciones
@@ -111,7 +112,7 @@ def save_skill(name, description, body, old_id=None):
     folder = os.path.join(SKILLS_DIR, sid)
     if old_id and old_id != sid and os.path.isdir(os.path.join(SKILLS_DIR, old_id)):
         if os.path.exists(folder):
-            raise ValueError("Ya existe una habilidad con ese nombre.")
+            raise ValueError(tr("Ya existe una habilidad con ese nombre."))
         os.rename(os.path.join(SKILLS_DIR, old_id), folder)
     os.makedirs(folder, exist_ok=True)
     with open(os.path.join(folder, "SKILL.md"), "w", encoding="utf-8") as f:
@@ -123,11 +124,11 @@ def import_skill(src):
     """Importa una carpeta con SKILL.md (o un .md suelto). Devuelve el id."""
     if os.path.isdir(src):
         if not os.path.isfile(os.path.join(src, "SKILL.md")):
-            raise ValueError("Esa carpeta no tiene un archivo SKILL.md.")
+            raise ValueError(tr("Esa carpeta no tiene un archivo SKILL.md."))
         sid = re.sub(r"[^\w-]+", "-", os.path.basename(src.rstrip("\\/")).lower()) or "habilidad"
         dst = os.path.join(SKILLS_DIR, sid)
         if os.path.exists(dst):
-            raise ValueError("Ya existe una habilidad llamada «%s»." % sid)
+            raise ValueError(tr("Ya existe una habilidad llamada «%s».") % sid)
         shutil.copytree(src, dst)
         return sid
     s = _parse(src) or {}
@@ -155,19 +156,19 @@ EXAMPLES = [
 class AssistantsDialog(QDialog):
     def __init__(self, parent=None, tab=0):
         super().__init__(parent)
-        self.setWindowTitle("Asistentes y habilidades")
+        self.setWindowTitle(tr("Asistentes y habilidades"))
         self.resize(900, 640)
         v = QVBoxLayout(self)
         v.setContentsMargins(14, 12, 14, 12)
         self.tabs = QTabWidget()
         v.addWidget(self.tabs, 1)
-        self.tabs.addTab(self._assistants_tab(), "Asistentes")
-        self.tabs.addTab(self._skills_tab(), "Habilidades")
+        self.tabs.addTab(self._assistants_tab(), tr("Asistentes"))
+        self.tabs.addTab(self._skills_tab(), tr("Habilidades"))
         self.tabs.setCurrentIndex(tab)
         foot = QHBoxLayout()
         self.msg = lbl("", "faint")
         foot.addWidget(self.msg, 1)
-        foot.addWidget(btn("Cerrar", "primary", self.accept))
+        foot.addWidget(btn(tr("Cerrar"), "primary", self.accept))
         v.addLayout(foot)
 
     # ---- asistentes
@@ -180,34 +181,34 @@ class AssistantsDialog(QDialog):
         self.a_list.setFixedWidth(230)
         self.a_list.currentRowChanged.connect(self._a_pick)
         left.addWidget(self.a_list, 1)
-        left.addWidget(btn("Nuevo asistente", None, self._a_new, "acc_anadir"))
+        left.addWidget(btn(tr("Nuevo asistente"), None, self._a_new, "acc_anadir"))
         h.addLayout(left)
         f = QVBoxLayout()
-        f.addWidget(lbl("Un asistente es %s con unas instrucciones y unos archivos de referencia fijos: un corrector de estilo, "
-                        "un experto en tu producto, un tutor… Se elige al empezar una conversación." % APP_NAME, "faint"))
-        f.addWidget(QLabel("Nombre"))
+        f.addWidget(lbl(tr("Un asistente es %s con unas instrucciones y unos archivos de referencia fijos: un corrector de estilo, "
+                        "un experto en tu producto, un tutor… Se elige al empezar una conversación.") % APP_NAME, "faint"))
+        f.addWidget(QLabel(tr("Nombre")))
         self.a_name = QLineEdit()
-        self.a_name.setPlaceholderText("Ej.: Corrector de estilo")
+        self.a_name.setPlaceholderText(tr("Ej.: Corrector de estilo"))
         f.addWidget(self.a_name)
-        f.addWidget(QLabel("Instrucciones"))
+        f.addWidget(QLabel(tr("Instrucciones")))
         self.a_inst = QPlainTextEdit()
-        self.a_inst.setPlaceholderText("Qué hace, cómo responde, qué debe evitar…")
+        self.a_inst.setPlaceholderText(tr("Qué hace, cómo responde, qué debe evitar…"))
         f.addWidget(self.a_inst, 1)
         row = QHBoxLayout()
-        row.addWidget(QLabel("Archivos de referencia"), 1)
-        row.addWidget(btn("Añadir archivos…", None, self._a_files, "acc_nuevo"))
+        row.addWidget(QLabel(tr("Archivos de referencia")), 1)
+        row.addWidget(btn(tr("Añadir archivos…"), None, self._a_files, "acc_nuevo"))
         f.addLayout(row)
         self.a_files = QListWidget()
         self.a_files.setObjectName("history")
         self.a_files.setFixedHeight(96)
-        self.a_files.setToolTip("Doble clic para quitar un archivo")
+        self.a_files.setToolTip(tr("Doble clic para quitar un archivo"))
         self.a_files.itemDoubleClicked.connect(lambda it: self.a_files.takeItem(self.a_files.row(it)))
         f.addWidget(self.a_files)
         row = QHBoxLayout()
-        self.a_del = btn("Quitar asistente", "danger", self._a_delete)
+        self.a_del = btn(tr("Quitar asistente"), "danger", self._a_delete)
         row.addWidget(self.a_del)
         row.addStretch(1)
-        row.addWidget(btn("Guardar asistente", "primary", self._a_save))
+        row.addWidget(btn(tr("Guardar asistente"), "primary", self._a_save))
         f.addLayout(row)
         h.addLayout(f, 1)
         self.a_cur = None
@@ -243,7 +244,7 @@ class AssistantsDialog(QDialog):
         self.a_del.show()
 
     def _a_add_file(self, fp):
-        it = QListWidgetItem(os.path.basename(fp) + ("" if os.path.isfile(fp) else "  (no encontrado)"))
+        it = QListWidgetItem(("%s" if os.path.isfile(fp) else tr("%s  (no encontrado)")) % os.path.basename(fp))
         it.setData(Qt.UserRole, fp)
         it.setToolTip(fp)
         self.a_files.addItem(it)
@@ -260,8 +261,8 @@ class AssistantsDialog(QDialog):
         self.a_name.setFocus()
 
     def _a_files(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Archivos de referencia", core.SET.snapshot()["workspace"],
-                                                "Documentos y texto (*.txt *.md *.pdf *.docx *.xlsx *.pptx *.csv *.json *.html *.py);;Todos (*.*)")
+        files, _ = QFileDialog.getOpenFileNames(self, tr("Archivos de referencia"), core.SET.snapshot()["workspace"],
+                                                tr("Documentos y texto (*.txt *.md *.pdf *.docx *.xlsx *.pptx *.csv *.json *.html *.py);;Todos (*.*)"))
         have = {self.a_files.item(i).data(Qt.UserRole) for i in range(self.a_files.count())}
         for fp in files:
             if os.path.normpath(fp) not in have:
@@ -270,7 +271,7 @@ class AssistantsDialog(QDialog):
     def _a_save(self):
         name = self.a_name.text().strip()
         if not name:
-            return self.msg.setText("Ponle un nombre al asistente.")
+            return self.msg.setText(tr("Ponle un nombre al asistente."))
         items = all_assistants()
         a = next((x for x in items if x["id"] == self.a_cur), None)
         if a is None:
@@ -282,11 +283,11 @@ class AssistantsDialog(QDialog):
         self.a_cur = a["id"]
         self._a_reload(a["id"])
         self.a_del.show()
-        self.msg.setText("✓ Asistente guardado. Elígelo con el botón + de la barra del mensaje.")
+        self.msg.setText(tr("✓ Asistente guardado. Elígelo con el botón + de la barra del mensaje."))
 
     def _a_delete(self):
         a = get(self.a_cur)
-        if a and QMessageBox.question(self, "Quitar asistente", "¿Quitar el asistente «%s»?" % a["name"]) == QMessageBox.StandardButton.Yes:
+        if a and QMessageBox.question(self, tr("Quitar asistente"), tr("¿Quitar el asistente «%s»?") % a["name"]) == QMessageBox.StandardButton.Yes:
             core.SET.update({"assistants": [x for x in all_assistants() if x["id"] != a["id"]]})
             self._a_reload()
 
@@ -300,34 +301,34 @@ class AssistantsDialog(QDialog):
         self.s_list.setFixedWidth(230)
         self.s_list.currentRowChanged.connect(self._s_pick)
         left.addWidget(self.s_list, 1)
-        left.addWidget(btn("Nueva habilidad", None, self._s_new, "acc_anadir"))
-        left.addWidget(btn("Importar…", None, self._s_import, "acc_descargar"))
-        self.s_ex = btn("Añadir ejemplos", None, self._s_examples)
+        left.addWidget(btn(tr("Nueva habilidad"), None, self._s_new, "acc_anadir"))
+        left.addWidget(btn(tr("Importar…"), None, self._s_import, "acc_descargar"))
+        self.s_ex = btn(tr("Añadir ejemplos"), None, self._s_examples)
         left.addWidget(self.s_ex)
         h.addLayout(left)
         f = QVBoxLayout()
-        f.addWidget(lbl("Una habilidad son instrucciones para un tipo de tarea (cómo hacer un informe, cómo revisar código…). "
-                        "El agente ve la lista y carga la que encaje con lo que le pidas, sin gastar memoria con las demás.", "faint"))
-        f.addWidget(QLabel("Nombre"))
+        f.addWidget(lbl(tr("Una habilidad son instrucciones para un tipo de tarea (cómo hacer un informe, cómo revisar código…). "
+                        "El agente ve la lista y carga la que encaje con lo que le pidas, sin gastar memoria con las demás."), "faint"))
+        f.addWidget(QLabel(tr("Nombre")))
         self.s_name = QLineEdit()
         f.addWidget(self.s_name)
-        f.addWidget(QLabel("Cuándo usarla (el agente decide con esta descripción)"))
+        f.addWidget(QLabel(tr("Cuándo usarla (el agente decide con esta descripción)")))
         self.s_desc = QLineEdit()
-        self.s_desc.setPlaceholderText("Ej.: Redactar informes ejecutivos y entregarlos en Word")
+        self.s_desc.setPlaceholderText(tr("Ej.: Redactar informes ejecutivos y entregarlos en Word"))
         f.addWidget(self.s_desc)
-        f.addWidget(QLabel("Instrucciones"))
+        f.addWidget(QLabel(tr("Instrucciones")))
         self.s_body = QPlainTextEdit()
         f.addWidget(self.s_body, 1)
         row = QHBoxLayout()
-        self.s_on = QCheckBox("Activa")
+        self.s_on = QCheckBox(tr("Activa"))
         self.s_on.setChecked(True)
         row.addWidget(self.s_on)
-        self.s_del = btn("Quitar", "danger", self._s_delete)
+        self.s_del = btn(tr("Quitar"), "danger", self._s_delete)
         row.addWidget(self.s_del)
-        self.s_open = btn("Abrir carpeta", None, lambda: self.s_cur and __import__("jayth.osys", fromlist=["x"]).open_path(os.path.join(SKILLS_DIR, self.s_cur)))
+        self.s_open = btn(tr("Abrir carpeta"), None, lambda: self.s_cur and __import__("jayth.osys", fromlist=["x"]).open_path(os.path.join(SKILLS_DIR, self.s_cur)))
         row.addWidget(self.s_open)
         row.addStretch(1)
-        row.addWidget(btn("Guardar habilidad", "primary", self._s_save))
+        row.addWidget(btn(tr("Guardar habilidad"), "primary", self._s_save))
         f.addLayout(row)
         h.addLayout(f, 1)
         self.s_cur = None
@@ -339,7 +340,7 @@ class AssistantsDialog(QDialog):
         self.s_list.blockSignals(True)
         self.s_list.clear()
         for s in all_skills():
-            it = QListWidgetItem(s["name"] + ("  (apagada)" if s["id"] in off else ""))
+            it = QListWidgetItem((tr("%s  (apagada)") if s["id"] in off else "%s") % s["name"])
             it.setData(Qt.UserRole, s["id"])
             it.setToolTip(s["description"])
             self.s_list.addItem(it)
@@ -381,7 +382,7 @@ class AssistantsDialog(QDialog):
     def _s_save(self):
         name = self.s_name.text().strip()
         if not name or not self.s_body.toPlainText().strip():
-            return self.msg.setText("La habilidad necesita un nombre y unas instrucciones.")
+            return self.msg.setText(tr("La habilidad necesita un nombre y unas instrucciones."))
         try:
             sid = save_skill(name, self.s_desc.text(), self.s_body.toPlainText(), self.s_cur)
         except ValueError as e:
@@ -394,20 +395,20 @@ class AssistantsDialog(QDialog):
         self._s_reload(sid)
         self.s_del.show()
         self.s_open.show()
-        self.msg.setText("✓ Habilidad guardada.")
+        self.msg.setText(tr("✓ Habilidad guardada."))
 
     def _s_delete(self):
-        if self.s_cur and QMessageBox.question(self, "Quitar habilidad", "¿Quitar esta habilidad y su carpeta?") == QMessageBox.StandardButton.Yes:
+        if self.s_cur and QMessageBox.question(self, tr("Quitar habilidad"), tr("¿Quitar esta habilidad y su carpeta?")) == QMessageBox.StandardButton.Yes:
             shutil.rmtree(os.path.join(SKILLS_DIR, self.s_cur), ignore_errors=True)
             self._s_reload()
 
     def _s_import(self):
-        d = QFileDialog.getExistingDirectory(self, "Carpeta de la habilidad (con SKILL.md)", os.path.expanduser("~"))
+        d = QFileDialog.getExistingDirectory(self, tr("Carpeta de la habilidad (con SKILL.md)"), os.path.expanduser("~"))
         if not d:
             return
         try:
             self._s_reload(import_skill(d))
-            self.msg.setText("✓ Habilidad importada.")
+            self.msg.setText(tr("✓ Habilidad importada."))
         except (ValueError, OSError) as e:
             self.msg.setText("✗ %s" % e)
 
@@ -416,4 +417,4 @@ class AssistantsDialog(QDialog):
             if not any(s["name"] == name for s in all_skills()):
                 save_skill(name, desc, body)
         self._s_reload()
-        self.msg.setText("✓ Ejemplos añadidos: edítalos a tu gusto.")
+        self.msg.setText(tr("✓ Ejemplos añadidos: edítalos a tu gusto."))

@@ -11,7 +11,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                                QListWidget, QListWidgetItem, QScrollArea, QFrame, QPlainTextEdit, QFileDialog, QMessageBox, QMenu,
                                QSystemTrayIcon, QSizePolicy, QToolButton, QInputDialog, QLineEdit, QStackedWidget, QSplitter,
                                QGraphicsOpacityEffect, QAbstractButton, QComboBox, QLayout)
-from . import APP_NAME, core, paths, osys, agent as A, tools as T
+from . import APP_NAME, core, paths, osys, i18n, agent as A, tools as T
+from .i18n import tr
 if osys.WIN:
     from ctypes import wintypes
 from . import theme, panels
@@ -27,7 +28,7 @@ from . import overlay as OV
 
 MODE_LABEL = {k: v.split(":")[0] for k, v in A.MODES.items()}
 CODE_NAME = APP_NAME + " Code"
-SHOW_IN = "Mostrar en el Explorador" if osys.WIN else ("Mostrar en el Finder" if osys.MAC else "Abrir la carpeta")
+SHOW_IN = tr("Mostrar en el Explorador") if osys.WIN else (tr("Mostrar en el Finder") if osys.MAC else tr("Abrir la carpeta"))
 
 
 # ---------------------------------------------------------------- utilidades de interfaz
@@ -220,7 +221,7 @@ class Toast(QFrame):
             b = btn(action, "primary")
             b.clicked.connect(lambda: (on_action(), self.close_()))
             h.addWidget(b, 0, Qt.AlignVCenter)
-        h.addWidget(tbtn("ui_cerrar", "Cerrar", self.close_, size=11), 0, Qt.AlignTop)
+        h.addWidget(tbtn("ui_cerrar", tr("Cerrar"), self.close_, size=11), 0, Qt.AlignTop)
         self.adjustSize()
         self.eff = QGraphicsOpacityEffect(self)
         self.setGraphicsEffect(self.eff)
@@ -266,7 +267,7 @@ class ImageLabel(QLabel):
         self._scaled_w = -1
         self._rescale(max_w)
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("Clic para abrir a tamaño completo")
+        self.setToolTip(tr("Clic para abrir a tamaño completo"))
 
     def _rescale(self, avail):
         if self.src.isNull():
@@ -303,9 +304,12 @@ def note(text, error=False):
 
 
 GROUP_ROLE = Qt.UserRole + 1
+# nombre interno del grupo (se guarda en «folded» de los ajustes) -> texto que se muestra
+GROUP_NAMES = {"Hoy": tr("Hoy"), "Ayer": tr("Ayer"), "Últimos 7 días": tr("Últimos 7 días"),
+               "Últimos 30 días": tr("Últimos 30 días"), "Anteriores": tr("Anteriores")}
 
 
-def fill_history(lst, sessions, current, query="", empty_text="Tus conversaciones aparecerán aquí", folded=()):
+def fill_history(lst, sessions, current, query="", empty_text=tr("Tus conversaciones aparecerán aquí"), folded=()):
     """Rellena una lista con conversaciones agrupadas por fecha (Hoy, Ayer, …). Los grupos en 'folded' salen plegados
     (clic en la cabecera del grupo para plegar o desplegar). Al buscar se muestran todos."""
     lst.blockSignals(True)
@@ -320,10 +324,11 @@ def fill_history(lst, sessions, current, query="", empty_text="Tus conversacione
         groups[-1][1].append(s)
     for grp, items in groups:
         shut = grp in folded and not query and not any(s.id == current for s in items)
-        h = QListWidgetItem(("▸  %s  ·  %d" % (grp, len(items))) if shut else ("▾  " + grp))
+        shown = GROUP_NAMES.get(grp, grp)
+        h = QListWidgetItem(("▸  %s  ·  %d" % (shown, len(items))) if shut else ("▾  " + shown))
         h.setFlags(Qt.ItemIsEnabled)
         h.setData(GROUP_ROLE, grp)
-        h.setToolTip("Clic para desplegar" if shut else "Clic para plegar")
+        h.setToolTip(tr("Clic para desplegar") if shut else tr("Clic para plegar"))
         h.setForeground(QGuiApplication.palette().placeholderText())
         f = h.font()
         f.setPointSizeF(8.5)
@@ -334,7 +339,7 @@ def fill_history(lst, sessions, current, query="", empty_text="Tus conversacione
         for s in items:
             _history_item(lst, s, current)
     if not sessions:
-        e = QListWidgetItem("Sin resultados" if query else empty_text)
+        e = QListWidgetItem(tr("Sin resultados") if query else empty_text)
         e.setFlags(Qt.NoItemFlags)
         e.setForeground(QGuiApplication.palette().placeholderText())
         lst.addItem(e)
@@ -370,75 +375,75 @@ def _q(s, n=56):
 
 
 STEP = {  # herramienta: (infinitivo, pasado, objeto)
-    "read_file": ("leer", "Leyó", lambda a: _b(a.get("path"))),
-    "write_file": ("escribir", "Escribió", lambda a: _b(a.get("path"))),
-    "create_document": ("crear el documento", "Creó el documento", lambda a: _b(a.get("path"))),
-    "run_python": ("analizar con Python", "Analizó con Python", lambda a: ""),
-    "show_canvas": ("mostrar en el lienzo", "Mostró en el lienzo", lambda a: "«%s»" % _q(a.get("title"), 50)),
-    "edit_file": ("editar", "Editó", lambda a: _b(a.get("path"))),
-    "list_dir": ("listar", "Listó", lambda a: _b(a.get("path")) or "la carpeta de trabajo"),
-    "search_files": ("buscar", "Buscó", lambda a: "«%s»" % _q(a.get("pattern") or a.get("glob") or "*", 40)),
-    "run_command": ("ejecutar", "Ejecutó", lambda a: _q(a.get("command", "").splitlines()[0] if a.get("command") else "")),
-    "open_target": ("abrir", "Abrió", lambda a: _b(a.get("target"))),
-    "wait": ("esperar", "Esperó", lambda a: "%s s" % a.get("seconds")),
-    "web_fetch": ("leer", "Leyó", lambda a: _q(str(a.get("url", "")).split("//")[-1], 48)),
-    "web_search": ("buscar en la web", "Buscó en la web", lambda a: "«%s»" % _q(a.get("query"), 44)),
-    "download_file": ("descargar", "Descargó", lambda a: _b(str(a.get("url", "")).split("?")[0])),
-    "screenshot": ("capturar la pantalla", "Capturó la pantalla", lambda a: ""),
-    "click": ("hacer clic", "Hizo clic", lambda a: "en (%s, %s)" % (a.get("x"), a.get("y"))),
-    "move_mouse": ("mover el ratón", "Movió el ratón", lambda a: "a (%s, %s)" % (a.get("x"), a.get("y"))),
-    "scroll": ("desplazar", "Desplazó", lambda a: str(a.get("amount"))),
-    "type_text": ("escribir", "Escribió", lambda a: "«%s»" % _q(a.get("text"), 40)),
-    "press_keys": ("pulsar", "Pulsó", lambda a: str(a.get("keys", ""))),
-    "list_windows": ("listar las ventanas", "Listó las ventanas", lambda a: ""),
-    "focus_window": ("activar la ventana", "Activó la ventana", lambda a: "«%s»" % _q(a.get("title"), 40)),
-    "multi_edit": ("editar", "Editó", lambda a: "%s (%s)" % (_b(a.get("path")), _n(len(a.get("edits") or []), "cambio", "cambios"))),
-    "move_path": ("mover", "Movió", lambda a: "%s → %s" % (_b(a.get("source")), _b(a.get("dest")))),
-    "delete_path": ("enviar a la papelera", "Envió a la papelera", lambda a: _b(a.get("path"))),
-    "command_output": ("revisar la salida de", "Revisó la salida de", lambda a: str(a.get("id"))),
-    "stop_command": ("detener", "Detuvo", lambda a: str(a.get("id"))),
-    "read_document": ("leer el documento", "Leyó el documento", lambda a: _b(a.get("path"))),
-    "view_image": ("ver la imagen", "Vio la imagen", lambda a: _b(a.get("path"))),
-    "remember": ("recordar", "Recordó", lambda a: "«%s»" % _q(a.get("fact"), 50)),
-    "forget": ("olvidar", "Olvidó", lambda a: "«%s»" % _q(a.get("text"), 50)),
-    "schedule_task": ("programar la tarea", "Programó la tarea", lambda a: "«%s»" % _q(a.get("name"), 50)),
-    "list_tasks": ("ver las tareas programadas", "Consultó las tareas programadas", lambda a: ""),
-    "cancel_task": ("quitar la tarea", "Quitó la tarea", lambda a: "«%s»" % _q(a.get("task"), 50)),
-    "use_skill": ("usar la habilidad", "Usó la habilidad", lambda a: "«%s»" % _q(a.get("name"), 50)),
-    "ui_elements": ("leer la interfaz de", "Leyó la interfaz de", lambda a: "«%s»" % _q(a.get("window"), 40)),
-    "click_element": ("pulsar", "Pulsó", lambda a: ("«%s»" % _q(a.get("name"), 40)) if a.get("name") else "el elemento %s" % a.get("index")),
-    "drag": ("arrastrar", "Arrastró", lambda a: "de (%s, %s) a (%s, %s)" % (a.get("x1"), a.get("y1"), a.get("x2"), a.get("y2"))),
-    "browser_open": ("abrir", "Abrió", lambda a: _q(str(a.get("url", "")).split("//")[-1], 48)),
-    "browser_read": ("leer la página", "Leyó la página", lambda a: ""),
-    "browser_click": ("pulsar", "Pulsó", lambda a: ("«%s»" % _q(a.get("text"), 40)) if a.get("text") else "el elemento %s" % a.get("index")),
-    "browser_type": ("escribir", "Escribió", lambda a: "«%s»" % _q(a.get("text"), 40)),
-    "browser_screenshot": ("capturar la página", "Capturó la página", lambda a: ""),
+    "read_file": (tr("leer"), tr("Leyó"), lambda a: _b(a.get("path"))),
+    "write_file": (tr("escribir"), tr("Escribió"), lambda a: _b(a.get("path"))),
+    "create_document": (tr("crear el documento"), tr("Creó el documento"), lambda a: _b(a.get("path"))),
+    "run_python": (tr("analizar con Python"), tr("Analizó con Python"), lambda a: ""),
+    "show_canvas": (tr("mostrar en el lienzo"), tr("Mostró en el lienzo"), lambda a: tr("«%s»") % _q(a.get("title"), 50)),
+    "edit_file": (tr("editar"), tr("Editó"), lambda a: _b(a.get("path"))),
+    "list_dir": (tr("listar"), tr("Listó"), lambda a: _b(a.get("path")) or tr("la carpeta de trabajo")),
+    "search_files": (tr("buscar"), tr("Buscó"), lambda a: tr("«%s»") % _q(a.get("pattern") or a.get("glob") or "*", 40)),
+    "run_command": (tr("ejecutar"), tr("Ejecutó"), lambda a: _q(a.get("command", "").splitlines()[0] if a.get("command") else "")),
+    "open_target": (tr("abrir"), tr("Abrió"), lambda a: _b(a.get("target"))),
+    "wait": (tr("esperar"), tr("Esperó"), lambda a: "%s s" % a.get("seconds")),
+    "web_fetch": (tr("leer"), tr("Leyó"), lambda a: _q(str(a.get("url", "")).split("//")[-1], 48)),
+    "web_search": (tr("buscar en la web"), tr("Buscó en la web"), lambda a: tr("«%s»") % _q(a.get("query"), 44)),
+    "download_file": (tr("descargar"), tr("Descargó"), lambda a: _b(str(a.get("url", "")).split("?")[0])),
+    "screenshot": (tr("capturar la pantalla"), tr("Capturó la pantalla"), lambda a: ""),
+    "click": (tr("hacer clic"), tr("Hizo clic"), lambda a: tr("en (%s, %s)") % (a.get("x"), a.get("y"))),
+    "move_mouse": (tr("mover el ratón"), tr("Movió el ratón"), lambda a: tr("a (%s, %s)") % (a.get("x"), a.get("y"))),
+    "scroll": (tr("desplazar"), tr("Desplazó"), lambda a: str(a.get("amount"))),
+    "type_text": (tr("escribir"), tr("Escribió"), lambda a: tr("«%s»") % _q(a.get("text"), 40)),
+    "press_keys": (tr("pulsar"), tr("Pulsó"), lambda a: str(a.get("keys", ""))),
+    "list_windows": (tr("listar las ventanas"), tr("Listó las ventanas"), lambda a: ""),
+    "focus_window": (tr("activar la ventana"), tr("Activó la ventana"), lambda a: tr("«%s»") % _q(a.get("title"), 40)),
+    "multi_edit": (tr("editar"), tr("Editó"), lambda a: "%s (%s)" % (_b(a.get("path")), _n(len(a.get("edits") or []), tr("cambio"), tr("cambios")))),
+    "move_path": (tr("mover"), tr("Movió"), lambda a: "%s → %s" % (_b(a.get("source")), _b(a.get("dest")))),
+    "delete_path": (tr("enviar a la papelera"), tr("Envió a la papelera"), lambda a: _b(a.get("path"))),
+    "command_output": (tr("revisar la salida de"), tr("Revisó la salida de"), lambda a: str(a.get("id"))),
+    "stop_command": (tr("detener"), tr("Detuvo"), lambda a: str(a.get("id"))),
+    "read_document": (tr("leer el documento"), tr("Leyó el documento"), lambda a: _b(a.get("path"))),
+    "view_image": (tr("ver la imagen"), tr("Vio la imagen"), lambda a: _b(a.get("path"))),
+    "remember": (tr("recordar"), tr("Recordó"), lambda a: tr("«%s»") % _q(a.get("fact"), 50)),
+    "forget": (tr("olvidar"), tr("Olvidó"), lambda a: tr("«%s»") % _q(a.get("text"), 50)),
+    "schedule_task": (tr("programar la tarea"), tr("Programó la tarea"), lambda a: tr("«%s»") % _q(a.get("name"), 50)),
+    "list_tasks": (tr("ver las tareas programadas"), tr("Consultó las tareas programadas"), lambda a: ""),
+    "cancel_task": (tr("quitar la tarea"), tr("Quitó la tarea"), lambda a: tr("«%s»") % _q(a.get("task"), 50)),
+    "use_skill": (tr("usar la habilidad"), tr("Usó la habilidad"), lambda a: tr("«%s»") % _q(a.get("name"), 50)),
+    "ui_elements": (tr("leer la interfaz de"), tr("Leyó la interfaz de"), lambda a: tr("«%s»") % _q(a.get("window"), 40)),
+    "click_element": (tr("pulsar"), tr("Pulsó"), lambda a: (tr("«%s»") % _q(a.get("name"), 40)) if a.get("name") else tr("el elemento %s") % a.get("index")),
+    "drag": (tr("arrastrar"), tr("Arrastró"), lambda a: tr("de (%s, %s) a (%s, %s)") % (a.get("x1"), a.get("y1"), a.get("x2"), a.get("y2"))),
+    "browser_open": (tr("abrir"), tr("Abrió"), lambda a: _q(str(a.get("url", "")).split("//")[-1], 48)),
+    "browser_read": (tr("leer la página"), tr("Leyó la página"), lambda a: ""),
+    "browser_click": (tr("pulsar"), tr("Pulsó"), lambda a: (tr("«%s»") % _q(a.get("text"), 40)) if a.get("text") else tr("el elemento %s") % a.get("index")),
+    "browser_type": (tr("escribir"), tr("Escribió"), lambda a: tr("«%s»") % _q(a.get("text"), 40)),
+    "browser_screenshot": (tr("capturar la página"), tr("Capturó la página"), lambda a: ""),
 }
-BROWSER_NAV = {"back": ("volver atrás", "Volvió atrás", "Volviendo atrás…"), "forward": ("ir adelante", "Fue adelante", "Yendo adelante…"),
-               "reload": ("recargar la página", "Recargó la página", "Recargando la página…"),
-               "down": ("bajar por la página", "Bajó por la página", "Bajando por la página…"),
-               "up": ("subir por la página", "Subió por la página", "Subiendo por la página…"),
-               "top": ("ir al principio de la página", "Fue al principio de la página", "Yendo al principio…"),
-               "bottom": ("ir al final de la página", "Fue al final de la página", "Yendo al final…")}
-WINDOW_ACT = {"maximize": ("maximizar", "Maximizó", "Maximizando"), "minimize": ("minimizar", "Minimizó", "Minimizando"),
-              "restore": ("restaurar", "Restauró", "Restaurando"), "close": ("cerrar", "Cerró", "Cerrando"), "move": ("mover", "Movió", "Moviendo"),
-              "resize": ("cambiar el tamaño de", "Cambió el tamaño de", "Cambiando el tamaño de")}
+BROWSER_NAV = {"back": (tr("volver atrás"), tr("Volvió atrás"), tr("Volviendo atrás…")), "forward": (tr("ir adelante"), tr("Fue adelante"), tr("Yendo adelante…")),
+               "reload": (tr("recargar la página"), tr("Recargó la página"), tr("Recargando la página…")),
+               "down": (tr("bajar por la página"), tr("Bajó por la página"), tr("Bajando por la página…")),
+               "up": (tr("subir por la página"), tr("Subió por la página"), tr("Subiendo por la página…")),
+               "top": (tr("ir al principio de la página"), tr("Fue al principio de la página"), tr("Yendo al principio…")),
+               "bottom": (tr("ir al final de la página"), tr("Fue al final de la página"), tr("Yendo al final…"))}
+WINDOW_ACT = {"maximize": (tr("maximizar"), tr("Maximizó"), tr("Maximizando")), "minimize": (tr("minimizar"), tr("Minimizó"), tr("Minimizando")),
+              "restore": (tr("restaurar"), tr("Restauró"), tr("Restaurando")), "close": (tr("cerrar"), tr("Cerró"), tr("Cerrando")), "move": (tr("mover"), tr("Movió"), tr("Moviendo")),
+              "resize": (tr("cambiar el tamaño de"), tr("Cambió el tamaño de"), tr("Cambiando el tamaño de"))}
 
 
 # mientras se ejecuta: «Escribiendo calculadora.py…», «Ejecutando python app.py…»
 GERUND = {
-    "read_file": "Leyendo", "write_file": "Escribiendo", "create_document": "Creando el documento", "run_python": "Analizando con Python",
-    "show_canvas": "Preparando el lienzo", "edit_file": "Editando", "list_dir": "Explorando", "search_files": "Buscando",
-    "run_command": "Ejecutando", "open_target": "Abriendo", "wait": "Esperando", "web_fetch": "Leyendo", "web_search": "Buscando en la web",
-    "download_file": "Descargando", "screenshot": "Capturando la pantalla", "click": "Haciendo clic", "move_mouse": "Moviendo el ratón",
-    "scroll": "Desplazando", "type_text": "Escribiendo", "press_keys": "Pulsando", "list_windows": "Revisando las ventanas",
-    "focus_window": "Activando la ventana", "multi_edit": "Editando", "move_path": "Moviendo", "delete_path": "Enviando a la papelera",
-    "command_output": "Revisando la salida de", "stop_command": "Deteniendo", "read_document": "Leyendo el documento",
-    "view_image": "Mirando la imagen", "remember": "Guardando en la memoria", "forget": "Olvidando", "schedule_task": "Programando la tarea",
-    "list_tasks": "Consultando las tareas programadas", "cancel_task": "Quitando la tarea", "use_skill": "Usando la habilidad",
-    "ui_elements": "Leyendo la interfaz de", "click_element": "Pulsando", "drag": "Arrastrando",
-    "browser_open": "Abriendo", "browser_read": "Leyendo la página", "browser_click": "Pulsando", "browser_type": "Escribiendo",
-    "browser_screenshot": "Capturando la página",
+    "read_file": tr("Leyendo"), "write_file": tr("Escribiendo"), "create_document": tr("Creando el documento"), "run_python": tr("Analizando con Python"),
+    "show_canvas": tr("Preparando el lienzo"), "edit_file": tr("Editando"), "list_dir": tr("Explorando"), "search_files": tr("Buscando"),
+    "run_command": tr("Ejecutando"), "open_target": tr("Abriendo"), "wait": tr("Esperando"), "web_fetch": tr("Leyendo"), "web_search": tr("Buscando en la web"),
+    "download_file": tr("Descargando"), "screenshot": tr("Capturando la pantalla"), "click": tr("Haciendo clic"), "move_mouse": tr("Moviendo el ratón"),
+    "scroll": tr("Desplazando"), "type_text": tr("Escribiendo"), "press_keys": tr("Pulsando"), "list_windows": tr("Revisando las ventanas"),
+    "focus_window": tr("Activando la ventana"), "multi_edit": tr("Editando"), "move_path": tr("Moviendo"), "delete_path": tr("Enviando a la papelera"),
+    "command_output": tr("Revisando la salida de"), "stop_command": tr("Deteniendo"), "read_document": tr("Leyendo el documento"),
+    "view_image": tr("Mirando la imagen"), "remember": tr("Guardando en la memoria"), "forget": tr("Olvidando"), "schedule_task": tr("Programando la tarea"),
+    "list_tasks": tr("Consultando las tareas programadas"), "cancel_task": tr("Quitando la tarea"), "use_skill": tr("Usando la habilidad"),
+    "ui_elements": tr("Leyendo la interfaz de"), "click_element": tr("Pulsando"), "drag": tr("Arrastrando"),
+    "browser_open": tr("Abriendo"), "browser_read": tr("Leyendo la página"), "browser_click": tr("Pulsando"), "browser_type": tr("Escribiendo"),
+    "browser_screenshot": tr("Capturando la página"),
 }
 
 
@@ -448,35 +453,35 @@ def describe_parts(name, args, phase):
     if name.startswith("mcp__"):           # herramienta de un conector MCP: «Usó servidor › herramienta»
         parts = name.split("__")
         srv, tool = (parts[1].replace("_", " "), parts[2].replace("_", " ")) if len(parts) > 2 else (name, "")
-        lead = {"pending": "Quiere usar", "run": "Usando"}.get(phase, "Usó")
+        lead = {"pending": tr("Quiere usar"), "run": tr("Usando")}.get(phase, tr("Usó"))
         return lead, "%s › %s%s" % (srv, tool, "…" if phase == "run" else "")
     if name == "browser_nav":
-        inf, past, ger = BROWSER_NAV.get(str(args.get("action", "")).lower(), ("navegar", "Navegó", "Navegando…"))
-        return {"pending": "Quiere " + inf, "run": ger}.get(phase, past), ""
+        inf, past, ger = BROWSER_NAV.get(str(args.get("action", "")).lower(), (tr("navegar"), tr("Navegó"), tr("Navegando…")))
+        return {"pending": tr("Quiere %s") % inf, "run": ger}.get(phase, past), ""
     if name == "window_action":
-        inf, past, ger = WINDOW_ACT.get(str(args.get("action", "")).lower(), ("manejar", "Manejó", "Manejando"))
-        lead = {"pending": "Quiere " + inf, "run": ger}.get(phase, past)
-        return lead + " la ventana", "«%s»%s" % (_q(args.get("window"), 40), "…" if phase == "run" else "")
+        inf, past, ger = WINDOW_ACT.get(str(args.get("action", "")).lower(), (tr("manejar"), tr("Manejó"), tr("Manejando")))
+        lead = {"pending": tr("Quiere %s") % inf, "run": ger}.get(phase, past)
+        return tr("%s la ventana") % lead, tr("«%s»%s") % (_q(args.get("window"), 40), "…" if phase == "run" else "")
     if name == "clipboard":
         w = str(args.get("action", "")).lower() in ("write", "set", "copy")
-        inf, past, ger = ("copiar al portapapeles", "Copió al portapapeles", "Copiando al portapapeles") if w else \
-                         ("leer el portapapeles", "Leyó el portapapeles", "Leyendo el portapapeles")
-        lead = {"pending": "Quiere " + inf, "run": ger + ("" if w else "…")}.get(phase, past)
-        return lead, ("«%s»" % _q(args.get("text"), 40)) if w else ""
+        inf, past, ger = (tr("copiar al portapapeles"), tr("Copió al portapapeles"), tr("Copiando al portapapeles")) if w else \
+                         (tr("leer el portapapeles"), tr("Leyó el portapapeles"), tr("Leyendo el portapapeles"))
+        lead = {"pending": tr("Quiere %s") % inf, "run": ger + ("" if w else "…")}.get(phase, past)
+        return lead, (tr("«%s»") % _q(args.get("text"), 40)) if w else ""
     if name == "screenshot" and args.get("zoom"):
-        return {"pending": "Quiere ampliar una zona de la pantalla", "run": "Ampliando una zona de la pantalla…"}.get(phase, "Amplió una zona de la pantalla"), ""
+        return {"pending": tr("Quiere ampliar una zona de la pantalla"), "run": tr("Ampliando una zona de la pantalla…")}.get(phase, tr("Amplió una zona de la pantalla")), ""
     if name == "screenshot" and args.get("window"):            # captura de una sola ventana
-        lead = {"pending": "Quiere capturar la ventana", "run": "Capturando la ventana"}.get(phase, "Capturó la ventana")
-        return lead, "«%s»%s" % (_q(args["window"], 40), "…" if phase == "run" else "")
+        lead = {"pending": tr("Quiere capturar la ventana"), "run": tr("Capturando la ventana")}.get(phase, tr("Capturó la ventana"))
+        return lead, tr("«%s»%s") % (_q(args["window"], 40), "…" if phase == "run" else "")
     if name == "run_command" and args.get("background") and phase != "pending":
-        return ("Iniciando en segundo plano" if phase == "run" else "Inició en segundo plano"), _q(args.get("command", "")) + ("…" if phase == "run" else "")
+        return (tr("Iniciando en segundo plano") if phase == "run" else tr("Inició en segundo plano")), _q(args.get("command", "")) + ("…" if phase == "run" else "")
     inf, past, obj = STEP.get(name, (name, name, lambda a: ""))
     try:
         o = obj(args)
     except Exception:
         o = ""
     if phase == "pending":
-        return "Quiere " + inf, o
+        return tr("Quiere %s") % inf, o
     if phase == "run":
         lead = GERUND.get(name, inf[:1].upper() + inf[1:])
         return (lead, o + "…") if o else (lead + "…", "")
@@ -541,7 +546,7 @@ class StepRow(QWidget):
         h.addWidget(tn)
         self.box = None
         self.phase = "run"
-        self.b_undo = tbtn("acc_refrescar", "Deshacer este cambio (restaura los archivos)", size=13)
+        self.b_undo = tbtn("acc_refrescar", tr("Deshacer este cambio (restaura los archivos)"), size=13)
         self.b_undo.hide()
         h.addWidget(self.b_undo)
         self.chev = QLabel()
@@ -562,12 +567,12 @@ class StepRow(QWidget):
             av = QVBoxLayout(self.approval)
             av.setContentsMargins(12, 10, 12, 10)
             if ev.get("danger"):
-                av.addWidget(TextView("Acción delicada: revisa bien el detalle antes de permitirla.", "plain", color=C["warn"], size="9pt"))
+                av.addWidget(TextView(tr("Acción delicada: revisa bien el detalle antes de permitirla."), "plain", color=C["warn"], size="9pt"))
             bw = QWidget()
             row = FlowLayout(bw)
             cat = T.CATEGORIES.get(ev["category"], ev["category"])
-            for text, kind, dec in (("Permitir", "primary", "allow"), ("Siempre «%s» aquí" % cat.lower(), None, "allow_category"),
-                                    ("Denegar", "danger", "deny")):
+            for text, kind, dec in ((tr("Permitir"), "primary", "allow"), (tr("Siempre «%s» aquí") % cat.lower(), None, "allow_category"),
+                                    (tr("Denegar"), "danger", "deny")):
                 b = btn(text, kind)
                 b.clicked.connect(lambda _=False, d=dec: self._decide(d, on_decide))
                 row.addWidget(b)
@@ -590,12 +595,12 @@ class StepRow(QWidget):
         if name == "run_command":
             self.dl.addWidget(mono(a.get("command", "")))
             if a.get("cwd"):
-                self.dl.addWidget(kv("carpeta", a["cwd"]))
+                self.dl.addWidget(kv(tr("carpeta"), a["cwd"]))
         elif name == "write_file":
-            self.dl.addWidget(kv("archivo", a.get("path", "")))
+            self.dl.addWidget(kv(tr("archivo"), a.get("path", "")))
             self.dl.addWidget(mono(str(a.get("content", ""))[:20000], "add", 300))
         elif name == "edit_file":
-            self.dl.addWidget(kv("archivo", a.get("path", "")))
+            self.dl.addWidget(kv(tr("archivo"), a.get("path", "")))
             self.dl.addWidget(mono(str(a.get("old", "")), "del", 160))
             self.dl.addWidget(mono(str(a.get("new", "")), "add", 160))
         else:
@@ -619,9 +624,9 @@ class StepRow(QWidget):
         self.st_icon.set_active(live)             # el arco gira mientras se ejecuta
         lead, obj = describe_parts(self.ev["name"], self.ev.get("args"), {"pending": "pending", "run": "run"}.get(phase, "done"))
         if phase == "denied":
-            lead = describe_parts(self.ev["name"], self.ev.get("args"), "pending")[0].replace("Quiere", "No se permitió", 1)
+            lead = describe_parts(self.ev["name"], self.ev.get("args"), "pending")[0].replace(tr("Quiere"), tr("No se permitió"), 1)
         if phase == "blocked":
-            obj = (obj + " (bloqueado: solo lectura)").strip()
+            obj = (tr("%s (bloqueado: solo lectura)") % obj).strip()
         text = ("%s %s" % (lead, obj)).strip()
         self.title.setText(text, len(lead) + 1 if obj else -1)
         self.title.set_active(live)
@@ -653,8 +658,8 @@ class StepRow(QWidget):
         if ok and text and self.ev["name"] in ("browser_click", "click_element"):     # «Pulsó el elemento 7» -> «Pulsó «Iniciar sesión»»
             m = re.search(r"«([^»\n]{1,60})»", text.split("\n", 1)[0])
             if m:
-                t = "Pulsó «%s»" % m.group(1)
-                self.title.setText(t, len("Pulsó") + 1)
+                t = tr("Pulsó «%s»") % m.group(1)
+                self.title.setText(t, len(tr("Pulsó")) + 1)
                 self.head.setToolTip(t)
         if text:
             self.dl.addWidget(mono(text, max_h=300))
@@ -681,28 +686,28 @@ class StepRow(QWidget):
             card.hide()
             if self.box is not None:
                 self.box.extras.setVisible(any(not self.box.ev_.itemAt(i).widget().isHidden() for i in range(self.box.ev_.count())))
-        self.title.setText(self.title.text() + "  · deshecho")
+        self.title.setText(tr("%s  · deshecho") % self.title.text())
         self.title.set_color(C["faint"], C["faint"])
         self.title.set_strike(True)
 
 
 # Resumen de varias acciones seguidas en una frase («Editó 2 archivos, buscó en los archivos y ejecutó un comando»)
 GROUP = {
-    "read_file": ("leyó un archivo", "leyó %d archivos"), "write_file": ("creó un archivo", "creó %d archivos"),
-    "edit_file": ("editó un archivo", "editó %d archivos"), "list_dir": ("exploró una carpeta", "exploró %d carpetas"),
-    "search_files": ("buscó en los archivos", "hizo %d búsquedas"), "run_command": ("ejecutó un comando", "ejecutó %d comandos"),
-    "command_output": ("revisó un proceso", "revisó %d procesos"), "stop_command": ("detuvo un proceso", "detuvo %d procesos"),
-    "web_search": ("buscó en internet", "hizo %d búsquedas en internet"), "web_fetch": ("leyó una página web", "leyó %d páginas web"),
-    "download_file": ("descargó un archivo", "descargó %d archivos"), "read_document": ("leyó un documento", "leyó %d documentos"),
-    "create_document": ("creó un documento", "creó %d documentos"), "view_image": ("vio una imagen", "vio %d imágenes"),
-    "screenshot": ("hizo una captura de pantalla", "hizo %d capturas de pantalla"), "move_path": ("movió un archivo", "movió %d archivos"),
-    "delete_path": ("envió un archivo a la papelera", "envió %d archivos a la papelera"), "remember": ("guardó una preferencia", "guardó %d preferencias"),
-    "control": ("usó el ratón y el teclado", "usó el ratón y el teclado"), "open_target": ("abrió un programa o archivo", "abrió %d programas o archivos"),
-    "wait": ("esperó un momento", "esperó %d veces"),
-    "browser_open": ("abrió una página", "abrió %d páginas"), "browser_read": ("leyó la página", "leyó %d veces la página"),
-    "browser_click": ("pulsó en la página", "pulsó %d veces en la página"), "browser_type": ("escribió en la página", "rellenó %d campos"),
-    "browser_nav": ("navegó por la página", "navegó %d veces"), "browser_screenshot": ("capturó la página", "capturó %d veces la página"),
-    "run_python": ("analizó los datos con Python", "hizo %d análisis con Python"), "show_canvas": ("mostró algo en el lienzo", "actualizó el lienzo %d veces"),
+    "read_file": (tr("leyó un archivo"), tr("leyó %d archivos")), "write_file": (tr("creó un archivo"), tr("creó %d archivos")),
+    "edit_file": (tr("editó un archivo"), tr("editó %d archivos")), "list_dir": (tr("exploró una carpeta"), tr("exploró %d carpetas")),
+    "search_files": (tr("buscó en los archivos"), tr("hizo %d búsquedas")), "run_command": (tr("ejecutó un comando"), tr("ejecutó %d comandos")),
+    "command_output": (tr("revisó un proceso"), tr("revisó %d procesos")), "stop_command": (tr("detuvo un proceso"), tr("detuvo %d procesos")),
+    "web_search": (tr("buscó en internet"), tr("hizo %d búsquedas en internet")), "web_fetch": (tr("leyó una página web"), tr("leyó %d páginas web")),
+    "download_file": (tr("descargó un archivo"), tr("descargó %d archivos")), "read_document": (tr("leyó un documento"), tr("leyó %d documentos")),
+    "create_document": (tr("creó un documento"), tr("creó %d documentos")), "view_image": (tr("vio una imagen"), tr("vio %d imágenes")),
+    "screenshot": (tr("hizo una captura de pantalla"), tr("hizo %d capturas de pantalla")), "move_path": (tr("movió un archivo"), tr("movió %d archivos")),
+    "delete_path": (tr("envió un archivo a la papelera"), tr("envió %d archivos a la papelera")), "remember": (tr("guardó una preferencia"), tr("guardó %d preferencias")),
+    "control": (tr("usó el ratón y el teclado"), tr("usó el ratón y el teclado")), "open_target": (tr("abrió un programa o archivo"), tr("abrió %d programas o archivos")),
+    "wait": (tr("esperó un momento"), tr("esperó %d veces")),
+    "browser_open": (tr("abrió una página"), tr("abrió %d páginas")), "browser_read": (tr("leyó la página"), tr("leyó %d veces la página")),
+    "browser_click": (tr("pulsó en la página"), tr("pulsó %d veces en la página")), "browser_type": (tr("escribió en la página"), tr("rellenó %d campos")),
+    "browser_nav": (tr("navegó por la página"), tr("navegó %d veces")), "browser_screenshot": (tr("capturó la página"), tr("capturó %d veces la página")),
+    "run_python": (tr("analizó los datos con Python"), tr("hizo %d análisis con Python")), "show_canvas": (tr("mostró algo en el lienzo"), tr("actualizó el lienzo %d veces")),
 }
 _GROUP_ALIAS = {"multi_edit": "edit_file", "click": "control", "move_mouse": "control", "scroll": "control", "type_text": "control",
                 "press_keys": "control", "list_windows": "control", "focus_window": "control", "ui_elements": "control",
@@ -714,7 +719,7 @@ def summarize_steps(rows):
     for r in rows:
         name, a = r.ev["name"], r.ev.get("args") or {}
         if name.startswith("mcp__"):
-            key = ("mcp", name.split("__")[1].replace("_", " ") if name.count("__") >= 2 else "un conector")
+            key = ("mcp", name.split("__")[1].replace("_", " ") if name.count("__") >= 2 else "")
         else:
             key = _GROUP_ALIAS.get(name, name)
         if key not in seen:
@@ -726,20 +731,21 @@ def summarize_steps(rows):
     for key in order:
         n = len(seen[key])
         if isinstance(key, tuple):
-            parts.append("usó %s" % key[1] + ("" if n == 1 else " (%d veces)" % n))
+            srv = key[1] or tr("un conector")
+            parts.append((tr("usó %s") % srv) if n == 1 else (tr("usó %s (%d veces)") % (srv, n)))
         elif key in GROUP:
             one, many = GROUP[key]
             parts.append(one if n == 1 else (many % n if "%d" in many else many))
         else:
-            parts.append("hizo %d %s" % (n, "acción más" if n == 1 else "acciones más"))
+            parts.append((tr("hizo %d acción más") if n == 1 else tr("hizo %d acciones más")) % n)
     if not parts:
         return ""
-    text = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " y " + parts[-1]
+    text = parts[0] if len(parts) == 1 else tr("%s y %s") % (", ".join(parts[:-1]), parts[-1])
     return text[:1].upper() + text[1:]
 
 
-DOC_KIND = {".docx": ("W", "2B579A", "Documento de Word"), ".xlsx": ("X", "217346", "Hoja de Excel"),
-            ".pptx": ("P", "C43E1C", "Presentación de PowerPoint"), ".pdf": ("PDF", "B3261E", "Documento PDF")}
+DOC_KIND = {".docx": ("W", "2B579A", tr("Documento de Word")), ".xlsx": ("X", "217346", tr("Hoja de Excel")),
+            ".pptx": ("P", "C43E1C", tr("Presentación de PowerPoint")), ".pdf": ("PDF", "B3261E", tr("Documento PDF"))}
 
 
 class DocCard(QFrame):
@@ -752,7 +758,7 @@ class DocCard(QFrame):
         h = QHBoxLayout(self)
         h.setContentsMargins(10, 8, 8, 8)
         h.setSpacing(10)
-        tag, col, kind = DOC_KIND.get(os.path.splitext(path)[1].lower(), ("DOC", "607068", "Documento"))
+        tag, col, kind = DOC_KIND.get(os.path.splitext(path)[1].lower(), ("DOC", "607068", tr("Documento")))
         badge = QLabel(tag)
         badge.setAlignment(Qt.AlignCenter)
         badge.setFixedSize(38, 46)
@@ -771,8 +777,8 @@ class DocCard(QFrame):
         sub.setObjectName("faint")
         info.addWidget(sub)
         h.addLayout(info, 1)
-        h.addWidget(btn("Abrir", "primary", lambda: os.path.isfile(self.path) and osys.open_path(self.path)))
-        h.addWidget(tbtn("act_carpeta_abierta", "Mostrar en la carpeta", lambda: reveal(self.path), size=15))
+        h.addWidget(btn(tr("Abrir"), "primary", lambda: os.path.isfile(self.path) and osys.open_path(self.path)))
+        h.addWidget(tbtn("act_carpeta_abierta", tr("Mostrar en la carpeta"), lambda: reveal(self.path), size=15))
         self.setToolTip(path)
 
 
@@ -798,12 +804,12 @@ class CanvasCard(QFrame):
         name = ElidedLabel(item.get("title", ""))
         name.setStyleSheet("font-weight:600")
         info.addWidget(name)
-        kind = {"html": "Página web", "markdown": "Documento", "svg": "Dibujo", "code": "Código"}.get(item.get("kind"), "Lienzo")
-        sub = ElidedLabel("%s · versión %s" % (kind, item.get("version", 1)))
+        kind = {"html": tr("Página web"), "markdown": tr("Documento"), "svg": tr("Dibujo"), "code": tr("Código")}.get(item.get("kind"), tr("Lienzo"))
+        sub = ElidedLabel(tr("%s · versión %s") % (kind, item.get("version", 1)))
         sub.setObjectName("faint")
         info.addWidget(sub)
         h.addLayout(info, 1)
-        h.addWidget(btn("Ver en el lienzo", "primary", lambda: self.on_open(self.item)))
+        h.addWidget(btn(tr("Ver en el lienzo"), "primary", lambda: self.on_open(self.item)))
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
@@ -839,7 +845,7 @@ class Preview(QLabel):
         if not pm.isNull():
             self.setPixmap(rounded(pm.scaled(min(max_w, pm.width()), min(max_h, pm.height()), Qt.KeepAspectRatio, Qt.SmoothTransformation)))
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("Clic para verla en grande")
+        self.setToolTip(tr("Clic para verla en grande"))
         self.setObjectName("thumb")
 
     def mousePressEvent(self, e):
@@ -951,7 +957,7 @@ class StepsBox(QFrame):
         self.h_text.setToolTip("\n".join(r.title.text() for r in self.rows))
         self.h_add.setText("+%d" % add if add else "")
         self.h_rem.setText("−%d" % rem if rem else "")
-        self.h_fail.setText(("%d ha fallado" if fails == 1 else "%d han fallado") % fails if fails else "")
+        self.h_fail.setText((tr("%d ha fallado") if fails == 1 else tr("%d han fallado")) % fails if fails else "")
         self.h_icon.setPixmap(self._icon_stack(fails))
         self.head.show()
         self.body.hide()
@@ -1029,15 +1035,15 @@ class AssistantBlock(QWidget):
         ah = QHBoxLayout(self.actions)
         ah.setContentsMargins(0, 0, 0, 0)
         ah.setSpacing(2)
-        self.b_copy = tbtn("acc_copiar", "Copiar respuesta", self.copy, size=15)
-        self.b_regen = tbtn("acc_refrescar", "Regenerar respuesta", size=15)
-        self.b_report = tbtn("est_aviso", "Informar de un problema con esta respuesta", self.report, size=15)
-        self.b_undo_all = QPushButton("Deshacer cambios")
+        self.b_copy = tbtn("acc_copiar", tr("Copiar respuesta"), self.copy, size=15)
+        self.b_regen = tbtn("acc_refrescar", tr("Regenerar respuesta"), size=15)
+        self.b_report = tbtn("est_aviso", tr("Informar de un problema con esta respuesta"), self.report, size=15)
+        self.b_undo_all = QPushButton(tr("Deshacer cambios"))
         self.b_undo_all.setProperty("kind", "flat")
         self.b_undo_all.setIcon(icon("acc_refrescar", C["mut"], 13))
-        self.b_undo_all.setToolTip("Restaura todos los archivos que el agente cambió en esta respuesta")
+        self.b_undo_all.setToolTip(tr("Restaura todos los archivos que el agente cambió en esta respuesta"))
         self.b_undo_all.hide()
-        self.b_speak = tbtn("voz_altavoz", "Leer en voz alta", self.speak, size=15)
+        self.b_speak = tbtn("voz_altavoz", tr("Leer en voz alta"), self.speak, size=15)
         self.b_speak.setVisible(speaker_available())
         ah.addWidget(self.b_copy)
         ah.addWidget(self.b_speak)
@@ -1148,7 +1154,7 @@ class AssistantBlock(QWidget):
             sp.stop()
             _SPEAKING = None
             self.b_speak.setIcon(icon("voz_altavoz", C["mut"], 15))
-            self.b_speak.setToolTip("Leer en voz alta")
+            self.b_speak.setToolTip(tr("Leer en voz alta"))
             return
         if _SPEAKING is not None:
             try:
@@ -1158,7 +1164,7 @@ class AssistantBlock(QWidget):
         if sp.speak(self.text, core.SET.snapshot().get("voice_rate", 0.0)):
             _SPEAKING = self
             self.b_speak.setIcon(icon("trans_detener", C["acc"], 13))
-            self.b_speak.setToolTip("Detener la lectura")
+            self.b_speak.setToolTip(tr("Detener la lectura"))
             me = self
 
             def watch():                       # cuando termina de leer, el botón vuelve a su estado
@@ -1170,14 +1176,14 @@ class AssistantBlock(QWidget):
                 _SPEAKING = None
                 try:
                     me.b_speak.setIcon(icon("voz_altavoz", C["mut"], 15))
-                    me.b_speak.setToolTip("Leer en voz alta")
+                    me.b_speak.setToolTip(tr("Leer en voz alta"))
                 except RuntimeError:
                     pass
             QTimer.singleShot(900, watch)
 
     def report(self):
         excerpt = self.text if len(self.text) < 1500 else self.text[:1500] + "…"
-        FeedbackDialog(self.window(), "error", "Respuesta con problemas:\n\n> " + excerpt.replace("\n", "\n> ") + "\n\nQué esperaba: ").exec()
+        FeedbackDialog(self.window(), "error", tr("Respuesta con problemas:\n\n> %s\n\nQué esperaba: ") % excerpt.replace("\n", "\n> ")).exec()
 
 
 def user_bubble(ev, compact=False):
@@ -1251,7 +1257,7 @@ class PlanPanel(QFrame):
         if not items:
             return self.hide()
         done = sum(1 for i in items if i.get("status") == "completed")
-        self.title.setText("Plan · %d de %d" % (done, len(items)))
+        self.title.setText(tr("Plan · %d de %d") % (done, len(items)))
         for i in items:
             st = i.get("status", "pending")
             row = QWidget()
@@ -1298,10 +1304,10 @@ class QuestionCard(QFrame):
             il.addWidget(b)
         r2 = QHBoxLayout()
         self.free = QLineEdit()
-        self.free.setPlaceholderText("Otra respuesta…")
+        self.free.setPlaceholderText(tr("Otra respuesta…"))
         self.free.returnPressed.connect(lambda: self.free.text().strip() and self._send(self.free.text().strip(), on_answer))
         r2.addWidget(self.free, 1)
-        r2.addWidget(btn("Responder", "primary", lambda: self.free.text().strip() and self._send(self.free.text().strip(), on_answer)))
+        r2.addWidget(btn(tr("Responder"), "primary", lambda: self.free.text().strip() and self._send(self.free.text().strip(), on_answer)))
         il.addLayout(r2)
         v.addWidget(self.inputs)
         self.answer_lbl = TextView("", "plain", color=C["mut"])
@@ -1318,18 +1324,18 @@ class QuestionCard(QFrame):
         self.inputs.hide()
         self.setProperty("pending", False)
         restyle(self)
-        self.answer_lbl.setText(("Tu respuesta: " + text) if text else "Sin respuesta")
+        self.answer_lbl.setText((tr("Tu respuesta: %s") % text) if text else tr("Sin respuesta"))
         self.answer_lbl.show()
 
 
-CHAT_SUGGESTIONS = [("acc_examinar", "Ordena mi carpeta de Descargas por tipo de archivo"),
-                    ("cod_terminal", "Crea un script de Python que renombre mis fotos por fecha"),
-                    ("vista_captura", "Haz una captura de pantalla y dime qué ves"),
-                    ("herr_espacio_mundo", "Busca en la web las novedades de llama.cpp y resúmelas")]
-CODE_SUGGESTIONS = [("acc_examinar", "Explícame la estructura de este proyecto"),
-                    ("acc_nuevo", "Crea un README.md que describa este proyecto"),
-                    ("acc_buscar", "Revisa el código, busca errores y propón arreglos"),
-                    ("cod_terminal", "Crea una página web sencilla con HTML, CSS y JavaScript")]
+CHAT_SUGGESTIONS = [("acc_examinar", tr("Ordena mi carpeta de Descargas por tipo de archivo")),
+                    ("cod_terminal", tr("Crea un script de Python que renombre mis fotos por fecha")),
+                    ("vista_captura", tr("Haz una captura de pantalla y dime qué ves")),
+                    ("herr_espacio_mundo", tr("Busca en la web las novedades de llama.cpp y resúmelas"))]
+CODE_SUGGESTIONS = [("acc_examinar", tr("Explícame la estructura de este proyecto")),
+                    ("acc_nuevo", tr("Crea un README.md que describa este proyecto")),
+                    ("acc_buscar", tr("Revisa el código, busca errores y propón arreglos")),
+                    ("cod_terminal", tr("Crea una página web sencilla con HTML, CSS y JavaScript"))]
 
 
 class EmptyState(QWidget):
@@ -1384,7 +1390,7 @@ class ComposerEdit(QPlainTextEdit):
     def __init__(self):
         super().__init__()
         self.setObjectName("composerEdit")
-        self.setPlaceholderText("Escribe un mensaje…")
+        self.setPlaceholderText(tr("Escribe un mensaje…"))
         self.textChanged.connect(self._grow)
         self._grow()
 
@@ -1500,7 +1506,7 @@ class ChatPanel(QWidget):
         self.ban_txt = QLabel()
         self.ban_txt.setWordWrap(True)
         bl.addWidget(self.ban_txt, 1)
-        self.ban_btn = btn("Encender modelo", "primary", self.main.toggle_llm)
+        self.ban_btn = btn(tr("Encender modelo"), "primary", self.main.toggle_llm)
         bl.addWidget(self.ban_btn)
         iv.addWidget(self.banner)
         self.plan_panel = PlanPanel()
@@ -1535,25 +1541,25 @@ class ChatPanel(QWidget):
         rb.addWidget(self.rec_time)
         self.rec_wave = WaveBars()
         rb.addWidget(self.rec_wave, 1)
-        self.rec_cancel = tbtn("ui_cerrar", "Descartar la grabación", lambda: self.cancel_dictation(), size=12)
+        self.rec_cancel = tbtn("ui_cerrar", tr("Descartar la grabación"), lambda: self.cancel_dictation(), size=12)
         rb.addWidget(self.rec_cancel)
         self.rec_bar.hide()
         bv.addWidget(self.rec_bar)
         bv.addWidget(self.input)
         row = QHBoxLayout()
         row.setSpacing(6)
-        plus = tbtn("acc_anadir", "Adjuntar", size=14, name="round")
+        plus = tbtn("acc_anadir", tr("Adjuntar"), size=14, name="round")
         plus.setFixedSize(28, 28)
         plus.setPopupMode(QToolButton.InstantPopup)
         pm = QMenu(self)
-        pm.addAction(icon("acc_nuevo"), "Adjuntar archivos o documentos…", self.attach_files)
-        pm.addAction(icon("uij_imagen"), "Adjuntar imagen…", self.attach)
-        pm.addAction(icon("vista_captura"), "Adjuntar captura de pantalla", self.attach_screenshot)
+        pm.addAction(icon("acc_nuevo"), tr("Adjuntar archivos o documentos…"), self.attach_files)
+        pm.addAction(icon("uij_imagen"), tr("Adjuntar imagen…"), self.attach)
+        pm.addAction(icon("vista_captura"), tr("Adjuntar captura de pantalla"), self.attach_screenshot)
         pm.addSeparator()
-        self.assist_menu = pm.addMenu(icon("ia_controlador"), "Usar un asistente")
+        self.assist_menu = pm.addMenu(icon("ia_controlador"), tr("Usar un asistente"))
         self.assist_menu.aboutToShow.connect(self._fill_assist_menu)
         plus.setMenu(pm)
-        plus.setToolTip("Adjuntar archivos, documentos, imágenes o una captura")
+        plus.setToolTip(tr("Adjuntar archivos, documentos, imágenes o una captura"))
         row.addWidget(plus)
         self.mode_chip = QToolButton()
         self.mode_chip.setObjectName("chip")
@@ -1598,8 +1604,8 @@ class ChatPanel(QWidget):
         self.mic_btn.setIcon(icon("voz_microfono", C["mut"], 16))
         self.mic_btn.setIconSize(QSize(16, 16))
         self.mic_btn.setCursor(Qt.PointingHandCursor)
-        self.mic_btn.setToolTip("Dictar con el micrófono")
-        self.mic_btn.setAccessibleName("Dictar")
+        self.mic_btn.setToolTip(tr("Dictar con el micrófono"))
+        self.mic_btn.setAccessibleName(tr("Dictar"))
         self.mic_btn.clicked.connect(lambda: self.toggle_dictation())
         row.addWidget(self.mic_btn, 0, Qt.AlignBottom)
         self._rec = None
@@ -1613,7 +1619,7 @@ class ChatPanel(QWidget):
         bv.addLayout(row)
         iv.addWidget(self.box)
         if not self.compact:
-            hint = QLabel("Se ejecuta en tu equipo. Revisa cada acción antes de permitirla · ratón a la esquina superior izquierda = detener el control")
+            hint = QLabel(tr("Se ejecuta en tu equipo. Revisa cada acción antes de permitirla · ratón a la esquina superior izquierda = detener el control"))
             hint.setObjectName("faint")
             hint.setAlignment(Qt.AlignCenter)
             hint.setWordWrap(True)
@@ -1649,8 +1655,8 @@ class ChatPanel(QWidget):
         if not cmd:
             return False
         if T.is_dangerous("run_command", {"command": cmd}, None):
-            r = QMessageBox.question(self, APP_NAME, "Este comando puede borrar o cambiar cosas importantes de tu equipo:\n\n%s\n\n"
-                                     "¿Ejecutarlo de todos modos?" % cmd[:800], QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            r = QMessageBox.question(self, APP_NAME, tr("Este comando puede borrar o cambiar cosas importantes de tu equipo:\n\n%s\n\n"
+                                     "¿Ejecutarlo de todos modos?") % cmd[:800], QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if r != QMessageBox.Yes:
                 return False
         code = self._code_page()
@@ -1667,9 +1673,9 @@ class ChatPanel(QWidget):
             if osys.open_terminal(cmd, self.workspace()):
                 return True
         except Exception as e:
-            self.main.toast("No pude abrir una terminal: %s" % e, icon_name="est_error", color=C["bad"])
+            self.main.toast(tr("No pude abrir una terminal: %s") % e, icon_name="est_error", color=C["bad"])
             return False
-        self.main.toast("No encontré ninguna terminal en el sistema. Copia el comando y pégalo en la tuya.", icon_name="est_aviso", color=C["warn"])
+        self.main.toast(tr("No encontré ninguna terminal en el sistema. Copia el comando y pégalo en la tuya."), icon_name="est_aviso", color=C["warn"])
         return False
 
     def can_edit(self, path):
@@ -1736,15 +1742,15 @@ class ChatPanel(QWidget):
     def _empty_state(self):
         if self.project_id:
             p = core.project(core.SET.snapshot(), self.project_id)
-            return EmptyState("¿Qué construimos en «%s»?" % (p["name"] if p else "tu proyecto"),
-                              "Trabajo dentro de la carpeta del proyecto. Verás cada archivo que cree o cambie.",
+            return EmptyState(tr("¿Qué construimos en «%s»?") % (p["name"] if p else tr("tu proyecto")),
+                              tr("Trabajo dentro de la carpeta del proyecto. Verás cada archivo que cree o cambie."),
                               CODE_SUGGESTIONS, self._pick, self.compact)
         if getattr(self, "temp_next", False):
-            return EmptyState("Chat temporal", "Esta conversación no se guardará en el historial y no usa ni cambia la memoria. "
-                              "Al empezar otra conversación, desaparece.", [], self._pick, self.compact)
+            return EmptyState(tr("Chat temporal"), tr("Esta conversación no se guardará en el historial y no usa ni cambia la memoria. "
+                              "Al empezar otra conversación, desaparece."), [], self._pick, self.compact)
         name = core.SET.snapshot().get("user_name", "").strip()
-        return EmptyState("¿En qué te ayudo%s?" % (", " + name if name else " hoy"),
-                          "Puedo trabajar con tus archivos, programas y la web. Cada acción la ves y la apruebas tú.",
+        return EmptyState((tr("¿En qué te ayudo, %s?") % name) if name else tr("¿En qué te ayudo hoy?"),
+                          tr("Puedo trabajar con tus archivos, programas y la web. Cada acción la ves y la apruebas tú."),
                           CHAT_SUGGESTIONS, self._pick, self.compact)
 
     def _pick(self, text):
@@ -1812,14 +1818,14 @@ class ChatPanel(QWidget):
             if self.cur is not None and ev.get("gen_n"):
                 tok = "%s tok" % ev["gen_n"]
                 tps = (" · %.1f tok/s" % ev["tps"]) if ev.get("tps") else ""
-                cut = " · cortado por límite" if ev.get("finish") == "length" else ""
+                cut = tr(" · cortado por límite") if ev.get("finish") == "length" else ""
                 ctx = ctx_s = ""
                 if ev.get("ctx_used") and ev.get("ctx_max"):
-                    ctx = " · contexto %.1fk de %dk" % (ev["ctx_used"] / 1000.0, ev["ctx_max"] // 1000)
+                    ctx = tr(" · contexto %.1fk de %dk") % (ev["ctx_used"] / 1000.0, ev["ctx_max"] // 1000)
                     ctx_s = " · %.1fk/%dk" % (ev["ctx_used"] / 1000.0, ev["ctx_max"] // 1000)
                 self.cur.stats.set_options([tok + tps + cut + ctx, tok + tps + cut + ctx_s, (tps[3:] or tok) + cut + ctx_s,
                                             (cut[3:] or (ctx_s[3:] or tok))],
-                                           "Memoria de la conversación usada por el modelo. Al acercarse al límite, Jayth resume lo antiguo.")
+                                           tr("Memoria de la conversación usada por el modelo. Al acercarse al límite, Jayth resume lo antiguo."))
         elif t == "assistant_end":
             if self.cur is None and ev["text"]:
                 self.cur = self.add(AssistantBlock(ev["ts"]))
@@ -1846,7 +1852,7 @@ class ChatPanel(QWidget):
             if card.inputs.isVisible():
                 self.waiting += 1
                 self.sync()
-                self.main.notify_pending("tiene una pregunta: " + ev["question"], ev["ts"])
+                self.main.notify_pending(tr("tiene una pregunta: %s") % ev["question"], ev["ts"])
         elif t == "answer":
             q = self.questions.get(ev["id"])
             if q:
@@ -1858,10 +1864,10 @@ class ChatPanel(QWidget):
             for cid in ev.get("ids") or []:
                 if cid in self.rows:
                     self.rows[cid].undone()
-            self.add(note("Cambios deshechos: %s" % ", ".join(os.path.basename(f) for f in ev.get("files") or [])))
+            self.add(note(tr("Cambios deshechos: %s") % ", ".join(os.path.basename(f) for f in ev.get("files") or [])))
             self._end_steps()
         elif t == "compacted":
-            self.add(note("Resumí la parte antigua de la conversación para que el modelo no la olvide ni se quede sin memoria."))
+            self.add(note(tr("Resumí la parte antigua de la conversación para que el modelo no la olvide ni se quede sin memoria.")))
             self._end_steps()
         elif t == "plan_ready":
             if getattr(self, "_live", False):
@@ -1903,8 +1909,8 @@ class ChatPanel(QWidget):
                 r.result(ev["ok"], ev.get("text") or "", ev.get("image"))
                 if ev["ok"] and r.ev["name"] in ("remember", "forget") and ev["ts"] > time.time() - 10:
                     fact = str((r.ev.get("args") or {}).get("fact") or (r.ev.get("args") or {}).get("text") or "")
-                    self.main.toast(("Guardado en la memoria: «%s»" if r.ev["name"] == "remember" else "Olvidado: «%s»") % fact[:90],
-                                    "Ver memoria", lambda: self.main.settings("Personalización"), icon_name="ia_memoria")
+                    self.main.toast((tr("Guardado en la memoria: «%s»") if r.ev["name"] == "remember" else tr("Olvidado: «%s»")) % fact[:90],
+                                    tr("Ver memoria"), lambda: self.main.settings("Personalización"), icon_name="ia_memoria")
                 if ev["ok"] and r.box is not None:
                     for n in (ev.get("images") or [])[1:]:           # el resto de gráficos de un análisis
                         r.box.add_preview(os.path.join(paths.IMG_DIR, n))
@@ -1926,7 +1932,7 @@ class ChatPanel(QWidget):
                     if p:
                         self.file_written.emit(os.path.normpath(p if os.path.isabs(p) else os.path.join(self.workspace(), p)))
         elif t in ("info", "error"):
-            self.add(note("Detenido por ti." if (t == "info" and ev["text"] == "Detenido.") else ev["text"], t == "error"))
+            self.add(note(tr("Detenido por ti.") if (t == "info" and ev["text"] == "Detenido.") else ev["text"], t == "error"))
             self._end_steps()
         elif t == "turn_end":
             if self.cur is not None and self.cur.empty():
@@ -1985,9 +1991,9 @@ class ChatPanel(QWidget):
         h = QHBoxLayout(f)
         h.setContentsMargins(14, 10, 10, 10)
         h.addWidget(pix_label("ui_check", C["acc"], 16))
-        h.addWidget(lbl("Plan listo. Revísalo y, si te convence, ejecútalo."), 1)
-        h.addWidget(btn("Seguir ajustando", cb=lambda: self.input.setFocus()))
-        h.addWidget(btn("Ejecutar el plan", "primary", lambda: self.execute_plan(f), "hub_lanzar"))
+        h.addWidget(lbl(tr("Plan listo. Revísalo y, si te convence, ejecútalo.")), 1)
+        h.addWidget(btn(tr("Seguir ajustando"), cb=lambda: self.input.setFocus()))
+        h.addWidget(btn(tr("Ejecutar el plan"), "primary", lambda: self.execute_plan(f), "hub_lanzar"))
         return f
 
     def execute_plan(self, card=None):
@@ -1998,7 +2004,7 @@ class ChatPanel(QWidget):
         self.main.sync()
         if card is not None:
             card.hide()
-        self.session().send("Adelante: ejecuta el plan aprobado paso a paso, actualizando la lista de tareas.")
+        self.session().send(tr("Adelante: ejecuta el plan aprobado paso a paso, actualizando la lista de tareas."))
         self.busy = True
         self.sync()
 
@@ -2012,11 +2018,11 @@ class ChatPanel(QWidget):
         if s and s.run is None:
             files = s.undo(cid)
             if files:
-                self.main.toast("Restaurado: %s" % ", ".join(os.path.basename(f) for f in files), icon_name="acc_refrescar", color=C["ok"])
+                self.main.toast(tr("Restaurado: %s") % ", ".join(os.path.basename(f) for f in files), icon_name="acc_refrescar", color=C["ok"])
                 for f in files:
                     self.file_written.emit(f)
         elif s:
-            self.main.toast("Espera a que el agente termine para deshacer.", icon_name="est_aviso", color=C["warn"])
+            self.main.toast(tr("Espera a que el agente termine para deshacer."), icon_name="est_aviso", color=C["warn"])
 
     def undo_turn(self):
         s = self.session()
@@ -2026,7 +2032,7 @@ class ChatPanel(QWidget):
         for b in self.blocks:                # ya no queda nada que deshacer en esta respuesta
             b.b_undo_all.hide()
         if files:
-            self.main.toast("Deshecho%s %s." % ("" if len(files) == 1 else "s", _n(len(files), "cambio de archivo", "cambios de archivos")),
+            self.main.toast((tr("Deshecho %d cambio de archivo.") if len(files) == 1 else tr("Deshechos %d cambios de archivos.")) % len(files),
                             icon_name="acc_refrescar", color=C["ok"])
             for f in files:
                 self.file_written.emit(f)
@@ -2076,7 +2082,7 @@ class ChatPanel(QWidget):
                 ns.data["assistant"] = aid
             self.open_session(ns.id)
             if temp:
-                self.add(note("Chat temporal: esta conversación no se guarda en el historial y no usa ni cambia la memoria."))
+                self.add(note(tr("Chat temporal: esta conversación no se guarda en el historial y no usa ni cambia la memoria.")))
         err = self.session().send(text, list(self.pending_imgs), files)
         if err:
             return QMessageBox.information(self, APP_NAME, err)
@@ -2107,15 +2113,15 @@ class ChatPanel(QWidget):
         self._render_thumbs()
 
     def attach(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Adjuntar imágenes", os.path.expanduser("~"), "Imágenes (*.png *.jpg *.jpeg *.webp *.gif)")
+        files, _ = QFileDialog.getOpenFileNames(self, tr("Adjuntar imágenes"), os.path.expanduser("~"), tr("Imágenes (*.png *.jpg *.jpeg *.webp *.gif)"))
         for f in files:
             self._add_image(src=f)
 
     def attach_files(self):
         """Documentos y archivos de texto o código: su contenido se incluye en el mensaje."""
-        files, _ = QFileDialog.getOpenFileNames(self, "Adjuntar archivos", self.workspace(),
-                                                "Documentos y texto (*.txt *.md *.py *.js *.ts *.json *.csv *.html *.css *.xml *.yml *.yaml *.log "
-                                                "*.docx *.xlsx *.pptx *.pdf *.ps1 *.bat *.ini *.toml *.sql *.c *.cpp *.h *.cs *.java *.go *.rs);;Todos (*.*)")
+        files, _ = QFileDialog.getOpenFileNames(self, tr("Adjuntar archivos"), self.workspace(),
+                                                tr("Documentos y texto (*.txt *.md *.py *.js *.ts *.json *.csv *.html *.css *.xml *.yml *.yaml *.log "
+                                                "*.docx *.xlsx *.pptx *.pdf *.ps1 *.bat *.ini *.toml *.sql *.c *.cpp *.h *.cs *.java *.go *.rs);;Todos (*.*)"))
         imgs = [f for f in files if os.path.splitext(f)[1].lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif")]
         for f in imgs:
             self._add_image(src=f)
@@ -2138,7 +2144,8 @@ class ChatPanel(QWidget):
         style = Qt.ToolButtonIconOnly if compact_mode else Qt.ToolButtonTextBesideIcon
         if self.mode_chip.toolButtonStyle() != style:
             self.mode_chip.setToolButtonStyle(style)
-            self.mode_chip.setToolTip(("Modo: %s. " % self.mode_chip.text() if compact_mode else "") + "Cómo actúa el agente: pregunta, automático, solo lectura o plan.")
+            self.mode_chip.setToolTip((tr("Modo: %s. Cómo actúa el agente: pregunta, automático, solo lectura o plan.") % self.mode_chip.text())
+                                      if compact_mode else tr("Cómo actúa el agente: pregunta, automático, solo lectura o plan."))
         free -= 34 if compact_mode else mode_full
         room = free - pad - fm.horizontalAdvance(" · " + label)
         room = min(room, 120 if self.compact else 220)
@@ -2165,10 +2172,10 @@ class ChatPanel(QWidget):
             act.setChecked(a["id"] == cur)
             act.triggered.connect(lambda _=False, i=a["id"]: self.set_assistant(None if i == self.assistant_id() else i))
         if not AS.all_assistants():
-            na = m.addAction("Aún no tienes asistentes")
+            na = m.addAction(tr("Aún no tienes asistentes"))
             na.setEnabled(False)
         m.addSeparator()
-        m.addAction("Crear o editar asistentes…", lambda: self.main.assistants())
+        m.addAction(tr("Crear o editar asistentes…"), lambda: self.main.assistants())
         if started:
             m.setToolTipsVisible(True)
 
@@ -2199,7 +2206,7 @@ class ChatPanel(QWidget):
                 self.pending_files = list(getattr(self, "pending_files", [])) + [f]
         if dirs:                             # una carpeta no se adjunta entera: el agente la explora con sus herramientas
             cur = self.input.toPlainText()
-            self.input.setPlainText((cur + ("\n" if cur and not cur.endswith("\n") else "")) + "\n".join("Carpeta: %s" % d for d in dirs))
+            self.input.setPlainText((cur + ("\n" if cur and not cur.endswith("\n") else "")) + "\n".join(tr("Carpeta: %s") % d for d in dirs))
             self.input.moveCursor(QTextCursor.End)
         self._render_thumbs()
         self.input.setFocus()
@@ -2228,7 +2235,7 @@ class ChatPanel(QWidget):
 
     def _drop_hint(self, on):
         if on and not getattr(self, "_drop", None):
-            self._drop = QLabel("Suelta aquí para adjuntar\nimágenes, documentos o archivos", self)
+            self._drop = QLabel(tr("Suelta aquí para adjuntar\nimágenes, documentos o archivos"), self)
             self._drop.setObjectName("dropHint")
             self._drop.setAlignment(Qt.AlignCenter)
             self._drop.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -2264,7 +2271,7 @@ class ChatPanel(QWidget):
             im = QLabel()
             im.setPixmap(QPixmap(os.path.join(paths.IMG_DIR, n)).scaled(72, 52, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             h.addWidget(im)
-            h.addWidget(tbtn("ui_cerrar", "Quitar", lambda _=False, n=n: (self.pending_imgs.remove(n), self._render_thumbs()), size=12), 0, Qt.AlignTop)
+            h.addWidget(tbtn("ui_cerrar", tr("Quitar"), lambda _=False, n=n: (self.pending_imgs.remove(n), self._render_thumbs()), size=12), 0, Qt.AlignTop)
             self.thumbs.addWidget(w)
         from . import assistants as AS
         a = AS.get(self.assistant_id())
@@ -2275,9 +2282,9 @@ class ChatPanel(QWidget):
             h.setContentsMargins(8, 4, 2, 4)
             h.setSpacing(4)
             h.addWidget(pix_label("ia_controlador", C["acc"], 13))
-            h.addWidget(QLabel("Asistente: " + a["name"]))
+            h.addWidget(QLabel(tr("Asistente: %s") % a["name"]))
             if not (self.session() and self.session().events):
-                h.addWidget(tbtn("ui_cerrar", "Quitar el asistente", lambda _=False: self.set_assistant(None), size=11))
+                h.addWidget(tbtn("ui_cerrar", tr("Quitar el asistente"), lambda _=False: self.set_assistant(None), size=11))
             self.thumbs.addWidget(w)
         for f in getattr(self, "pending_files", []):
             w = QFrame()
@@ -2289,7 +2296,7 @@ class ChatPanel(QWidget):
             nm = QLabel()
             nm.setText(nm.fontMetrics().elidedText(os.path.basename(f), Qt.ElideMiddle, 170))
             h.addWidget(nm)
-            h.addWidget(tbtn("ui_cerrar", "Quitar", lambda _=False, f=f: (self.pending_files.remove(f), self._render_thumbs()), size=11))
+            h.addWidget(tbtn("ui_cerrar", tr("Quitar"), lambda _=False, f=f: (self.pending_files.remove(f), self._render_thumbs()), size=11))
             w.setToolTip(f)
             self.thumbs.addWidget(w)
         self.thumbs_w.setVisible(bool(self.pending_imgs or getattr(self, "pending_files", []) or a))
@@ -2301,7 +2308,7 @@ class ChatPanel(QWidget):
         if self._rec is not None and self._rec.recording():
             return self._stop_dictation()
         if not voice.Recorder.available():
-            return self.main.toast("No encuentro ningún micrófono en este equipo.", icon_name="est_aviso", color=C["warn"])
+            return self.main.toast(tr("No encuentro ningún micrófono en este equipo."), icon_name="est_aviso", color=C["warn"])
         if not voice.stt_ready():
             return self._prepare_dictation()
         self._rec = voice.Recorder()
@@ -2309,12 +2316,12 @@ class ChatPanel(QWidget):
             self._rec.start()
         except Exception as e:
             self._rec = None
-            return self.main.toast("No se pudo usar el micrófono: %s" % e, icon_name="est_aviso", color=C["warn"])
+            return self.main.toast(tr("No se pudo usar el micrófono: %s") % e, icon_name="est_aviso", color=C["warn"])
         self._rec_t0 = time.time()
         self._rec_ph = self.input.placeholderText()
-        self.input.setPlaceholderText("Escuchando… habla con normalidad y pulsa ■ para terminar")
+        self.input.setPlaceholderText(tr("Escuchando… habla con normalidad y pulsa ■ para terminar"))
         self.mic_btn.setIcon(icon("trans_detener", C["bad"], 14))
-        self.mic_btn.setToolTip("Terminar el dictado")
+        self.mic_btn.setToolTip(tr("Terminar el dictado"))
         self.rec_wave.set_busy(False)
         self.rec_cancel.show()
         self.rec_bar.show()
@@ -2349,23 +2356,23 @@ class ChatPanel(QWidget):
         self.rec_wave.set_busy(False)
         self.mic_btn.setEnabled(True)
         self.mic_btn.setIcon(icon("voz_microfono", C["mut"], 16))
-        self.mic_btn.setToolTip("Dictar con el micrófono")
-        self.input.setPlaceholderText(getattr(self, "_rec_ph", "Escribe un mensaje…"))
+        self.mic_btn.setToolTip(tr("Dictar con el micrófono"))
+        self.input.setPlaceholderText(getattr(self, "_rec_ph", tr("Escribe un mensaje…")))
 
     def _stop_dictation(self):
         from . import voice
         rec, self._rec = self._rec, None
         self.mic_btn.setIcon(icon("voz_microfono", C["mut"], 16))
-        self.mic_btn.setToolTip("Dictar con el micrófono")
+        self.mic_btn.setToolTip(tr("Dictar con el micrófono"))
         path = rec.stop() if rec else None
         if not path:
             self._end_rec_ui()
-            return self.main.toast("No se grabó nada.", icon_name="est_aviso", color=C["warn"])
+            return self.main.toast(tr("No se grabó nada."), icon_name="est_aviso", color=C["warn"])
         self.rec_wave.set_busy(True)              # la franja sigue a la vista mientras se transcribe
         self.rec_cancel.hide()
         self.rec_dot.setStyleSheet("background:%s; border-radius:5px" % C["acc"])
         self.rec_time.setText("…")
-        self.input.setPlaceholderText("Pasando tu voz a texto…")
+        self.input.setPlaceholderText(tr("Pasando tu voz a texto…"))
         self.mic_btn.setEnabled(False)
         cfg = core.SET.snapshot()
 
@@ -2374,7 +2381,7 @@ class ChatPanel(QWidget):
             if isinstance(r, Exception):
                 return self.main.toast(str(r), icon_name="est_aviso", color=C["warn"])
             if not str(r).strip():
-                return self.main.toast("No entendí nada en la grabación.", icon_name="est_aviso", color=C["warn"])
+                return self.main.toast(tr("No entendí nada en la grabación."), icon_name="est_aviso", color=C["warn"])
             cur = self.input.toPlainText()
             self.input.setPlainText((cur + (" " if cur and not cur.endswith((" ", "\n")) else "")) + str(r).strip())
             self.input.moveCursor(QTextCursor.End)
@@ -2384,19 +2391,19 @@ class ChatPanel(QWidget):
     def _prepare_dictation(self):
         from . import voice
         if getattr(self.main, "_voice_setup", False):
-            return self.main.toast("El dictado se está preparando; te aviso cuando esté listo.", icon_name="est_info")
-        if QMessageBox.question(self, "Preparar el dictado",
-                                "Para dictar, %s descarga una sola vez el reconocimiento de voz (unos 450 MB con el modelo). "
-                                "Funciona en tu equipo, sin enviar tu voz a ningún sitio.\n\n¿Prepararlo ahora?" % APP_NAME) != QMessageBox.StandardButton.Yes:
+            return self.main.toast(tr("El dictado se está preparando; te aviso cuando esté listo."), icon_name="est_info")
+        if QMessageBox.question(self, tr("Preparar el dictado"),
+                                tr("Para dictar, %s descarga una sola vez el reconocimiento de voz (unos 450 MB con el modelo). "
+                                "Funciona en tu equipo, sin enviar tu voz a ningún sitio.\n\n¿Prepararlo ahora?") % APP_NAME) != QMessageBox.StandardButton.Yes:
             return
         self.main._voice_setup = True
-        self.main.toast("Preparando el dictado en segundo plano (unos minutos)…", icon_name="est_info", ms=9000)
+        self.main.toast(tr("Preparando el dictado en segundo plano (unos minutos)…"), icon_name="est_info", ms=9000)
 
         def done(r):
             self.main._voice_setup = False
             if isinstance(r, Exception):
-                return self.main.toast("No se pudo preparar el dictado: %s" % str(r)[:200], icon_name="est_aviso", color=C["warn"])
-            self.main.toast("Dictado listo: pulsa el micrófono y habla.", icon_name="ui_check", color=C["ok"], ms=9000)
+                return self.main.toast(tr("No se pudo preparar el dictado: %s") % str(r)[:200], icon_name="est_aviso", color=C["warn"])
+            self.main.toast(tr("Dictado listo: pulsa el micrófono y habla."), icon_name="ui_check", color=C["ok"], ms=9000)
         model = core.SET.snapshot().get("voice_model") or "base"
         run_bg(lambda: voice.ensure_stt(model=model), done)
 
@@ -2404,7 +2411,7 @@ class ChatPanel(QWidget):
         has = bool(self.input.toPlainText().strip() or self.pending_imgs or getattr(self, "pending_files", []))
         self.send_btn.setEnabled(self.busy or has)
         self.send_btn.setIcon(icon("trans_detener" if self.busy else "lista_subir", C["on_send"] if (self.busy or has) else C["faint"], 14 if self.busy else 16))
-        self.send_btn.setToolTip("Detener" if self.busy else "Enviar (Enter)")
+        self.send_btn.setToolTip(tr("Detener") if self.busy else tr("Enviar (Enter)"))
 
     def sync(self):
         cfg = core.SET.snapshot()
@@ -2415,20 +2422,20 @@ class ChatPanel(QWidget):
         why = core.not_ready(cfg)
         if why == "model_file":
             m = core.active_model(cfg)
-            self.ban_txt.setText("No encuentro el archivo de «%s» donde estaba. Si lo moviste de carpeta o de disco, lo busco yo."
+            self.ban_txt.setText(tr("No encuentro el archivo de «%s» donde estaba. Si lo moviste de carpeta o de disco, lo busco yo.")
                                  % (core.model_title(m) or m.get("name")))
-            self.ban_btn.setText("Buscarlo")
+            self.ban_btn.setText(tr("Buscarlo"))
             self.ban_btn.show()
         elif why:
-            self.ban_txt.setText("Aún no hay un modelo configurado." if why != "engine" else "Falta el motor llama.cpp.")
-            self.ban_btn.setText("Configurar")
+            self.ban_txt.setText(tr("Aún no hay un modelo configurado.") if why != "engine" else tr("Falta el motor llama.cpp."))
+            self.ban_btn.setText(tr("Configurar"))
             self.ban_btn.show()
         elif st == "loading":
-            self.ban_txt.setText("Cargando el modelo en memoria. En equipos sin GPU puede tardar unos minutos.")
+            self.ban_txt.setText(tr("Cargando el modelo en memoria. En equipos sin GPU puede tardar unos minutos."))
             self.ban_btn.hide()
         else:
-            self.ban_txt.setText("El servidor externo no responde." if ext else (llm.get("error") or "El modelo está apagado."))
-            self.ban_btn.setText("Encender modelo")
+            self.ban_txt.setText(tr("El servidor externo no responde.") if ext else (llm.get("error") or tr("El modelo está apagado.")))
+            self.ban_btn.setText(tr("Encender modelo"))
             self.ban_btn.setVisible(not ext)
         self.mode_chip.setText(MODE_LABEL.get(cfg["mode"], cfg["mode"]))
         self.mode_chip.setToolTip(A.MODES.get(cfg["mode"], ""))
@@ -2440,20 +2447,20 @@ class ChatPanel(QWidget):
         label, desc = next((l, d) for k, l, d in core.EFFORTS if k == eff)
         ext = cfg["llm_mode"] == "external"
         m = core.active_model(cfg)
-        name = ((cfg["external_model"] or "servidor externo").split("/")[-1]) if ext else (core.model_title(m) if m else "Elegir modelo")
+        name = ((cfg["external_model"] or tr("servidor externo")).split("/")[-1]) if ext else (core.model_title(m) if m else tr("Elegir modelo"))
         self._chip_name, self._chip_label = name, label
         self._fit_model_chip()                                          # modelo · esfuerzo (se cambian en el mismo menú)
-        self.model_chip.setToolTip("%s\nEsfuerzo %s: %s\nPulsa para cambiar de modelo o de esfuerzo." % (
+        self.model_chip.setToolTip(tr("%s\nEsfuerzo %s: %s\nPulsa para cambiar de modelo o de esfuerzo.") % (
             ("%s · %s" % (core.model_title(m), core.model_quant(m))) if (m and not ext) else name, label.lower(), desc))
         if not self.rec_bar.isVisible():         # mientras se dicta, la caja dice «Escuchando…» / «Pasando tu voz a texto…»
-            self.input.setPlaceholderText("Pide algo sobre el proyecto…" if self.project_id else "Escribe un mensaje…")
+            self.input.setPlaceholderText(tr("Pide algo sobre el proyecto…") if self.project_id else tr("Escribe un mensaje…"))
         self._sync_send()
 
 
 # ---------------------------------------------------------------- pagina del modo Code
 CODE_LAYOUT = {"tree": True, "term": True, "agent": True, "agent_side": "right", "term_pos": "bottom",
                "w_tree": 230, "w_agent": 420, "h_term": 220, "w_term": 420, "focus": None}
-CHAT_WIDTHS = [("Estrecha", 660), ("Normal", 780), ("Ancha", 1040), ("Todo el ancho", 0)]
+CHAT_WIDTHS = [(tr("Estrecha"), 660), (tr("Normal"), 780), (tr("Ancha"), 1040), (tr("Todo el ancho"), 0)]
 
 
 class CodePage(QWidget):
@@ -2479,14 +2486,14 @@ class CodePage(QWidget):
         g.setObjectName("greeting")
         g.setAlignment(Qt.AlignCenter)
         ev.addWidget(g)
-        s = QLabel("Crea un proyecto o abre una carpeta. El agente trabajará dentro de ella:\ncrea y edita archivos, ejecuta comandos y te muestra cada cambio en el editor.")
+        s = QLabel(tr("Crea un proyecto o abre una carpeta. El agente trabajará dentro de ella:\ncrea y edita archivos, ejecuta comandos y te muestra cada cambio en el editor."))
         s.setObjectName("muted")
         s.setAlignment(Qt.AlignCenter)
         ev.addWidget(s)
         row = QHBoxLayout()
         row.addStretch(1)
-        row.addWidget(btn("Nuevo proyecto", "primary", main.new_project, "acc_anadir"))
-        row.addWidget(btn("Abrir carpeta…", cb=main.open_folder_project, ico="act_carpeta_abierta"))
+        row.addWidget(btn(tr("Nuevo proyecto"), "primary", main.new_project, "acc_anadir"))
+        row.addWidget(btn(tr("Abrir carpeta…"), cb=main.open_folder_project, ico="act_carpeta_abierta"))
         row.addStretch(1)
         ev.addLayout(row)
         ev.addStretch(2)
@@ -2670,7 +2677,7 @@ class CodePage(QWidget):
                 self._toggle(w, k, False, sp, keep_focus=True)
             self.main.set_sidebar(False)
             self.lay["focus"] = state
-            self.main.toast("Modo enfoque: solo el editor. Pulsa Ctrl+Shift+M para volver.", ms=3500, icon_name="app_pantalla_completa")
+            self.main.toast(tr("Modo enfoque: solo el editor. Pulsa Ctrl+Shift+M para volver."), ms=3500, icon_name="app_pantalla_completa")
         self.layout_changed.emit()
         self.main.sync()
 
@@ -2706,7 +2713,7 @@ class CodePage(QWidget):
     def _new_file(self):
         if not self.project:
             return
-        n, ok = QInputDialog.getText(self, "Nuevo archivo", "Nombre (puede incluir carpetas, p. ej. src/main.py):")
+        n, ok = QInputDialog.getText(self, tr("Nuevo archivo"), tr("Nombre (puede incluir carpetas, p. ej. src/main.py):"))
         if ok and n.strip():
             fp = os.path.join(self.project["path"], n.strip())
             os.makedirs(os.path.dirname(fp), exist_ok=True)
@@ -2764,6 +2771,7 @@ class Main(QMainWindow):
         self.poll_t = QTimer(self, interval=2500, timeout=self.poll)
         self.poll_t.start()
         self.poll()
+        QTimer.singleShot(2500, self._update_on_start)                            # «se actualizó» o una versión ya descargada
         QTimer.singleShot(9000, self.check_news)                                   # novedades al poco de abrir…
         self.news_t = QTimer(self, interval=6 * 3600 * 1000, timeout=self.check_news)   # …y cada 6 horas
         self.news_t.start()
@@ -2840,7 +2848,7 @@ class Main(QMainWindow):
         self._sig_chat = self._sig_code = None
         self.refresh_lists()
         self._save_layout()
-        self.toast("Distribución de paneles restablecida.", ms=2500, icon_name="act_layout_ui")
+        self.toast(tr("Distribución de paneles restablecida."), ms=2500, icon_name="act_layout_ui")
 
     def set_chat_width(self, px):
         self.chat_width = px
@@ -2856,26 +2864,26 @@ class Main(QMainWindow):
             a.setCheckable(True)
             a.setChecked(bool(on))
             return a
-        check("Barra lateral fija", self.side_pinned(), self.toggle_sidebar, "ui_barra_lateral", "Ctrl+Shift+S")
+        check(tr("Barra lateral fija"), self.side_pinned(), self.toggle_sidebar, "ui_barra_lateral", "Ctrl+Shift+S")
         if self.mode == "code" and self.code.project:
             c = self.code
-            check("Explorador de archivos", not c.left.isHidden(), c.toggle_tree, "pan_explorador", "Ctrl+B")
-            check("Terminal", not c.term.isHidden(), c.toggle_terminal, "pan_consola", "Ctrl+`")
-            check("Panel del agente", not c.chat.isHidden(), c.toggle_agent, "mat_comentario", "Ctrl+L")
+            check(tr("Explorador de archivos"), not c.left.isHidden(), c.toggle_tree, "pan_explorador", "Ctrl+B")
+            check(tr("Terminal"), not c.term.isHidden(), c.toggle_terminal, "pan_consola", "Ctrl+`")
+            check(tr("Panel del agente"), not c.chat.isHidden(), c.toggle_agent, "mat_comentario", "Ctrl+L")
             m.addSeparator()
             g1 = QActionGroup(m)
-            for side, text in (("left", "Agente a la izquierda"), ("right", "Agente a la derecha")):
+            for side, text in (("left", tr("Agente a la izquierda")), ("right", tr("Agente a la derecha"))):
                 a = check(text, c.lay["agent_side"] == side, lambda s=side: c.set_agent_side(s), "uij_alinear_izq" if side == "left" else "uij_alinear_der")
                 g1.addAction(a)
             g2 = QActionGroup(m)
-            for pos, text, ico in (("bottom", "Terminal debajo del editor", "ui_dividir_v"), ("right", "Terminal a la derecha del editor", "ui_dividir_h")):
+            for pos, text, ico in (("bottom", tr("Terminal debajo del editor"), "ui_dividir_v"), ("right", tr("Terminal a la derecha del editor"), "ui_dividir_h")):
                 a = check(text, c.lay["term_pos"] == pos, lambda p=pos: c.set_term_pos(p), ico)
                 g2.addAction(a)
             m.addSeparator()
-            check("Modo enfoque (solo el editor)", c.lay.get("focus"), c.toggle_focus, "app_pantalla_completa", "Ctrl+Shift+M")
+            check(tr("Modo enfoque (solo el editor)"), c.lay.get("focus"), c.toggle_focus, "app_pantalla_completa", "Ctrl+Shift+M")
         else:
             m.addSeparator()
-            sub = m.addMenu(icon("uij_layout_horizontal"), "Ancho de la conversación")
+            sub = m.addMenu(icon("uij_layout_horizontal"), tr("Ancho de la conversación"))
             g = QActionGroup(sub)
             for text, px in CHAT_WIDTHS:
                 a = sub.addAction(text, lambda *_, px=px: self.set_chat_width(px))
@@ -2883,7 +2891,7 @@ class Main(QMainWindow):
                 a.setChecked((self.chat_width or 0) == px)
                 g.addAction(a)
         m.addSeparator()
-        m.addAction(icon("acc_refrescar"), "Restablecer la distribución", self.reset_layout)
+        m.addAction(icon("acc_refrescar"), tr("Restablecer la distribución"), self.reset_layout)
 
     def sync_mcp(self):
         """Arranca los conectores MCP configurados (en segundo plano) y avisa si alguno falla."""
@@ -2897,7 +2905,7 @@ class Main(QMainWindow):
                 return
             bad = {n: e for n, e in st.items() if e}
             if bad:
-                self.toast("No se pudo conectar: %s" % "; ".join("%s (%s)" % (n, e[:80]) for n, e in bad.items()), icon_name="est_aviso", color=C["warn"])
+                self.toast(tr("No se pudo conectar: %s") % "; ".join("%s (%s)" % (n, e[:80]) for n, e in bad.items()), icon_name="est_aviso", color=C["warn"])
         run_bg(lambda: harness.mcp_sync(servers), done)
 
     # ---- construccion
@@ -2971,8 +2979,8 @@ class Main(QMainWindow):
         name = QLabel(APP_NAME)
         name.setStyleSheet("font-weight:700; font-size:12pt")
         top.addWidget(name, 1)
-        b_hide = tbtn("ui_menu_hamburguesa", "Ocultar barra lateral  ·  Ctrl+Shift+S", self.toggle_sidebar, size=16)
-        b_hide.setAccessibleName("Ocultar barra lateral")
+        b_hide = tbtn("ui_menu_hamburguesa", tr("Ocultar barra lateral  ·  Ctrl+Shift+S"), self.toggle_sidebar, size=16)
+        b_hide.setAccessibleName(tr("Ocultar barra lateral"))
         top.addWidget(b_hide)
         sv.addWidget(self.side_top)
         sv.addSpacing(4)
@@ -2983,7 +2991,7 @@ class Main(QMainWindow):
         sl.setSpacing(3)
         self.seg_chat = QPushButton("Chat")
         self.seg_code = QPushButton("Code")
-        for b, m, tip in ((self.seg_chat, "chat", "Conversaciones (Ctrl+1)"), (self.seg_code, "code", "Proyectos de código (Ctrl+2)")):
+        for b, m, tip in ((self.seg_chat, "chat", tr("Conversaciones (Ctrl+1)")), (self.seg_code, "code", tr("Proyectos de código (Ctrl+2)"))):
             b.setObjectName("segBtn")
             b.setCheckable(True)
             b.setToolTip(tip)
@@ -2998,12 +3006,12 @@ class Main(QMainWindow):
         cl = QVBoxLayout(cw)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.setSpacing(2)
-        self._nav(cl, "acc_renombrar", "Nueva conversación", self.new_conversation, "Ctrl+N")
-        self._nav(cl, "acc_buscar", "Buscar", self.focus_search, "Ctrl+K")
-        self._nav(cl, "ia_controlador", "Modelos", self.models)
+        self._nav(cl, "acc_renombrar", tr("Nueva conversación"), self.new_conversation, "Ctrl+N")
+        self._nav(cl, "acc_buscar", tr("Buscar"), self.focus_search, "Ctrl+K")
+        self._nav(cl, "ia_controlador", tr("Modelos"), self.models)
         self.search = QLineEdit()
         self.search.setObjectName("search")
-        self.search.setPlaceholderText("Buscar en tus conversaciones")
+        self.search.setPlaceholderText(tr("Buscar en tus conversaciones"))
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(lambda: (setattr(self, "_sig_chat", None), self.refresh_lists()))
         self.search.hide()
@@ -3022,10 +3030,10 @@ class Main(QMainWindow):
         kl = QVBoxLayout(kw)
         kl.setContentsMargins(0, 0, 0, 0)
         kl.setSpacing(2)
-        self._nav(kl, "acc_anadir", "Nuevo proyecto", self.new_project)
-        self._nav(kl, "act_carpeta_abierta", "Abrir carpeta…", self.open_folder_project)
+        self._nav(kl, "acc_anadir", tr("Nuevo proyecto"), self.new_project)
+        self._nav(kl, "act_carpeta_abierta", tr("Abrir carpeta…"), self.open_folder_project)
         # secciones plegables: Proyectos y Conversaciones del proyecto
-        self.sec_projects = panels.Section("Proyectos")
+        self.sec_projects = panels.Section(tr("Proyectos"))
         kl.addWidget(self.sec_projects)
         self.plist = QListWidget()
         self.plist.setObjectName("history")
@@ -3035,8 +3043,8 @@ class Main(QMainWindow):
         self.plist.setContextMenuPolicy(Qt.CustomContextMenu)
         self.plist.customContextMenuRequested.connect(self._project_menu)
         kl.addWidget(self.plist)
-        self.sec_convs = panels.Section("Conversaciones del proyecto")
-        self.sec_convs.extra.addWidget(tbtn("acc_renombrar", "Nueva conversación del proyecto (Ctrl+N)", self.new_conversation, size=14))
+        self.sec_convs = panels.Section(tr("Conversaciones del proyecto"))
+        self.sec_convs.extra.addWidget(tbtn("acc_renombrar", tr("Nueva conversación del proyecto (Ctrl+N)"), self.new_conversation, size=14))
         kl.addWidget(self.sec_convs)
         self.sec_projects.toggled.connect(lambda on: self._fold_section(self.plist, on))
         self.sec_convs.toggled.connect(lambda on: self._fold_section(self.clist, on))
@@ -3050,11 +3058,11 @@ class Main(QMainWindow):
         kl.addStretch(0)                   # con las listas plegadas, lo demás queda arriba
         self.side_stack.addWidget(kw)
         sv.addWidget(self.side_stack, 1)
-        self.update_btn = QPushButton("  Actualización disponible")
+        self.update_btn = QPushButton(tr("  Actualización disponible"))
         self.update_btn.setObjectName("updateBtn")
         self.update_btn.setIcon(icon("acc_descargar", C["acc"], 15))
         self.update_btn.setCursor(Qt.PointingHandCursor)
-        self.update_btn.clicked.connect(self.install_update)
+        self.update_btn.clicked.connect(self._update_clicked)
         self.update_btn.hide()
         sv.addWidget(self.update_btn)
         sv.addSpacing(4)
@@ -3063,7 +3071,7 @@ class Main(QMainWindow):
         foot = QPushButton()
         foot.setObjectName("nav")
         foot.setCursor(Qt.PointingHandCursor)
-        foot.setToolTip("Tu perfil y ajustes")
+        foot.setToolTip(tr("Tu perfil y ajustes"))
         fh = QHBoxLayout(foot)
         fh.setContentsMargins(6, 6, 6, 6)
         self.avatar = QLabel()
@@ -3076,21 +3084,21 @@ class Main(QMainWindow):
         fh.addWidget(pix_label("ui_menu_horizontal", C["mut"], 14))
         foot.setMinimumHeight(42)
         pm = QMenu(self)
-        pm.addAction(icon("acc_ajustes"), "Ajustes", lambda: self.settings("General"))
-        pm.addAction(icon("mat_comentario"), "Personalización", lambda: self.settings("Personalización"))
-        pm.addAction(icon("ia_memoria"), "Memoria", lambda: self.settings("Personalización"))
-        pm.addAction(icon("ia_controlador"), "Asistentes y habilidades", self.assistants)
-        pm.addAction(icon("acc_refrescar"), "Tareas programadas", self.tasks)
-        pm.addAction(icon("ia_controlador"), "Modelos", self.models)
-        pm.addAction(icon("hub_conectar"), "Modelos por API…", self.providers)
+        pm.addAction(icon("acc_ajustes"), tr("Ajustes"), lambda: self.settings("General"))
+        pm.addAction(icon("mat_comentario"), tr("Personalización"), lambda: self.settings("Personalización"))
+        pm.addAction(icon("ia_memoria"), tr("Memoria"), lambda: self.settings("Personalización"))
+        pm.addAction(icon("ia_controlador"), tr("Asistentes y habilidades"), self.assistants)
+        pm.addAction(icon("acc_refrescar"), tr("Tareas programadas"), self.tasks)
+        pm.addAction(icon("ia_controlador"), tr("Modelos"), self.models)
+        pm.addAction(icon("hub_conectar"), tr("Modelos por API…"), self.providers)
         pm.addSeparator()
-        pm.addAction(icon("inp_teclado"), "Atajos de teclado", lambda: self.settings("Atajos de teclado"))
-        pm.addAction(icon("mat_comentario"), "Enviar comentarios…", lambda: FeedbackDialog(self, "idea").exec())
-        pm.addAction(icon("est_error"), "Informar de un error…", lambda: FeedbackDialog(self, "error").exec())
-        pm.addAction(icon("acc_refrescar"), "Buscar actualizaciones", lambda: self.check_news(manual=True))
-        pm.addAction(icon("est_info"), "Acerca de %s" % APP_NAME, lambda: self.settings("Acerca de"))
+        pm.addAction(icon("inp_teclado"), tr("Atajos de teclado"), lambda: self.settings("Atajos de teclado"))
+        pm.addAction(icon("mat_comentario"), tr("Enviar comentarios…"), lambda: FeedbackDialog(self, "idea").exec())
+        pm.addAction(icon("est_error"), tr("Informar de un error…"), lambda: FeedbackDialog(self, "error").exec())
+        pm.addAction(icon("acc_refrescar"), tr("Buscar actualizaciones"), lambda: self.check_news(manual=True))
+        pm.addAction(icon("est_info"), tr("Acerca de %s") % APP_NAME, lambda: self.settings("Acerca de"))
         pm.addSeparator()
-        pm.addAction(icon("ui_cerrar"), "Salir", self.quit_app)
+        pm.addAction(icon("ui_cerrar"), tr("Salir"), self.quit_app)
         foot.clicked.connect(lambda: pm.exec(foot.mapToGlobal(QPoint(0, 0)) - QPoint(0, pm.sizeHint().height() + 4)))   # se abre hacia arriba
         sv.addWidget(foot)
         return self.side
@@ -3103,9 +3111,9 @@ class Main(QMainWindow):
         h = QHBoxLayout(head)
         h.setContentsMargins(14, 0, 0 if self.frameless else 14, 0)
         h.setSpacing(6)
-        self.b_expand = tbtn("ui_menu_hamburguesa", "Barra lateral: pasa el ratón para verla, clic para dejarla fija  ·  Ctrl+Shift+S",
+        self.b_expand = tbtn("ui_menu_hamburguesa", tr("Barra lateral: pasa el ratón para verla, clic para dejarla fija  ·  Ctrl+Shift+S"),
                              self.toggle_sidebar, size=16)
-        self.b_expand.setAccessibleName("Barra lateral")
+        self.b_expand.setAccessibleName(tr("Barra lateral"))
         self.b_expand.hide()
         h.addWidget(self.b_expand)
         self.model_btn = QToolButton()
@@ -3126,23 +3134,23 @@ class Main(QMainWindow):
         h.addWidget(self.title, 2)
         h.addStretch(1)
         # paneles del modo Code: se resaltan cuando estan visibles
-        self.b_tree = tbtn("pan_explorador", "Explorador de archivos  ·  Ctrl+B", lambda: self.code.toggle_tree())
-        self.b_term = tbtn("pan_consola", "Terminal  ·  Ctrl+`", lambda: self.code.toggle_terminal())
-        self.b_agent = tbtn("mat_comentario", "Panel del agente  ·  Ctrl+L", lambda: self.code.toggle_agent())
+        self.b_tree = tbtn("pan_explorador", tr("Explorador de archivos  ·  Ctrl+B"), lambda: self.code.toggle_tree())
+        self.b_term = tbtn("pan_consola", tr("Terminal  ·  Ctrl+`"), lambda: self.code.toggle_terminal())
+        self.b_agent = tbtn("mat_comentario", tr("Panel del agente  ·  Ctrl+L"), lambda: self.code.toggle_agent())
         for b in (self.b_tree, self.b_term, self.b_agent):
             h.addWidget(b)
         self.b_temp = QToolButton()
         self.b_temp.setObjectName("chip")
-        self.b_temp.setText("Temporal")
+        self.b_temp.setText(tr("Temporal"))
         self.b_temp.setCheckable(True)
         self.b_temp.setCursor(Qt.PointingHandCursor)
-        self.b_temp.setAccessibleName("Chat temporal")
-        self.b_temp.setToolTip("Chat temporal: una conversación que no se guarda en el historial y no usa ni cambia la memoria")
+        self.b_temp.setAccessibleName(tr("Chat temporal"))
+        self.b_temp.setToolTip(tr("Chat temporal: una conversación que no se guarda en el historial y no usa ni cambia la memoria"))
         self.b_temp.clicked.connect(lambda on: self.toggle_temp(on))
         h.addWidget(self.b_temp)
-        self.b_web = tbtn("herr_espacio_mundo", "Navegador de Jayth: navega tú o pide al agente que use una web por ti", lambda: self.set_browser(None))
+        self.b_web = tbtn("herr_espacio_mundo", tr("Navegador de Jayth: navega tú o pide al agente que use una web por ti"), lambda: self.set_browser(None))
         h.addWidget(self.b_web)
-        self.b_layout = tbtn("act_layout_ui", "Distribución de paneles")
+        self.b_layout = tbtn("act_layout_ui", tr("Distribución de paneles"))
         self.b_layout.setPopupMode(QToolButton.InstantPopup)
         self.layout_menu = QMenu(self)
         self.layout_menu.aboutToShow.connect(self._fill_layout_menu)
@@ -3150,21 +3158,21 @@ class Main(QMainWindow):
         h.addWidget(self.b_layout)
         self.b_folder = tbtn("act_carpeta_abierta", "", lambda: osys.open_path(self.current_panel().workspace()))
         h.addWidget(self.b_folder)
-        more = tbtn("ui_menu_horizontal", "Más opciones")
+        more = tbtn("ui_menu_horizontal", tr("Más opciones"))
         more.setPopupMode(QToolButton.InstantPopup)
         m = QMenu(self)
-        m.addAction(icon("acc_renombrar"), "Renombrar conversación", lambda: self._rename(self.current_panel().session()))
-        m.addAction(icon("act_carpeta_abierta"), "Abrir carpeta de trabajo", lambda: osys.open_path(self.current_panel().workspace()))
+        m.addAction(icon("acc_renombrar"), tr("Renombrar conversación"), lambda: self._rename(self.current_panel().session()))
+        m.addAction(icon("act_carpeta_abierta"), tr("Abrir carpeta de trabajo"), lambda: osys.open_path(self.current_panel().workspace()))
         m.addSeparator()
-        m.addAction(icon("acc_eliminar", C["bad"]), "Borrar conversación", lambda: self._delete(self.current_panel().session(), self.current_panel()))
+        m.addAction(icon("acc_eliminar", C["bad"]), tr("Borrar conversación"), lambda: self._delete(self.current_panel().session(), self.current_panel()))
         more.setMenu(m)
         h.addWidget(more)
         if self.frameless:
             h.addSpacing(8)
             # botones de ventana con la fuente de iconos de Windows (Segoe Fluent / MDL2)
-            self.b_min = self._winbtn("", "Minimizar", self.showMinimized)
-            self.b_max = self._winbtn("", "Maximizar", self.toggle_max)
-            self.b_close = self._winbtn("", "Cerrar", self.close, close=True)
+            self.b_min = self._winbtn("", tr("Minimizar"), self.showMinimized)
+            self.b_max = self._winbtn("", tr("Maximizar"), self.toggle_max)
+            self.b_close = self._winbtn("", tr("Cerrar"), self.close, close=True)
             for b in (self.b_min, self.b_max, self.b_close):
                 h.addWidget(b, 0, Qt.AlignTop)
         return head
@@ -3184,7 +3192,7 @@ class Main(QMainWindow):
         super().changeEvent(e)
         if getattr(self, "frameless", False) and hasattr(self, "b_max") and e.type() == e.Type.WindowStateChange:
             self.b_max.setText("" if self.isMaximized() else "")
-            self.b_max.setToolTip("Restaurar" if self.isMaximized() else "Maximizar")
+            self.b_max.setToolTip(tr("Restaurar") if self.isMaximized() else tr("Maximizar"))
 
     # ---- barra de titulo integrada (Windows): se quita la nativa y se indica a Windows que zonas son "titulo" y "borde"
     def _native_frame(self):
@@ -3294,7 +3302,7 @@ class Main(QMainWindow):
         if combo and not ok:
             self.toast(self.hotkey.error, icon_name="est_aviso", color=C["warn"])
         elif tell and ok:
-            self.toast("Ventana rápida: pulsa %s desde cualquier programa." % combo, icon_name="ui_check", color=C["ok"])
+            self.toast(tr("Ventana rápida: pulsa %s desde cualquier programa.") % combo, icon_name="ui_check", color=C["ok"])
 
     def quick_open(self):
         if self.quick.isVisible():
@@ -3314,7 +3322,7 @@ class Main(QMainWindow):
             self.set_mode("chat")
         p = self.chat
         if p.busy:
-            return self.toast("El agente sigue trabajando; espera a que termine o detenlo.", icon_name="est_aviso", color=C["warn"])
+            return self.toast(tr("El agente sigue trabajando; espera a que termine o detenlo."), icon_name="est_aviso", color=C["warn"])
         p.open_session(None)
         if shot:
             p._add_image(qimage=QImage.fromData(shot))
@@ -3325,7 +3333,7 @@ class Main(QMainWindow):
     def open_canvas(self, item):
         """Muestra en el lienzo un contenido creado por el agente ({title, kind, path, version, slug})."""
         if not item or not os.path.isfile(item.get("path", "")):
-            return self.toast("Ese contenido del lienzo ya no existe.", icon_name="est_aviso", color=C["warn"])
+            return self.toast(tr("Ese contenido del lienzo ya no existe."), icon_name="est_aviso", color=C["warn"])
         self.canvas.load(item)
         self.set_canvas(True)
 
@@ -3379,11 +3387,11 @@ class Main(QMainWindow):
         self.tray = QSystemTrayIcon(make_icon(), self)
         self.tray.setToolTip(APP_NAME)
         m = QMenu()
-        m.addAction(icon("acc_abrir_externo"), "Mostrar", self._show)
-        m.addAction(icon("mat_comentario"), "Pregunta rápida", lambda: QTimer.singleShot(250, self.quick_open))
-        m.addAction(icon("trans_detener"), "Detener agente", lambda: (self.chat.stop(), self.code.chat.stop()))
+        m.addAction(icon("acc_abrir_externo"), tr("Mostrar"), self._show)
+        m.addAction(icon("mat_comentario"), tr("Pregunta rápida"), lambda: QTimer.singleShot(250, self.quick_open))
+        m.addAction(icon("trans_detener"), tr("Detener agente"), lambda: (self.chat.stop(), self.code.chat.stop()))
         m.addSeparator()
-        m.addAction(icon("ui_cerrar"), "Salir", self.quit_app)
+        m.addAction(icon("ui_cerrar"), tr("Salir"), self.quit_app)
         self.tray.setContextMenu(m)
         self.tray.activated.connect(lambda r: r == QSystemTrayIcon.Trigger and self._show())
         self.tray.show()
@@ -3397,9 +3405,24 @@ class Main(QMainWindow):
         self._quitting = True
         self.close()
 
+    def restart_app(self):
+        """Cierra Jayth y lo vuelve a abrir (p. ej. tras cambiar el idioma de la interfaz). Si hay una actualización
+        lista, se instala de paso."""
+        self._restart = True
+        self.quit_app()
+        if self.isVisible():                 # el usuario canceló la salida (archivos sin guardar, agente trabajando)
+            self._restart = False
+            self._quitting = False
+
+    def restart_to_update(self):
+        """«Reiniciar para actualizar»: cierra Jayth, instala la versión descargada y lo vuelve a abrir."""
+        if any(s.run for s in core.SESSIONS.values()):
+            return QMessageBox.information(self, APP_NAME, tr("Espera a que el agente termine antes de actualizar."))
+        self.restart_app()
+
     def notify_pending(self, text, ts):
         if core.SET.snapshot().get("notifications", True) and not self.isActiveWindow() and ts > time.time() - 10:
-            self.tray.showMessage(APP_NAME, "El agente espera tu aprobación: " + text, QSystemTrayIcon.Information, 6000)
+            self.tray.showMessage(APP_NAME, tr("El agente espera tu aprobación: %s") % text, QSystemTrayIcon.Information, 6000)
 
     # ---- modos
     def current_panel(self):
@@ -3526,16 +3549,108 @@ class Main(QMainWindow):
     def _got_app_news(self, r, manual):
         if isinstance(r, Exception):
             if manual:
-                self.toast("No pude consultar si hay actualizaciones (¿sin internet?).", icon_name="est_aviso", color=C["warn"])
+                self.toast(tr("No pude consultar si hay actualizaciones (¿sin internet?)."), icon_name="est_aviso", color=C["warn"])
+            return
+        if not r:
+            if getattr(self, "_upd_state", None) != "ready":
+                self._set_update_state(None)
+            if manual:
+                self.toast(tr("Tienes la última versión de %s.") % APP_NAME, icon_name="ui_check", color=C["ok"])
             return
         self.update_info = r
-        self.update_btn.setVisible(bool(r))
-        if r:
-            self.update_btn.setToolTip("Versión del %s: %s" % (r["date"], r["message"]))
-            self.toast("Hay una versión nueva de %s (%s): «%s»." % (APP_NAME, r["date"], r["message"]), "Actualizar", self.install_update,
+        if not updater.can_update_in_background():          # copias de git o del instalador de código: como siempre
+            self._set_update_state("available")
+            self.update_btn.setToolTip(tr("Versión del %s: %s") % (r["date"], r["message"]))
+            self.toast(tr("Hay una versión nueva de %s (%s): «%s».") % (APP_NAME, r["date"], r["message"]), tr("Actualizar"), self.install_update,
                        12000, "acc_descargar")
-        elif manual:
-            self.toast("Tienes la última versión de %s." % APP_NAME, icon_name="ui_check", color=C["ok"])
+            return
+        d = updater.ready()
+        if d and d.get("version") == r.get("version"):
+            return self._update_ready(d, announce=manual)
+        if getattr(self, "_upd_state", None) == "downloading":
+            return
+        if manual or core.SET.snapshot().get("auto_install_updates", True):
+            return self._download_update()                   # en segundo plano: no interrumpe nada
+        self._set_update_state("available")
+        self.update_btn.setToolTip(tr("Versión del %s: %s") % (r["date"], r["message"]))
+        self.toast(tr("Hay una versión nueva de %s (%s): «%s».") % (APP_NAME, r["date"], r["message"]), tr("Descargar"),
+                   self._download_update, 12000, "acc_descargar")
+
+    # ---- actualización en segundo plano: disponible → descargando → lista («Reiniciar para actualizar»)
+    def _set_update_state(self, st):
+        self._upd_state = st
+        b = self.update_btn
+        b.setVisible(st is not None)
+        if st == "available":
+            b.setText(tr("  Actualización disponible"))
+            b.setIcon(icon("acc_descargar", C["acc"], 15))
+        elif st == "downloading":
+            b.setText(tr("  Descargando actualización… %d %%") % getattr(self, "_upd_pct", 0))
+            b.setIcon(icon("acc_descargar", C["acc"], 15))
+            b.setToolTip(tr("Se descarga en segundo plano; puedes seguir trabajando."))
+        elif st == "ready":
+            b.setText(tr("  Reiniciar para actualizar"))
+            b.setIcon(icon("acc_refrescar", C["acc"], 15))
+
+    def _update_clicked(self):
+        st = getattr(self, "_upd_state", None)
+        if st == "ready":
+            return self.restart_to_update()
+        if st == "downloading":
+            return self.toast(tr("La actualización se está descargando en segundo plano; puedes seguir trabajando."), ms=4000,
+                              icon_name="acc_descargar")
+        if updater.can_update_in_background():
+            return self._download_update()
+        self.install_update()
+
+    def _download_update(self):
+        info = self.update_info
+        if not info or getattr(self, "_upd_state", None) == "downloading":
+            return
+        self._upd_pct = 0
+
+        def progress(done, total, phase):            # en el hilo de la descarga: solo se guarda el porcentaje
+            if total:
+                self._upd_pct = min(100, int(done * 100 / total))
+
+        def finished(r):
+            self._upd_timer.stop()
+            if isinstance(r, Exception):
+                self._set_update_state("available")
+                self.update_btn.setToolTip(tr("No se pudo descargar la actualización (%s). Pulsa para reintentar.") % r)
+                return
+            self._update_ready(r, announce=True)
+        self._set_update_state("downloading")
+        self._upd_timer = QTimer(self, interval=800, timeout=lambda: self._set_update_state("downloading"))
+        self._upd_timer.start()
+        run_bg(lambda: updater.download_update(info, progress), finished)
+
+    def _update_ready(self, d, announce):
+        self._set_update_state("ready")
+        on_exit = core.SET.snapshot().get("auto_install_updates", True)
+        self.update_btn.setToolTip((tr("La versión %s está lista. Se instalará sola al cerrar %s; pulsa aquí para instalarla ahora.")
+                                    if on_exit else tr("La versión %s está lista. Pulsa aquí para instalarla (%s se reiniciará).")) % (d["version"], APP_NAME))
+        if announce:
+            self.toast((tr("La versión %s de %s está lista. Se instalará al cerrar la app, o reinicia ahora.") if on_exit
+                        else tr("La versión %s de %s está lista para instalar.")) % (d["version"], APP_NAME),
+                       tr("Reiniciar ahora"), self.restart_to_update, 12000, "acc_refrescar")
+
+    def _update_on_start(self):
+        """Al abrir: aviso de que se acaba de actualizar, o una versión que ya estaba descargada de antes."""
+        if not updater.can_update_in_background():
+            return
+        done = updater.just_updated()
+        if done:
+            from PySide6.QtGui import QDesktopServices
+            from PySide6.QtCore import QUrl
+            url = done.get("url") or "https://github.com/%s/releases/tag/v%s" % (updater.REPO, done["version"])
+            self.toast(tr("%s se actualizó a la versión %s.") % (APP_NAME, done["version"]), tr("Novedades"),
+                       lambda: QDesktopServices.openUrl(QUrl(url)), 10000, "ui_check", C["ok"])
+            return
+        d = updater.ready()
+        if d:
+            self.update_info = dict(d, asset=None)
+            self._update_ready(d, announce=False)
 
     def _got_model_news(self, news):
         if isinstance(news, Exception) or not news:
@@ -3543,24 +3658,26 @@ class Main(QMainWindow):
         self.model_news = news
         seen = list(core.SET.snapshot().get("model_news_seen") or [])
         for n in news:
-            self.toast("Nuevo modelo disponible: %s (más reciente que tu %s)." % (n["title"], n["for"]), "Ver",
+            self.toast(tr("Nuevo modelo disponible: %s (más reciente que tu %s).") % (n["title"], n["for"]), tr("Ver"),
                        lambda r=n["repo"]: self.setup("model", r), 15000, "ia_controlador")
             seen.append(n["repo"])
         core.SET.update({"model_news_seen": seen[-50:]})
 
     def install_update(self):
+        if updater.can_update_in_background():                # app empaquetada: siempre por el camino sin interrupciones
+            return self.restart_to_update() if updater.ready() else self._download_update()
         info = self.update_info
         if not info:
             return
         if any(s.run for s in core.SESSIONS.values()):
-            return QMessageBox.information(self, APP_NAME, "Espera a que el agente termine antes de actualizar.")
-        if QMessageBox.question(self, "Actualizar %s" % APP_NAME, "Versión del %s:\n«%s»\n\n%s se cerrará, se actualizará y volverá a abrirse. "
-                                "Tus conversaciones, ajustes y modelos se conservan. ¿Actualizar ahora?" % (info["date"], info["message"], APP_NAME)) \
+            return QMessageBox.information(self, APP_NAME, tr("Espera a que el agente termine antes de actualizar."))
+        if QMessageBox.question(self, tr("Actualizar %s") % APP_NAME, tr("Versión del %s:\n«%s»\n\n%s se cerrará, se actualizará y volverá a abrirse. "
+                                "Tus conversaciones, ajustes y modelos se conservan. ¿Actualizar ahora?") % (info["date"], info["message"], APP_NAME)) \
                 != QMessageBox.StandardButton.Yes:
             return
         def done(r):
             if isinstance(r, Exception):
-                return QMessageBox.warning(self, APP_NAME, "No se pudo actualizar: %s" % r)
+                return QMessageBox.warning(self, APP_NAME, tr("No se pudo actualizar: %s") % r)
             ok, how = r
             if not ok:
                 return QMessageBox.warning(self, APP_NAME, how)
@@ -3569,8 +3686,8 @@ class Main(QMainWindow):
             self.quit_app()
         if updater.installed()["kind"] == "frozen":          # hay que descargar el paquete: en segundo plano
             self.update_btn.setEnabled(False)
-            self.update_btn.setText("  Descargando actualización…")
-            self.toast("Descargando la versión nueva. %s se reiniciará al terminar." % APP_NAME, ms=6000, icon_name="acc_descargar")
+            self.update_btn.setText(tr("  Descargando actualización…"))
+            self.toast(tr("Descargando la versión nueva. %s se reiniciará al terminar.") % APP_NAME, ms=6000, icon_name="acc_descargar")
             run_bg(lambda: updater.apply_update(info), done)
         else:
             done(updater.apply_update(info))
@@ -3606,7 +3723,7 @@ class Main(QMainWindow):
             self.select_project(d.result_project["id"])
 
     def open_folder_project(self):
-        path = QFileDialog.getExistingDirectory(self, "Abrir carpeta como proyecto", os.path.expanduser("~"))
+        path = QFileDialog.getExistingDirectory(self, tr("Abrir carpeta como proyecto"), os.path.expanduser("~"))
         if not path:
             return
         cfg = core.SET.snapshot()
@@ -3629,10 +3746,10 @@ class Main(QMainWindow):
             return
         p = core.project(core.SET.snapshot(), it.data(Qt.UserRole))
         m = QMenu(self)
-        a_edit = m.addAction(icon("acc_renombrar"), "Editar proyecto…")
+        a_edit = m.addAction(icon("acc_renombrar"), tr("Editar proyecto…"))
         a_os = m.addAction(icon("act_carpeta_abierta"), SHOW_IN)
         m.addSeparator()
-        a_rm = m.addAction(icon("ui_cerrar", C["bad"]), "Quitar de la lista")
+        a_rm = m.addAction(icon("ui_cerrar", C["bad"]), tr("Quitar de la lista"))
         a = m.exec(self.plist.mapToGlobal(pos))
         if a == a_edit:
             d = ProjectDialog(self, p)
@@ -3642,7 +3759,7 @@ class Main(QMainWindow):
         elif a == a_os:
             osys.open_path(p["path"])
         elif a == a_rm:
-            if QMessageBox.question(self, "Quitar proyecto", "¿Quitar «%s» de la lista? La carpeta y sus archivos no se borran." % p["name"]) == QMessageBox.StandardButton.Yes:
+            if QMessageBox.question(self, tr("Quitar proyecto"), tr("¿Quitar «%s» de la lista? La carpeta y sus archivos no se borran.") % p["name"]) == QMessageBox.StandardButton.Yes:
                 core.SET.remove_project(p["id"])
                 cfg = core.SET.snapshot()
                 self.code.set_project(core.project(cfg, cfg["active_project"]))
@@ -3678,11 +3795,11 @@ class Main(QMainWindow):
                 if p["id"] == pid:
                     it.setSelected(True)
             if not cfg["projects"]:
-                e = QListWidgetItem("Aún no hay proyectos")
+                e = QListWidgetItem(tr("Aún no hay proyectos"))
                 e.setFlags(Qt.NoItemFlags)
                 e.setForeground(QGuiApplication.palette().placeholderText())
                 self.plist.addItem(e)
-            fill_history(self.clist, cs, self.code.chat.sid, empty_text="Las conversaciones del proyecto aparecerán aquí", folded=self.folded)
+            fill_history(self.clist, cs, self.code.chat.sid, empty_text=tr("Las conversaciones del proyecto aparecerán aquí"), folded=self.folded)
 
     def _history_click(self, it, panel):
         """Clic en el historial: abre la conversación o pliega/despliega su grupo (Hoy, Ayer…)."""
@@ -3705,8 +3822,8 @@ class Main(QMainWindow):
             return
         s = core.SESSIONS.get(it.data(Qt.UserRole))
         m = QMenu(self)
-        a_ren = m.addAction(icon("acc_renombrar"), "Renombrar")
-        a_del = m.addAction(icon("acc_eliminar", C["bad"]), "Borrar")
+        a_ren = m.addAction(icon("acc_renombrar"), tr("Renombrar"))
+        a_del = m.addAction(icon("acc_eliminar", C["bad"]), tr("Borrar"))
         a = m.exec(lst.mapToGlobal(pos))
         if a == a_ren:
             self._rename(s)
@@ -3716,7 +3833,7 @@ class Main(QMainWindow):
     def _rename(self, s):
         if not s:
             return
-        t, ok = QInputDialog.getText(self, "Renombrar", "Nuevo nombre:", text=s.title)
+        t, ok = QInputDialog.getText(self, tr("Renombrar"), tr("Nuevo nombre:"), text=s.title)
         if ok and t.strip():
             s.rename(t)          # a partir de aqui el modelo ya no cambia el nombre
             self.on_chat_changed()
@@ -3724,7 +3841,7 @@ class Main(QMainWindow):
     def _delete(self, s, panel):
         if not s:
             return
-        if QMessageBox.question(self, "Borrar conversación", "¿Borrar «%s»? No se puede deshacer." % s.title) == QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, tr("Borrar conversación"), tr("¿Borrar «%s»? No se puede deshacer.") % s.title) == QMessageBox.StandardButton.Yes:
             s.delete()
             if panel.sid == s.id:
                 panel.open_session(None)
@@ -3760,22 +3877,22 @@ class Main(QMainWindow):
                 grp.addAction(a)
                 a.triggered.connect(lambda _=False, p=p, n=name: (PV.use(p, n), setattr(self, "llm", {"state": "off"}), self.poll(), self.sync()))
         if (ext or cfg["external_model"]) and not provs:
-            a = m.addAction("%s\tservidor externo" % (cfg["external_model"] or cfg["external_url"]))
+            a = m.addAction(tr("%s\tservidor externo") % (cfg["external_model"] or cfg["external_url"]))
             a.setCheckable(True)
             a.setChecked(ext)
             grp.addAction(a)
             a.triggered.connect(lambda: (core.LLM_MGR.stop(), core.SET.update({"llm_mode": "external"}), self.poll()))
         if not cfg["models"] and not (ext or cfg["external_model"]) and not provs:
-            na = m.addAction("Aún no tienes modelos")
+            na = m.addAction(tr("Aún no tienes modelos"))
             na.setEnabled(False)
         m.addSeparator()
         # esfuerzo: cuanto razona el modelo antes de responder
         eff = core.effort_of(cfg)
         label = next(l for k, l, d in core.EFFORTS if k == eff)
-        em = m.addMenu(icon("ia_memoria"), "Esfuerzo\t%s" % label)
+        em = m.addMenu(icon("ia_memoria"), tr("Esfuerzo\t%s") % label)
         em.setToolTipsVisible(True)
         eg = QActionGroup(em)
-        hints = {"low": "más rápido", "medium": "equilibrado", "high": "más preciso"}
+        hints = {"low": tr("más rápido"), "medium": tr("equilibrado"), "high": tr("más preciso")}
         for k, l, d in core.EFFORTS:
             a = em.addAction("%s\t%s" % (l, hints[k]))
             a.setCheckable(True)
@@ -3783,19 +3900,19 @@ class Main(QMainWindow):
             a.setToolTip(d)
             eg.addAction(a)
             a.triggered.connect(lambda _=False, k=k: (core.set_effort(k), self.sync()))
-        more = m.addMenu(icon("acc_anadir"), "Más modelos")
-        more.addAction(icon("acc_descargar"), "Descargar o añadir un modelo…", lambda: self.setup("model"))
-        more.addAction(icon("ia_controlador"), "Gestionar modelos…", self.models)
-        more.addAction(icon("hub_conectar"), "Modelos por API (OpenAI, Claude, Gemini, Ollama…)…", self.providers)
+        more = m.addMenu(icon("acc_anadir"), tr("Más modelos"))
+        more.addAction(icon("acc_descargar"), tr("Descargar o añadir un modelo…"), lambda: self.setup("model"))
+        more.addAction(icon("ia_controlador"), tr("Gestionar modelos…"), self.models)
+        more.addAction(icon("hub_conectar"), tr("Modelos por API (OpenAI, Claude, Gemini, Ollama…)…"), self.providers)
         if not ext:
             m.addSeparator()
-            sec = m.addAction("Motor")
+            sec = m.addAction(tr("Motor"))
             sec.setEnabled(False)
             st = self.llm.get("state", "off")
-            on = m.addAction("Modelo encendido" if st != "loading" else "Cargando el modelo…")
+            on = m.addAction(tr("Modelo encendido") if st != "loading" else tr("Cargando el modelo…"))
             on.setCheckable(True)
             on.setChecked(st in ("ready", "loading"))
-            on.setToolTip("Encendido, el modelo ocupa memoria y responde al momento; apagado, libera la memoria.")
+            on.setToolTip(tr("Encendido, el modelo ocupa memoria y responde al momento; apagado, libera la memoria."))
             on.triggered.connect(lambda _=False: self.toggle_llm())
 
     def toggle_temp(self, on):
@@ -3803,7 +3920,7 @@ class Main(QMainWindow):
         p = self.chat
         if p.busy:
             self.b_temp.setChecked(not on)
-            return self.toast("Espera a que el agente termine.", icon_name="est_aviso", color=C["warn"])
+            return self.toast(tr("Espera a que el agente termine."), icon_name="est_aviso", color=C["warn"])
         p.open_session(None)                 # conversación nueva (y, si había un chat temporal, se descarta)
         if on:
             p.temp_next = True
@@ -3846,11 +3963,11 @@ class Main(QMainWindow):
         """Lanza una tarea programada. Devuelve un texto de error o None."""
         from . import schedule as SC
         if not core.SET.ready():
-            return "Aún no hay un modelo configurado."
+            return tr("Aún no hay un modelo configurado.")
         if not self._model_ready():
             if manual and t["id"] not in self._task_queue:
                 self._task_queue.append(t["id"])
-            return "El modelo se está encendiendo: la tarea empezará en cuanto esté listo." if manual else "esperando al modelo"
+            return tr("El modelo se está encendiendo: la tarea empezará en cuanto esté listo.") if manual else "esperando al modelo"
         s, err = SC.start(t)
         if err:
             return err
@@ -3868,10 +3985,10 @@ class Main(QMainWindow):
             if s is None or s.run is None:
                 self._task_runs.pop(sid)
                 if s is not None:
-                    self.toast("Tarea «%s» terminada." % name, "Ver resultado", lambda sid=sid: self.open_task_result(sid),
+                    self.toast(tr("Tarea «%s» terminada.") % name, tr("Ver resultado"), lambda sid=sid: self.open_task_result(sid),
                                ms=15000, icon_name="ui_check", color=C["ok"])
                     if core.SET.snapshot().get("notifications", True) and not self.isActiveWindow():
-                        self.tray.showMessage(APP_NAME, "Tarea «%s» terminada. Ábrelo para ver el resultado." % name, QSystemTrayIcon.Information, 8000)
+                        self.tray.showMessage(APP_NAME, tr("Tarea «%s» terminada. Ábrelo para ver el resultado.") % name, QSystemTrayIcon.Information, 8000)
                     self._sig_chat = None
                     self.refresh_lists()
         if not self._task_runs:
@@ -3885,7 +4002,7 @@ class Main(QMainWindow):
             if err is None and t["id"] in self._task_queue:
                 self._task_queue.remove(t["id"])
             elif err and err != "esperando al modelo":
-                self.toast("No se pudo ejecutar la tarea «%s»: %s" % (t["name"], err), icon_name="est_aviso", color=C["warn"])
+                self.toast(tr("No se pudo ejecutar la tarea «%s»: %s") % (t["name"], err), icon_name="est_aviso", color=C["warn"])
                 SC.update(t["id"], enabled=False)
 
     def open_task_result(self, sid):
@@ -3917,16 +4034,16 @@ class Main(QMainWindow):
         self.llm = {"state": "off"}
         self.sync()
         self.warn_if_not_agent(core.active_model(core.SET.snapshot()))
-        if QMessageBox.question(self, APP_NAME, "¿Encender el nuevo modelo ahora?") == QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, APP_NAME, tr("¿Encender el nuevo modelo ahora?")) == QMessageBox.StandardButton.Yes:
             self.toggle_llm()
 
     def warn_if_not_agent(self, m):
         """Avisa si el modelo elegido no sabe usar herramientas (el agente no podrá actuar con él)."""
         caps = core.model_caps(m, compute=False) if m else None
         if caps and not caps.get("tools"):
-            self.toast("«%s» no usa herramientas: podrás conversar con él, pero el agente no podrá trabajar con archivos, "
-                       "comandos ni la web. Para eso elige un modelo agéntico." % core.model_title(m),
-                       "Ver modelos", lambda: self.setup("model"), ms=15000, icon_name="est_aviso", color=C["warn"])
+            self.toast(tr("«%s» no usa herramientas: podrás conversar con él, pero el agente no podrá trabajar con archivos, "
+                       "comandos ni la web. Para eso elige un modelo agéntico.") % core.model_title(m),
+                       tr("Ver modelos"), lambda: self.setup("model"), ms=15000, icon_name="est_aviso", color=C["warn"])
 
     # --- modelos que cambiaron de sitio (ver relocate.py)
     def _init_models(self):
@@ -3954,8 +4071,8 @@ class Main(QMainWindow):
                 self._deep_busy = True
                 act = core.active_model(core.SET.snapshot())
                 if act and (rep.get("by_id") or {}).get(act["id"], ("",))[0] == "missing":
-                    self.toast("Busco «%s» en todos tus discos; puede tardar unos minutos. Si sabes dónde está, indícalo en "
-                               "Modelos → Localizar…" % (core.model_title(act) or act.get("name")), "Ver modelos", self.models,
+                    self.toast(tr("Busco «%s» en todos tus discos; puede tardar unos minutos. Si sabes dónde está, indícalo en "
+                               "Modelos → Localizar…") % (core.model_title(act) or act.get("name")), tr("Ver modelos"), self.models,
                                ms=12000, icon_name="acc_buscar", color=C["acc"])
                 run_bg(lambda: R.run("deep"), self._deep_finished)
             if then:
@@ -3974,7 +4091,7 @@ class Main(QMainWindow):
             return
         text = R.summary(rep)
         if text:
-            self.toast(text, "Ver modelos", self.models, ms=14000, icon_name="ui_check", color=C["ok"])
+            self.toast(text, tr("Ver modelos"), self.models, ms=14000, icon_name="ui_check", color=C["ok"])
             self.sync()
             if self._start_when_found and core.SET.ready():
                 self._start_when_found = False
@@ -3991,7 +4108,7 @@ class Main(QMainWindow):
         for k, part in news.items():
             if k not in self._told:
                 self._told.add(k)
-                self.toast(R.pending_text(part), "Ver modelos", self.models, ms=16000, icon_name="est_aviso", color=C["warn"])
+                self.toast(R.pending_text(part), tr("Ver modelos"), self.models, ms=16000, icon_name="est_aviso", color=C["warn"])
         for k in list(self._told):        # si se resolvió, se volverá a avisar si reaparece
             if k[0] in ("copying", "offline") and not any(t == k[1] for t, _ in rep.get(k[0]) or []) and not rep.get("error"):
                 self._told.discard(k)
@@ -4013,7 +4130,7 @@ class Main(QMainWindow):
         if why == "model_file":
             m = core.active_model(cfg)
             self._start_when_found = True
-            self.toast("Busco «%s»: ya no está en %s." % (core.model_title(m) or m.get("name"), os.path.dirname(m.get("path", "")) or "su carpeta"),
+            self.toast(tr("Busco «%s»: ya no está en %s.") % (core.model_title(m) or m.get("name"), os.path.dirname(m.get("path", "")) or tr("su carpeta")),
                        ms=6000, icon_name="acc_buscar", color=C["acc"])
             return self.check_models("quick")
         return self.setup()
@@ -4053,7 +4170,7 @@ class Main(QMainWindow):
             core.LLM_MGR.stop()
             self.llm = {"state": "off"}
             if cfg.get("notifications", True):
-                self.tray.showMessage(APP_NAME, "Apagué el modelo tras %d minutos sin uso para liberar memoria." % idle, QSystemTrayIcon.Information, 5000)
+                self.tray.showMessage(APP_NAME, tr("Apagué el modelo tras %d minutos sin uso para liberar memoria.") % idle, QSystemTrayIcon.Information, 5000)
         self.sync()
 
     def sync(self):
@@ -4061,30 +4178,30 @@ class Main(QMainWindow):
         st = self.llm.get("state", "off")
         ext = cfg["llm_mode"] == "external"
         m = core.active_model(cfg)
-        name = ("Externo · " + (cfg["external_model"] or cfg["external_url"])) if ext else (core.model_title(m) if m else "Sin modelo")
+        name = (tr("Externo · %s") % (cfg["external_model"] or cfg["external_url"])) if ext else (core.model_title(m) if m else tr("Sin modelo"))
         self.model_btn.setText(name + "  ⌄")
-        self.model_btn.setToolTip(("%s · %s · %s" % (core.model_title(m), core.model_quant(m), m.get("path", ""))) if (m and not ext) else "Elegir modelo")
-        col, txt = {"ready": (C["ok"], "Listo" + (" · externo" if ext else " · local")), "loading": (C["warn"], "Cargando…")}.get(st, (C["faint"], "Apagado"))
+        self.model_btn.setToolTip(("%s · %s · %s" % (core.model_title(m), core.model_quant(m), m.get("path", ""))) if (m and not ext) else tr("Elegir modelo"))
+        col, txt = {"ready": (C["ok"], tr("Listo · externo") if ext else tr("Listo · local")), "loading": (C["warn"], tr("Cargando…"))}.get(st, (C["faint"], tr("Apagado")))
         if st == "ready" and self.llm.get("warm") == "warming":
-            col, txt = C["warn"], "Preparando el agente…"
+            col, txt = C["warn"], tr("Preparando el agente…")
         self.status_lbl.setText("<span style='color:%s'>●</span> <span style='color:%s'>%s</span>" % (col, C["mut"], txt))
         panel = self.current_panel()
         s = panel.session()
         if self.mode == "code" and self.code.project:
             self.title.setText(self.code.project["name"] + (" · " + s.title if s and s.events else ""))
         else:
-            self.title.setText(("Chat temporal" if s.temp else s.title) if s and s.events else ("" if self.mode == "chat" else CODE_NAME))
+            self.title.setText((tr("Chat temporal") if s.temp else s.title) if s and s.events else ("" if self.mode == "chat" else CODE_NAME))
         temp_on = self.mode == "chat" and (bool(getattr(self.chat, "temp_next", False)) or bool(self.chat.session() and self.chat.session().temp))
         self.b_temp.setVisible(self.mode == "chat")
         self.b_temp.setChecked(temp_on)
-        self.b_folder.setToolTip("Carpeta de trabajo: %s" % panel.workspace())
+        self.b_folder.setToolTip(tr("Carpeta de trabajo: %s") % panel.workspace())
         in_code = self.mode == "code" and self.code.project is not None
         for b, w, ico in ((self.b_tree, self.code.left, "pan_explorador"), (self.b_term, self.code.term, "pan_consola"),
                           (self.b_agent, self.code.chat, "mat_comentario")):
             b.setVisible(in_code)
             b.setIcon(icon(ico, C["acc"] if not w.isHidden() else C["faint"], 18))
         un = (cfg.get("user_name") or "").strip()     # nunca se usa el usuario de Windows: el perfil es generico
-        self.user_lbl.setText(un or "Tu perfil")
+        self.user_lbl.setText(un or tr("Tu perfil"))
         if un:
             self.avatar.setPixmap(QPixmap())
             self.avatar.setText("".join(p[0] for p in un.split()[:2]).upper())
@@ -4092,7 +4209,7 @@ class Main(QMainWindow):
             self.avatar.setText("")
             self.avatar.setPixmap(pix("ia_controlador", C["acc"], 15))
         waiting = self.chat.waiting + self.code.chat.waiting
-        self.setWindowTitle(("● Esperando tu aprobación · " if waiting else "") + (CODE_NAME if self.mode == "code" else APP_NAME))
+        self.setWindowTitle((tr("● Esperando tu aprobación · %s") if waiting else "%s") % (CODE_NAME if self.mode == "code" else APP_NAME))
         for p in (self.chat, self.code.chat):
             p.sync()
 
@@ -4165,10 +4282,10 @@ class Main(QMainWindow):
             self.hide()       # sigue funcionando en la bandeja; «Salir» del menú la cierra de verdad
             if not getattr(self, "_tray_told", False):
                 self._tray_told = True
-                self.tray.showMessage(APP_NAME, "%s sigue funcionando aquí. Para cerrarlo, usa «Salir»." % APP_NAME, QSystemTrayIcon.Information, 4000)
+                self.tray.showMessage(APP_NAME, tr("%s sigue funcionando aquí. Para cerrarlo, usa «Salir».") % APP_NAME, QSystemTrayIcon.Information, 4000)
             return e.ignore()
         if self.code.tabs.has_dirty():
-            r = QMessageBox.question(self, "Cambios sin guardar", "Hay archivos con cambios sin guardar. ¿Guardarlos antes de salir?",
+            r = QMessageBox.question(self, tr("Cambios sin guardar"), tr("Hay archivos con cambios sin guardar. ¿Guardarlos antes de salir?"),
                                      QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
             if r == QMessageBox.StandardButton.Cancel:
                 return e.ignore()
@@ -4177,12 +4294,29 @@ class Main(QMainWindow):
                     if t.dirty:
                         t.save()
         busy = [s for s in core.SESSIONS.values() if s.run]
-        if busy and QMessageBox.question(self, "Salir", "El agente está trabajando. ¿Detenerlo y salir?") != QMessageBox.StandardButton.Yes:
+        if busy and QMessageBox.question(self, tr("Salir"), tr("El agente está trabajando. ¿Detenerlo y salir?")) != QMessageBox.StandardButton.Yes:
             return e.ignore()
         self.code.term.stop()
         core.shutdown()
         self.tray.hide()
         e.accept()
+        reopen = getattr(self, "_restart", False)
+        try:
+            upd = updater.ready() if updater.can_update_in_background() else None
+        except Exception:
+            upd = None
+        try:
+            if upd and (reopen or core.SET.snapshot().get("auto_install_updates", True)):
+                # la versión descargada se instala ahora que Jayth se cierra: en silencio al salir, o con una ventanita
+                # «Actualizando…» y volviendo a abrirlo si se pidió reiniciar
+                updater.install_when_closed(upd, reopen=reopen)
+                reopen = False
+        except Exception:
+            pass
+        if reopen:                                   # reinicio sin actualización (p. ej. cambio de idioma)
+            from PySide6.QtCore import QProcess
+            argv = osys.launch_argv()
+            QProcess.startDetached(argv[0], argv[1:])
         QApplication.quit()
 
 
@@ -4192,17 +4326,21 @@ def _dark_titlebar(w):
         theme.titlebar_colors(w)
 
 
-def install_spanish(app):
-    """Textos propios de Qt en español: menús contextuales (Copiar, Seleccionar todo…) y botones estándar (Sí/No)."""
+def install_qt_language(app):
+    """Textos propios de Qt en el idioma de la interfaz: menús contextuales (Copiar, Seleccionar todo…) y botones
+    estándar (Sí/No). En inglés no hace falta nada: es el idioma original de Qt."""
     from PySide6.QtCore import QTranslator, QLibraryInfo
+    if i18n.LANG == "en":
+        return True
     folders = [QLibraryInfo.path(QLibraryInfo.TranslationsPath)]
     if osys.FROZEN:
         folders.append(os.path.join(getattr(sys, "_MEIPASS", paths.APP_DIR), "PySide6", "translations"))
+    name = {"pt": "qtbase_pt_BR"}.get(i18n.LANG, "qtbase_" + i18n.LANG)     # Qt trae el portugués de Brasil
     for d in folders:
-        tr = QTranslator(app)
-        if tr.load("qtbase_es", d):
-            app.installTranslator(tr)
-            app._tr_es = tr
+        qt_tr = QTranslator(app)
+        if qt_tr.load(name, d):
+            app.installTranslator(qt_tr)
+            app._qt_tr = qt_tr
             return True
     return False
 
@@ -4235,7 +4373,8 @@ def selftest(app):
        else "faltan las vistas del editor")
     ok("hardware", lambda: HW.summary(HW.detect()) and None)
     ok("engine", lambda: bool(P.LLAMA_PATTERNS) or "sin motores")
-    ok("spanish", lambda: install_spanish(app) or "sin traducción de Qt al español")
+    ok("qt_language", lambda: install_qt_language(app) or "sin traducción de Qt al idioma " + i18n.LANG)
+    ok("i18n", lambda: i18n.LANG == "es" or len(i18n.CATALOG) > 500 or "falta el catálogo de " + i18n.LANG)
     ok("tools", lambda: len(T.TOOLS) >= 25 or "faltan herramientas")
     ok("shell", lambda: "JAYTH_OK" in __import__("subprocess").run(osys.shell_argv("echo JAYTH_OK"), capture_output=True, text=True,
                                                                      timeout=60, **osys.popen_kwargs()).stdout or "la terminal no responde")
@@ -4322,7 +4461,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setDesktopFileName("jayth")        # Linux: enlaza la ventana con jayth.desktop (icono correcto en el dock/panel)
-    install_spanish(app)
+    install_qt_language(app)
     from .widgets import install_screen_fit
     install_screen_fit(app)                  # ningún diálogo más grande que la pantalla
     cfg = core.SET.snapshot()
@@ -4336,7 +4475,7 @@ def main():
     app._main = w
     _dark_titlebar(w)
     if "--minimized" in sys.argv and QSystemTrayIcon.isSystemTrayAvailable():   # arranque con el sistema: queda en la bandeja
-        w.tray.showMessage(APP_NAME, "%s está listo en la bandeja del sistema." % APP_NAME, QSystemTrayIcon.Information, 3000)
+        w.tray.showMessage(APP_NAME, tr("%s está listo en la bandeja del sistema.") % APP_NAME, QSystemTrayIcon.Information, 3000)
     else:
         w.showMaximized()                  # siempre a pantalla completa
     if core.SET.load_error:

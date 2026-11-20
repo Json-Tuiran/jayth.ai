@@ -8,9 +8,10 @@
 """
 import os, re, sys, json, wave, struct, subprocess, tempfile
 from . import paths, osys
+from .i18n import tr
 
 HOME = os.path.join(paths.RUNTIME_DIR, "voice")
-MODELS = {"tiny": "Muy rápido, menos preciso (75 MB)", "base": "Equilibrado (145 MB)", "small": "Más preciso, más lento (480 MB)"}
+MODELS = {"tiny": tr("Muy rápido, menos preciso (75 MB)"), "base": tr("Equilibrado (145 MB)"), "small": tr("Más preciso, más lento (480 MB)")}
 
 TRANSCRIBE = r'''
 import sys, json, wave
@@ -63,12 +64,12 @@ def _explain(stderr, what):
     lines = [l.strip() for l in text.splitlines() if l.strip() and not l.strip().startswith(("warnings.warn", "File ", "^"))]
     key = next((l for l in reversed(lines) if re.search(r"(?i)error|exception|refused|timed? ?out|not found|denied", l)), lines[-1] if lines else "")
     if re.search(r"(?i)connection|resolve|timed? ?out|getaddrinfo|ssl|certificate|offline|LocalEntryNotFound|internet", text):
-        return "%s: no se pudo descargar el modelo de voz (¿sin internet?). Inténtalo de nuevo con conexión." % what
+        return tr("%s: no se pudo descargar el modelo de voz (¿sin internet?). Inténtalo de nuevo con conexión.") % what
     if re.search(r"RIFF|wave\.Error|EOFError|unpack requires", text):
-        return "%s: la grabación está vacía o dañada. Vuelve a intentarlo." % what
+        return tr("%s: la grabación está vacía o dañada. Vuelve a intentarlo.") % what
     if re.search(r"(?i)MemoryError|bad allocation|out of memory", text):
-        return "%s: no hay memoria suficiente; prueba la precisión «Tiny» en Ajustes › Personalización › Voz." % what
-    return "%s: %s" % (what, key[:240] or "error desconocido")
+        return tr("%s: no hay memoria suficiente; prueba la precisión «Tiny» en Ajustes › Personalización › Voz.") % what
+    return "%s: %s" % (what, key[:240] or tr("error desconocido"))
 
 
 def model_ready(model="base"):
@@ -91,7 +92,7 @@ def ensure_model(model="base", tries=3):
         if r.returncode == 0 and model_ready(model):
             return
         err = r.stderr or r.stdout
-    raise RuntimeError(_explain(err, "No se pudo preparar el dictado"))
+    raise RuntimeError(_explain(err, tr("No se pudo preparar el dictado")))
 
 
 # ---------------------------------------------------------------- dictado (voz a texto)
@@ -117,7 +118,7 @@ def ensure_stt(progress=None, stop=None, model="base"):
 def transcribe(wav_path, model="base", lang="", timeout=600):
     """Texto de una grabación (si falta el modelo elegido, lo descarga antes)."""
     if not stt_ready():
-        raise RuntimeError("El dictado aún no está preparado.")
+        raise RuntimeError(tr("El dictado aún no está preparado."))
     model = model if model in MODELS else "base"
     ensure_model(model)
     script = os.path.join(HOME, "transcribir.py")
@@ -129,7 +130,7 @@ def transcribe(wav_path, model="base", lang="", timeout=600):
     for line in out.splitlines():
         if line.startswith("JAYTH_JSON "):
             return json.loads(line[11:])["text"]
-    raise RuntimeError(_explain(r.stderr or r.stdout, "No se pudo transcribir"))
+    raise RuntimeError(_explain(r.stderr or r.stdout, tr("No se pudo transcribir")))
 
 
 class Recorder:
@@ -151,7 +152,7 @@ class Recorder:
         from PySide6.QtCore import QBuffer, QIODevice
         dev = QMediaDevices.defaultAudioInput()
         if dev.isNull():
-            raise RuntimeError("No encuentro ningún micrófono.")
+            raise RuntimeError(tr("No encuentro ningún micrófono."))
         fmt = QAudioFormat()
         fmt.setSampleRate(16000)
         fmt.setChannelCount(1)
@@ -231,11 +232,11 @@ class Recorder:
 # ---------------------------------------------------------------- lectura (texto a voz)
 def speakable(md):
     """Texto de una respuesta sin marcas de formato, código ni enlaces, para leerlo en voz alta."""
-    t = re.sub(r"```.*?```", " (bloque de código) ", md or "", flags=re.S)
+    t = re.sub(r"```.*?```", " (%s) " % tr("bloque de código"), md or "", flags=re.S)
     t = re.sub(r"`([^`]*)`", r"\1", t)
     t = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", t)
     t = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", t)
-    t = re.sub(r"https?://\S+", " enlace ", t)
+    t = re.sub(r"https?://\S+", " %s " % tr("enlace"), t)
     t = re.sub(r"^\s*\|?[\s:|-]{3,}\|?\s*$", " ", t, flags=re.M)        # separadores de tablas
     t = t.replace("|", ", ")
     t = re.sub(r"^\s{0,3}(#{1,6}|[-*+]|\d+[.)])\s+", "", t, flags=re.M)

@@ -11,9 +11,10 @@ from . import APP_NAME, __version__, core, paths, osys
 from .theme import C, icon
 from .wizard import btn, lbl
 from .updater import installed, REPO
+from .i18n import tr
 
-KINDS = [("error", "Informar de un error", "est_error", "bug"), ("idea", "Sugerir una mejora", "vfx_magia", "enhancement"),
-         ("pregunta", "Hacer una pregunta", "ui_ayuda", "question")]
+KINDS = [("error", tr("Informar de un error"), "est_error", "bug"), ("idea", tr("Sugerir una mejora"), "vfx_magia", "enhancement"),
+         ("pregunta", tr("Hacer una pregunta"), "ui_ayuda", "question")]
 
 
 def tech_info():
@@ -36,14 +37,14 @@ def log_tail(n=25):
 class FeedbackDialog(QDialog):
     def __init__(self, parent=None, kind="error", context=""):
         super().__init__(parent)
-        self.setWindowTitle("Enviar comentarios")
+        self.setWindowTitle(tr("Enviar comentarios"))
         self.resize(620, 600)
         v = QVBoxLayout(self)
         v.setContentsMargins(22, 18, 22, 16)
         v.setSpacing(10)
-        v.addWidget(lbl("Enviar comentarios", "h1"))
-        v.addWidget(lbl("Tu comentario se publica como una incidencia en GitHub (%s). Antes de enviarlo verás todo el texto; "
-                        "puedes editarlo o quitar lo que no quieras compartir." % REPO, "muted"))
+        v.addWidget(lbl(tr("Enviar comentarios"), "h1"))
+        v.addWidget(lbl(tr("Tu comentario se publica como una incidencia en GitHub (%s). Antes de enviarlo verás todo el texto; "
+                        "puedes editarlo o quitar lo que no quieras compartir.") % REPO, "muted"))
         row = QHBoxLayout()
         self.group = QButtonGroup(self)
         for k, label, ico, _ in KINDS:
@@ -59,30 +60,30 @@ class FeedbackDialog(QDialog):
         row.addStretch(1)
         v.addLayout(row)
         self.title = QLineEdit()
-        self.title.setPlaceholderText("Resumen en una frase (p. ej.: El modelo no arranca tras actualizar)")
+        self.title.setPlaceholderText(tr("Resumen en una frase (p. ej.: El modelo no arranca tras actualizar)"))
         v.addWidget(self.title)
         self.body = QPlainTextEdit(context)
-        self.body.setPlaceholderText("Cuéntanos qué pasó o qué te gustaría. Si es un error: qué hiciste, qué esperabas y qué ocurrió.")
+        self.body.setPlaceholderText(tr("Cuéntanos qué pasó o qué te gustaría. Si es un error: qué hiciste, qué esperabas y qué ocurrió."))
         v.addWidget(self.body, 1)
-        self.chk_info = QCheckBox("Incluir información técnica (versión, sistema, motor y modelo)")
+        self.chk_info = QCheckBox(tr("Incluir información técnica (versión, sistema, motor y modelo)"))
         self.chk_info.setChecked(True)
-        self.chk_log = QCheckBox("Incluir las últimas líneas del registro del modelo")
+        self.chk_log = QCheckBox(tr("Incluir las últimas líneas del registro del modelo"))
         v.addWidget(self.chk_info)
         v.addWidget(self.chk_log)
         self.preview = QPlainTextEdit()
         self.preview.setObjectName("mono")
         self.preview.setReadOnly(True)
         self.preview.setFixedHeight(120)
-        v.addWidget(lbl("Se incluirá:", "faint"))
+        v.addWidget(lbl(tr("Se incluirá:"), "faint"))
         v.addWidget(self.preview)
         for w in (self.chk_info, self.chk_log):
             w.toggled.connect(self._refresh)
         self._refresh()
         b = QHBoxLayout()
-        b.addWidget(btn("Copiar texto", cb=self._copy, ico="acc_copiar"))
+        b.addWidget(btn(tr("Copiar texto"), cb=self._copy, ico="acc_copiar"))
         b.addStretch(1)
-        b.addWidget(btn("Cancelar", cb=self.reject))
-        b.addWidget(btn("Continuar en GitHub", "primary", self._send, "acc_abrir_externo"))
+        b.addWidget(btn(tr("Cancelar"), cb=self.reject))
+        b.addWidget(btn(tr("Continuar en GitHub"), "primary", self._send, "acc_abrir_externo"))
         v.addLayout(b)
 
     def _extra(self):
@@ -94,7 +95,7 @@ class FeedbackDialog(QDialog):
         return "\n\n".join(parts)
 
     def _refresh(self):
-        self.preview.setPlainText(self._extra() or "(nada adicional)")
+        self.preview.setPlainText(self._extra() or tr("(nada adicional)"))
 
     def _kind(self):
         b = self.group.checkedButton()
@@ -111,13 +112,13 @@ class FeedbackDialog(QDialog):
 
     def _send(self):
         if not self.title.text().strip() or not self.body.toPlainText().strip():
-            return QMessageBox.information(self, APP_NAME, "Escribe un resumen y una descripción.")
+            return QMessageBox.information(self, APP_NAME, tr("Escribe un resumen y una descripción."))
         k = self._kind()
         body = self._text()
         if len(body) > 6000:                      # limite practico de una URL
             body = body[:6000] + "\n\n(texto recortado)"
         url = "https://github.com/%s/issues/new?%s" % (REPO, urllib.parse.urlencode({"title": self.title.text().strip(), "body": body, "labels": k[3]}))
         webbrowser.open(url)
-        QMessageBox.information(self, APP_NAME, "Se abrió GitHub en tu navegador. Revisa el texto y pulsa «Submit new issue» para enviarlo.\n"
-                                "(Necesitas una cuenta de GitHub; si no la tienes, usa «Copiar texto».)")
+        QMessageBox.information(self, APP_NAME, tr("Se abrió GitHub en tu navegador. Revisa el texto y pulsa «Submit new issue» para enviarlo.\n"
+                                "(Necesitas una cuenta de GitHub; si no la tienes, usa «Copiar texto».)"))
         self.accept()

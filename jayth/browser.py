@@ -18,12 +18,12 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLab
 from . import paths, osys
 from .theme import C, icon
 from .canvas import web_view_class, _tb
+from .i18n import tr
 
-START = """<!doctype html><html><head><meta charset="utf-8"><title>Navegador de Jayth</title></head>
+START = """<!doctype html><html><head><meta charset="utf-8"><title>%(title)s</title></head>
 <body style="margin:0;height:100vh;display:grid;place-items:center;background:%(bg)s;color:%(mut)s;font:15px 'Segoe UI',system-ui,sans-serif">
 <div style="text-align:center;max-width:420px;line-height:1.5"><div style="font-size:22px;color:%(tx)s;font-weight:600;margin-bottom:8px">
-Navegador de Jayth</div>Escribe una dirección arriba o pide al agente que abra una página: la verás aquí mientras la usa,
-y puedes intervenir cuando quieras.</div></body></html>"""
+%(title)s</div>%(hint)s</div></body></html>"""
 
 # ---------------------------------------------------------------- lo que se ejecuta dentro de la página
 _COLLECT = r"""
@@ -362,23 +362,23 @@ class BrowserPanel(QWidget):
         h = QHBoxLayout(head)
         h.setContentsMargins(8, 6, 8, 6)
         h.setSpacing(2)
-        back = _tb("ui_chevron_derecha", "Atrás", lambda: self.view and self.view.back(), 13)
+        back = _tb("ui_chevron_derecha", tr("Atrás"), lambda: self.view and self.view.back(), 13)
         from PySide6.QtGui import QTransform
         back.setIcon(icon("ui_chevron_derecha", C["mut"], 13).pixmap(13, 13).transformed(QTransform().rotate(180)))
         h.addWidget(back)
-        h.addWidget(_tb("ui_chevron_derecha", "Adelante", lambda: self.view and self.view.forward(), 13))
-        h.addWidget(_tb("acc_refrescar", "Recargar", lambda: self.view and self.view.reload(), 14))
+        h.addWidget(_tb("ui_chevron_derecha", tr("Adelante"), lambda: self.view and self.view.forward(), 13))
+        h.addWidget(_tb("acc_refrescar", tr("Recargar"), lambda: self.view and self.view.reload(), 14))
         self.addr = QLineEdit()
         self.addr.setObjectName("addressBar")
-        self.addr.setPlaceholderText("Escribe una dirección o lo que quieras buscar")
+        self.addr.setPlaceholderText(tr("Escribe una dirección o lo que quieras buscar"))
         self.addr.returnPressed.connect(lambda: self.view and self.view.load(to_url(self.addr.text())))
         h.addWidget(self.addr, 1)
-        self.agent_lbl = QLabel("● Jayth lo está usando")
+        self.agent_lbl = QLabel(tr("● Jayth lo está usando"))
         self.agent_lbl.setStyleSheet("color:%s; font-size:9pt; padding: 0 6px" % C["acc"])
         self.agent_lbl.hide()
         h.addWidget(self.agent_lbl)
-        h.addWidget(_tb("acc_abrir_externo", "Abrir esta página en tu navegador", self.open_external))
-        h.addWidget(_tb("ui_cerrar", "Cerrar el navegador", lambda: self.closed.emit(), 13))
+        h.addWidget(_tb("acc_abrir_externo", tr("Abrir esta página en tu navegador"), self.open_external))
+        h.addWidget(_tb("ui_cerrar", tr("Cerrar el navegador"), lambda: self.closed.emit(), 13))
         v.addWidget(head)
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
@@ -386,7 +386,7 @@ class BrowserPanel(QWidget):
         v.addWidget(line)
         cls = _view_class()
         if not cls:
-            msg = QLabel("Este equipo no tiene el navegador integrado (Qt WebEngine).\nEl agente puede leer páginas con web_fetch.")
+            msg = QLabel(tr("Este equipo no tiene el navegador integrado (Qt WebEngine).\nEl agente puede leer páginas con web_fetch."))
             msg.setObjectName("muted")
             msg.setAlignment(Qt.AlignCenter)
             v.addWidget(msg, 1)
@@ -405,7 +405,8 @@ class BrowserPanel(QWidget):
         self.view.loadFinished.connect(self._finished)
         self.holder = _Holder(self.view)
         v.addWidget(self.holder, 1)
-        self.view.setHtml(START % C, QUrl("about:blank"))
+        self.view.setHtml(START % dict(C, title=tr("Navegador de Jayth"), hint=tr("Escribe una dirección arriba o pide al agente que abra una "
+                          "página: la verás aquí mientras la usa, y puedes intervenir cuando quieras.")), QUrl("about:blank"))
         self.agent_t = QTimer(self, interval=300, timeout=self._agent_label)
 
     # ---- estado
@@ -437,7 +438,7 @@ class BrowserPanel(QWidget):
         req.setDownloadDirectory(d)
         req.accept()
         if self.main is not None:
-            self.main.toast("Descargando «%s» en %s" % (req.downloadFileName(), d), icon_name="acc_descargar")
+            self.main.toast(tr("Descargando «%s» en %s") % (req.downloadFileName(), d), icon_name="acc_descargar")
 
     # ---- órdenes del agente (en el hilo de la interfaz; cada una termina llamando a _done o _fail)
     def do(self, job):

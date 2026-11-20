@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (QTreeView, QFileSystemModel, QStyledItemDelegate,
                                QLineEdit, QCompleter, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QToolButton, QStyle)
 from . import osys
 from .theme import C, icon, pix
+from .i18n import tr
 
 DIM_DIRS = {"node_modules", ".git", "__pycache__", "dist", "build", ".venv", "venv", "env", ".idea", ".vscode", ".next", ".cache",
             ".pytest_cache", ".mypy_cache", "target", "bin", "obj", ".gradle", "coverage", ".parcel-cache", ".turbo"}
@@ -40,7 +41,7 @@ BADGE = {
     ".java": ("J", "#E76F00"), ".kt": ("KT", "#7F52FF"), ".go": ("GO", "#00ADD8"), ".rs": ("RS", "#CE422B"), ".php": ("PHP", "#777BB4"),
     ".rb": ("RB", "#CC342D"), ".lua": ("LUA", "#2C2D72"), ".gd": ("GD", "#478CBF"), ".swift": ("SW", "#F05138"), ".dart": ("DT", "#0175C2"),
     ".r": ("R", "#276DC3"), ".zip": ("ZIP", "#8A8F98"), ".7z": ("7Z", "#8A8F98"), ".rar": ("RAR", "#8A8F98"), ".exe": ("EXE", "#607068"),
-    ".msi": ("MSI", "#607068"), ".gguf": ("IA", "#52B788"), ".ttf": ("Aa", "#8A8F98"), ".otf": ("Aa", "#8A8F98"), ".woff2": ("Aa", "#8A8F98"),
+    ".msi": ("MSI", "#607068"), ".gguf": (tr("IA"), "#52B788"), ".ttf": ("Aa", "#8A8F98"), ".otf": ("Aa", "#8A8F98"), ".woff2": ("Aa", "#8A8F98"),
     ".mp3": ("♪", "#8E44AD"), ".wav": ("♪", "#8E44AD"), ".mp4": ("▶", "#C0392B"), ".mov": ("▶", "#C0392B"),
 }
 NAMES = {".gitignore": ("GIT", "#F05032"), ".gitattributes": ("GIT", "#F05032"), "package.json": ("npm", "#CB3837"),
@@ -296,7 +297,7 @@ class FileTree(QTreeView):
 
     def new_file(self, folder=None):
         folder = folder or self._target_dir() or self.root
-        n, ok = QInputDialog.getText(self, "Nuevo archivo", "Nombre (puede incluir carpetas, p. ej. src/main.py):")
+        n, ok = QInputDialog.getText(self, tr("Nuevo archivo"), tr("Nombre (puede incluir carpetas, p. ej. src/main.py):"))
         if ok and n.strip():
             fp = os.path.join(folder, n.strip())
             os.makedirs(os.path.dirname(fp), exist_ok=True)
@@ -306,7 +307,7 @@ class FileTree(QTreeView):
 
     def new_folder(self, folder=None):
         folder = folder or self._target_dir() or self.root
-        n, ok = QInputDialog.getText(self, "Nueva carpeta", "Nombre:")
+        n, ok = QInputDialog.getText(self, tr("Nueva carpeta"), tr("Nombre:"))
         if ok and n.strip():
             os.makedirs(os.path.join(folder, n.strip()), exist_ok=True)
             idx = self.model_.index(folder)
@@ -318,19 +319,19 @@ class FileTree(QTreeView):
         p = self._path(idx)
         folder = p if os.path.isdir(p) else os.path.dirname(p)
         m = QMenu(self)
-        a_open = m.addAction(icon("pan_editor_codigo"), "Abrir") if idx.isValid() and os.path.isfile(p) else None
-        a_ext = m.addAction(icon("acc_abrir_externo"), "Abrir con su programa") if idx.isValid() and os.path.isfile(p) else None
+        a_open = m.addAction(icon("pan_editor_codigo"), tr("Abrir")) if idx.isValid() and os.path.isfile(p) else None
+        a_ext = m.addAction(icon("acc_abrir_externo"), tr("Abrir con su programa")) if idx.isValid() and os.path.isfile(p) else None
         if a_open:
             m.addSeparator()
-        a_file = m.addAction(icon("acc_nuevo"), "Nuevo archivo…")
-        a_dir = m.addAction(icon("act_carpeta"), "Nueva carpeta…")
+        a_file = m.addAction(icon("acc_nuevo"), tr("Nuevo archivo…"))
+        a_dir = m.addAction(icon("act_carpeta"), tr("Nueva carpeta…"))
         m.addSeparator()
-        a_ren = m.addAction(icon("acc_renombrar"), "Renombrar") if idx.isValid() else None
-        a_copy = m.addAction(icon("acc_copiar"), "Copiar ruta")
-        a_rel = m.addAction(icon("acc_copiar"), "Copiar ruta relativa") if idx.isValid() else None
-        a_os = m.addAction(icon("act_carpeta_abierta"), "Mostrar en el Explorador" if osys.WIN else ("Mostrar en el Finder" if osys.MAC else "Abrir la carpeta"))
+        a_ren = m.addAction(icon("acc_renombrar"), tr("Renombrar")) if idx.isValid() else None
+        a_copy = m.addAction(icon("acc_copiar"), tr("Copiar ruta"))
+        a_rel = m.addAction(icon("acc_copiar"), tr("Copiar ruta relativa")) if idx.isValid() else None
+        a_os = m.addAction(icon("act_carpeta_abierta"), tr("Mostrar en el Explorador") if osys.WIN else (tr("Mostrar en el Finder") if osys.MAC else tr("Abrir la carpeta")))
         m.addSeparator()
-        a_del = m.addAction(icon("acc_eliminar", C["bad"]), "Mover a la papelera") if idx.isValid() else None
+        a_del = m.addAction(icon("acc_eliminar", C["bad"]), tr("Mover a la papelera")) if idx.isValid() else None
         a = m.exec(self.viewport().mapToGlobal(pos))
         if a is None:
             return
@@ -351,10 +352,10 @@ class FileTree(QTreeView):
         elif a == a_os:
             osys.reveal(p) if idx.isValid() else osys.open_path(folder)
         elif a == a_del:
-            if QMessageBox.question(self, "Mover a la papelera", "¿Mover «%s» a la papelera?" % os.path.basename(p)) == QMessageBox.StandardButton.Yes:
+            if QMessageBox.question(self, tr("Mover a la papelera"), tr("¿Mover «%s» a la papelera?") % os.path.basename(p)) == QMessageBox.StandardButton.Yes:
                 from PySide6.QtCore import QFile
                 if not QFile.moveToTrash(p):
-                    QMessageBox.warning(self, "No se pudo", "No se pudo mover a la papelera.")
+                    QMessageBox.warning(self, tr("No se pudo"), tr("No se pudo mover a la papelera."))
 
 
 class FileFinder(QLineEdit):
@@ -364,7 +365,7 @@ class FileFinder(QLineEdit):
     def __init__(self):
         super().__init__()
         self.setObjectName("fileFinder")
-        self.setPlaceholderText("Ir a un archivo…  (Ctrl+P)")
+        self.setPlaceholderText(tr("Ir a un archivo…  (Ctrl+P)"))
         self.setClearButtonEnabled(True)
         self.addAction(icon("acc_buscar", C["faint"], 13), QLineEdit.LeadingPosition)
         self.root, self._at, self._files = "", 0.0, []
@@ -440,15 +441,15 @@ class ExplorerPanel(QWidget):
         self.name.setStyleSheet("font-weight:600; padding-left:4px")
         head.addWidget(self.name, 1)
         self.tree = FileTree()
-        head.addWidget(tbtn("acc_nuevo", "Nuevo archivo", lambda: self.tree.new_file(), size=14))
-        head.addWidget(tbtn("act_carpeta", "Nueva carpeta", lambda: self.tree.new_folder(), size=14))
-        head.addWidget(tbtn("ui_chevron_arriba", "Contraer todas las carpetas", self.tree.collapseAll, size=13))
-        more = tbtn("ui_menu_horizontal", "Más", size=14)
+        head.addWidget(tbtn("acc_nuevo", tr("Nuevo archivo"), lambda: self.tree.new_file(), size=14))
+        head.addWidget(tbtn("act_carpeta", tr("Nueva carpeta"), lambda: self.tree.new_folder(), size=14))
+        head.addWidget(tbtn("ui_chevron_arriba", tr("Contraer todas las carpetas"), self.tree.collapseAll, size=13))
+        more = tbtn("ui_menu_horizontal", tr("Más"), size=14)
         more.setPopupMode(QToolButton.InstantPopup)
         m = QMenu(self)
-        m.addAction(icon("act_carpeta_abierta"), "Mostrar en el Explorador" if osys.WIN else ("Mostrar en el Finder" if osys.MAC else "Abrir la carpeta"),
+        m.addAction(icon("act_carpeta_abierta"), tr("Mostrar en el Explorador") if osys.WIN else (tr("Mostrar en el Finder") if osys.MAC else tr("Abrir la carpeta")),
                     lambda: self.tree.root and osys.open_path(self.tree.root))
-        m.addAction(icon("acc_copiar"), "Copiar la ruta del proyecto", lambda: QGuiApplication.clipboard().setText(self.tree.root))
+        m.addAction(icon("acc_copiar"), tr("Copiar la ruta del proyecto"), lambda: QGuiApplication.clipboard().setText(self.tree.root))
         more.setMenu(m)
         head.addWidget(more)
         v.addLayout(head)

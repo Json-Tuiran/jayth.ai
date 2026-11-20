@@ -5,8 +5,9 @@ import os, re, sys, json, subprocess, threading, webbrowser, urllib.request, dat
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QPushButton, QListWidget, QListWidgetItem,
                                QStackedWidget, QScrollArea, QCheckBox, QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit, QPlainTextEdit,
-                               QFrame, QFileDialog, QMessageBox, QGridLayout)
-from . import APP_NAME, __version__, core, paths, osys, hardware as HW, agent as A, tools as T
+                               QFrame, QFileDialog, QMessageBox, QGridLayout, QApplication)
+from . import APP_NAME, __version__, core, paths, osys, i18n, hardware as HW, agent as A, tools as T
+from .i18n import tr
 from .theme import C, icon, pix
 from .wizard import SetupWizard, ModelsDialog, btn, lbl, browse_row, run_bg
 import shutil
@@ -19,36 +20,36 @@ def short_paths(text):
 
 # Conectores MCP conocidos: rellenan el formulario (el usuario revisa y pulsa «Añadir y probar»)
 MCP_TEMPLATES = [
-    {"label": "Archivos de una carpeta", "name": "Archivos", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "{carpeta}"],
-     "note": "Da acceso a la carpeta indicada (puedes cambiarla en los argumentos). Necesita Node.js."},
-    {"label": "Memoria (grafo de conocimiento)", "name": "Memoria", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-memory"],
-     "note": "El agente guarda y consulta datos entre conversaciones. Necesita Node.js."},
-    {"label": "Navegador web (Playwright)", "name": "Navegador", "command": "npx", "args": ["-y", "@playwright/mcp@latest"],
-     "note": "El agente abre y maneja un navegador real. Necesita Node.js."},
-    {"label": "Pensamiento paso a paso", "name": "Pensamiento", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
-     "note": "Ayuda a los modelos pequeños a razonar problemas largos. Necesita Node.js."},
-    {"label": "Git (historial de un repositorio)", "name": "Git", "command": "uvx", "args": ["mcp-server-git", "--repository", "{carpeta}"],
-     "note": "Consulta el historial y los cambios de un repositorio. Necesita uv."},
-    {"label": "Leer páginas web (Fetch)", "name": "Fetch", "command": "uvx", "args": ["mcp-server-fetch"],
-     "note": "Descarga páginas web convertidas a texto. Necesita uv."},
-    {"label": "GitHub (remoto)", "name": "GitHub", "url": "https://api.githubcopilot.com/mcp/",
-     "note": "Pega abajo un token personal de GitHub (github.com/settings/tokens)."},
+    {"label": tr("Archivos de una carpeta"), "name": tr("Archivos"), "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "{carpeta}"],
+     "note": tr("Da acceso a la carpeta indicada (puedes cambiarla en los argumentos). Necesita Node.js.")},
+    {"label": tr("Memoria (grafo de conocimiento)"), "name": tr("Memoria"), "command": "npx", "args": ["-y", "@modelcontextprotocol/server-memory"],
+     "note": tr("El agente guarda y consulta datos entre conversaciones. Necesita Node.js.")},
+    {"label": tr("Navegador web (Playwright)"), "name": tr("Navegador"), "command": "npx", "args": ["-y", "@playwright/mcp@latest"],
+     "note": tr("El agente abre y maneja un navegador real. Necesita Node.js.")},
+    {"label": tr("Pensamiento paso a paso"), "name": tr("Pensamiento"), "command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+     "note": tr("Ayuda a los modelos pequeños a razonar problemas largos. Necesita Node.js.")},
+    {"label": tr("Git (historial de un repositorio)"), "name": "Git", "command": "uvx", "args": ["mcp-server-git", "--repository", "{carpeta}"],
+     "note": tr("Consulta el historial y los cambios de un repositorio. Necesita uv.")},
+    {"label": tr("Leer páginas web (Fetch)"), "name": "Fetch", "command": "uvx", "args": ["mcp-server-fetch"],
+     "note": tr("Descarga páginas web convertidas a texto. Necesita uv.")},
+    {"label": tr("GitHub (remoto)"), "name": "GitHub", "url": "https://api.githubcopilot.com/mcp/",
+     "note": tr("Pega abajo un token personal de GitHub (github.com/settings/tokens).")},
 ]
 
 REPO = "Json-Tuiran/jayth.ai"
 NO_WINDOW = osys.NO_WINDOW
 SYSTEM = "Windows" if osys.WIN else ("macOS" if osys.MAC else "Linux")
-FILE_MANAGER = "el Explorador" if osys.WIN else ("el Finder" if osys.MAC else "el gestor de archivos")
+FILE_MANAGER = tr("el Explorador") if osys.WIN else (tr("el Finder") if osys.MAC else tr("el gestor de archivos"))
 
-LANGS = [("Automático (el idioma de tu mensaje)", "auto"), ("Español", "es"), ("English", "en"), ("Português", "pt"), ("Français", "fr"),
+LANGS = [(tr("Automático (el idioma de tu mensaje)"), "auto"), ("Español", "es"), ("English", "en"), ("Português", "pt"), ("Français", "fr"),
          ("Deutsch", "de"), ("Italiano", "it")]
-SHORTCUTS = [("Ctrl+N", "Nueva conversación"), ("Ctrl+K", "Buscar en tus conversaciones"), ("Ctrl+1 / Ctrl+2", "Cambiar entre Chat y Code"),
-             ("Ctrl+Shift+S", "Mostrar u ocultar la barra lateral"), ("Enter / Shift+Enter", "Enviar / nueva línea"),
-             ("Ctrl+V", "Pegar una imagen en el mensaje"), ("Ctrl+S", "Guardar el archivo (Code)"), ("Ctrl+W", "Cerrar la pestaña (Code)"),
-             ("Ctrl+`", "Mostrar u ocultar la terminal (Code)"), ("Ctrl+B", "Mostrar u ocultar el explorador de archivos (Code)"),
-             ("Ctrl+L", "Mostrar u ocultar el panel del agente (Code)"), ("Ctrl+Shift+M", "Modo enfoque: solo el editor (Code)"),
-             ("Doble clic en un divisor", "Plegar o recuperar el panel de al lado"), ("Esc", "Cerrar el buscador"),
-             ("Ratón a la esquina superior izquierda", "Detener al instante el control del ratón")]
+SHORTCUTS = [("Ctrl+N", tr("Nueva conversación")), ("Ctrl+K", tr("Buscar en tus conversaciones")), ("Ctrl+1 / Ctrl+2", tr("Cambiar entre Chat y Code")),
+             ("Ctrl+Shift+S", tr("Mostrar u ocultar la barra lateral")), ("Enter / Shift+Enter", tr("Enviar / nueva línea")),
+             ("Ctrl+V", tr("Pegar una imagen en el mensaje")), ("Ctrl+S", tr("Guardar el archivo (Code)")), ("Ctrl+W", tr("Cerrar la pestaña (Code)")),
+             ("Ctrl+`", tr("Mostrar u ocultar la terminal (Code)")), ("Ctrl+B", tr("Mostrar u ocultar el explorador de archivos (Code)")),
+             ("Ctrl+L", tr("Mostrar u ocultar el panel del agente (Code)")), ("Ctrl+Shift+M", tr("Modo enfoque: solo el editor (Code)")),
+             (tr("Doble clic en un divisor"), tr("Plegar o recuperar el panel de al lado")), ("Esc", tr("Cerrar el buscador")),
+             (tr("Ratón a la esquina superior izquierda"), tr("Detener al instante el control del ratón"))]
 
 
 # ---------------------------------------------------------------- acciones del sistema
@@ -63,11 +64,11 @@ def export_conversations(folder):
         lines = ["# " + s.title, "", "_%s_" % datetime.datetime.fromtimestamp(s.created).strftime("%Y-%m-%d %H:%M"), ""]
         for e in s.events:
             if e["t"] == "user":
-                lines += ["## Tú", "", e.get("text", ""), ""]
+                lines += [tr("## Tú"), "", e.get("text", ""), ""]
             elif e["t"] == "assistant_end" and e.get("text"):
                 lines += ["## " + APP_NAME, "", e["text"], ""]
             elif e["t"] == "tool_call":
-                lines += ["> Acción: `%s` %s" % (e["name"], json.dumps(e.get("args", {}), ensure_ascii=False)[:300]), ""]
+                lines += [tr("> Acción: `%s` %s") % (e["name"], json.dumps(e.get("args", {}), ensure_ascii=False)[:300]), ""]
         name = re.sub(r'[<>:"/\\|?*]+', "_", s.title)[:60] or s.id
         with open(os.path.join(folder, "%s - %s.md" % (datetime.datetime.fromtimestamp(s.created).strftime("%Y%m%d"), name)), "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
@@ -100,7 +101,7 @@ def local_commit():
 class SettingsDialog(QDialog):
     def __init__(self, parent=None, page="General"):
         super().__init__(parent)
-        self.setWindowTitle("Ajustes")
+        self.setWindowTitle(tr("Ajustes"))
         self.resize(980, 680)
         self.before = core.SET.snapshot()
         self.timers = {}
@@ -112,7 +113,7 @@ class SettingsDialog(QDialog):
         side.setFixedWidth(230)
         sv = QVBoxLayout(side)
         sv.setContentsMargins(10, 16, 10, 10)
-        t = QLabel("Ajustes")
+        t = QLabel(tr("Ajustes"))
         t.setObjectName("h1")
         sv.addWidget(t)
         sv.addSpacing(6)
@@ -128,8 +129,8 @@ class SettingsDialog(QDialog):
         self.banner.setObjectName("banner")
         bl = QHBoxLayout(self.banner)
         bl.setContentsMargins(12, 6, 8, 6)
-        bl.addWidget(QLabel("Algunos cambios se aplican al reiniciar el modelo."), 1)
-        bl.addWidget(btn("Reiniciar modelo", "primary", self._restart_llm))
+        bl.addWidget(QLabel(tr("Algunos cambios se aplican al reiniciar el modelo.")), 1)
+        bl.addWidget(btn(tr("Reiniciar modelo"), "primary", self._restart_llm))
         self.banner.hide()
         bw = QWidget()
         bwl = QHBoxLayout(bw)
@@ -140,24 +141,32 @@ class SettingsDialog(QDialog):
         rv.addWidget(self.pages, 1)
         foot = QHBoxLayout()
         foot.setContentsMargins(24, 8, 24, 14)
-        self.saved = QLabel("Los cambios se guardan automáticamente.")
+        self.saved = QLabel(tr("Los cambios se guardan automáticamente."))
         self.saved.setObjectName("faint")
         foot.addWidget(self.saved, 1)
-        foot.addWidget(btn("Cerrar", "primary", self.accept))
+        foot.addWidget(btn(tr("Cerrar"), "primary", self.accept))
         rv.addLayout(foot)
         root.addWidget(right, 1)
-        for name, ico, build in (("General", "acc_ajustes", self.p_general), ("Personalización", "mat_comentario", self.p_personal),
-                                 ("Modelos", "ia_controlador", self.p_models), ("Generación", "vfx_magia", self.p_generation),
-                                 ("Rendimiento", "prof_cpu", self.p_performance), ("Agente y permisos", "est_bloqueado", self.p_agent),
-                                 ("Herramientas", "cod_terminal", self.p_tools), ("Datos y privacidad", "prof_disco", self.p_data),
-                                 ("Registro del modelo", "pan_consola", self.p_log), ("Atajos de teclado", "inp_teclado", self.p_keys),
-                                 ("Acerca de", "est_info", self.p_about)):
-            it = QListWidgetItem(icon(ico, C["mut"], 16), name)
+        # key: nombre interno de la página (lo usan SettingsDialog(page=…) y _reload); label: el texto que se muestra
+        for key, label, ico, build in (("General", tr("General"), "acc_ajustes", self.p_general),
+                                       ("Personalización", tr("Personalización"), "mat_comentario", self.p_personal),
+                                       ("Modelos", tr("Modelos"), "ia_controlador", self.p_models),
+                                       ("Generación", tr("Generación"), "vfx_magia", self.p_generation),
+                                       ("Rendimiento", tr("Rendimiento"), "prof_cpu", self.p_performance),
+                                       ("Agente y permisos", tr("Agente y permisos"), "est_bloqueado", self.p_agent),
+                                       ("Herramientas", tr("Herramientas"), "cod_terminal", self.p_tools),
+                                       ("Datos y privacidad", tr("Datos y privacidad"), "prof_disco", self.p_data),
+                                       ("Registro del modelo", tr("Registro del modelo"), "pan_consola", self.p_log),
+                                       ("Atajos de teclado", tr("Atajos de teclado"), "inp_teclado", self.p_keys),
+                                       ("Acerca de", tr("Acerca de"), "est_info", self.p_about)):
+            it = QListWidgetItem(icon(ico, C["mut"], 16), label)
+            it.setData(Qt.UserRole, key)
             self.nav.addItem(it)
-            self.pages.addWidget(self._scroll(name, build))
+            self.pages.addWidget(self._scroll(label, build))
         self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
-        names = [self.nav.item(i).text() for i in range(self.nav.count())]
-        self.nav.setCurrentRow(names.index(page) if page in names else 0)
+        keys = [self.nav.item(i).data(Qt.UserRole) for i in range(self.nav.count())]
+        labels = [self.nav.item(i).text() for i in range(self.nav.count())]
+        self.nav.setCurrentRow(keys.index(page) if page in keys else labels.index(page) if page in labels else 0)
 
     # ---- infraestructura
     def _scroll(self, title, build):
@@ -185,12 +194,29 @@ class SettingsDialog(QDialog):
 
     def _save(self, key, value):
         core.SET.update({key: value})
-        self.saved.setText("Guardado ✓")
-        QTimer.singleShot(1500, lambda: self.saved.setText("Los cambios se guardan automáticamente."))
+        self.saved.setText(tr("Guardado ✓"))
+        QTimer.singleShot(1500, lambda: self.saved.setText(tr("Los cambios se guardan automáticamente.")))
         if key in core.RESTART_KEYS and core.LLM_MGR.mine():
             self.banner.show()
         if key == "start_with_windows":
             set_autostart(bool(value))
+        if key == "ui_language":
+            QTimer.singleShot(0, self._ask_restart_language)
+
+    def _ask_restart_language(self):
+        """El idioma se elige al arrancar: ofrece reiniciar Jayth para verlo ya."""
+        want = core.SET.snapshot().get("ui_language", "auto")
+        now = i18n.LANG
+        new = want if want in i18n.LANGS else i18n.system_lang()
+        if new == now:
+            return
+        r = QMessageBox.question(self, tr("Idioma de la interfaz"),
+                                 tr("El nuevo idioma se verá al reiniciar %s. ¿Reiniciar ahora?") % APP_NAME,
+                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        main = getattr(QApplication.instance(), "_main", None)
+        if r == QMessageBox.StandardButton.Yes and main is not None:
+            self.close()
+            main.restart_app()
 
     def _debounced(self, key, getter, ms=600):
         t = self.timers.get(key)
@@ -278,61 +304,64 @@ class SettingsDialog(QDialog):
 
     # ---- paginas
     def p_general(self, v):
-        self.field(v, "theme", "Tema", "choice", choices=[("Según el sistema", "system"), ("Oscuro", "dark"), ("Claro", "light")])
-        self.field(v, "font_scale", "Tamaño del texto", "choice", choices=[("Pequeño", 90), ("Normal", 100), ("Grande", 115), ("Muy grande", 130)],
-                   help="El tema y el tamaño se aplican al cerrar esta ventana.")
-        self.field(v, "animations", "Animaciones (aparición de mensajes, barra lateral, avisos)", "bool")
+        self.field(v, "ui_language", tr("Idioma de la interfaz"), "choice",
+                   choices=[(tr("Automático (el idioma del sistema)"), "auto")] + [(n, c) for c, n in i18n.NAMES.items()],
+                   help=tr("Menús, botones y mensajes de %s. Se aplica al reiniciar.") % APP_NAME)
+        self.field(v, "theme",tr("Tema"), "choice", choices=[(tr("Según el sistema"), "system"), (tr("Oscuro"), "dark"), (tr("Claro"), "light")])
+        self.field(v, "font_scale", tr("Tamaño del texto"), "choice", choices=[(tr("Pequeño"), 90), (tr("Normal"), 100), (tr("Grande"), 115), (tr("Muy grande"), 130)],
+                   help=tr("El tema y el tamaño se aplican al cerrar esta ventana."))
+        self.field(v, "animations", tr("Animaciones (aparición de mensajes, barra lateral, avisos)"), "bool")
         if osys.WIN:      # en macOS y Linux se usa siempre la barra del sistema (semáforos de macOS, decoraciones del escritorio)
-            self.field(v, "custom_titlebar", "Barra de título integrada en la ventana", "bool",
-                       help="Como en las apps de escritorio modernas. Si la desactivas se usa la barra de Windows (al reiniciar %s)." % APP_NAME)
-        self._section(v, "Inicio y ventana")
-        self.field(v, "start_with_windows", "Abrir %s al iniciar %s (minimizado en la bandeja)" % (APP_NAME, SYSTEM), "bool")
-        self.field(v, "autostart_llm", "Encender el modelo al abrir %s" % APP_NAME, "bool",
-                   help="Así está listo cuando lo necesites. Usa la memoria del modelo mientras la app esté abierta.")
-        self.field(v, "close_to_tray", "Al cerrar la ventana, seguir funcionando en la bandeja del sistema", "bool")
-        self.field(v, "notifications", "Avisarme cuando el agente necesite mi aprobación", "bool")
-        self.field(v, "quick_hotkey", "Atajo de la ventana rápida", "text", placeholder="Ctrl+Alt+J",
-                   help="Abre una barrita para preguntar a %s desde cualquier programa, con opción de adjuntar una captura de la pantalla. "
-                        "Funciona mientras %s esté abierto (también en la bandeja). Déjalo vacío para desactivarlo." % (APP_NAME, APP_NAME))
+            self.field(v, "custom_titlebar", tr("Barra de título integrada en la ventana"), "bool",
+                       help=tr("Como en las apps de escritorio modernas. Si la desactivas se usa la barra de Windows (al reiniciar %s).") % APP_NAME)
+        self._section(v, tr("Inicio y ventana"))
+        self.field(v, "start_with_windows", tr("Abrir %s al iniciar %s (minimizado en la bandeja)") % (APP_NAME, SYSTEM), "bool")
+        self.field(v, "autostart_llm", tr("Encender el modelo al abrir %s") % APP_NAME, "bool",
+                   help=tr("Así está listo cuando lo necesites. Usa la memoria del modelo mientras la app esté abierta."))
+        self.field(v, "close_to_tray", tr("Al cerrar la ventana, seguir funcionando en la bandeja del sistema"), "bool")
+        self.field(v, "notifications", tr("Avisarme cuando el agente necesite mi aprobación"), "bool")
+        self.field(v, "quick_hotkey", tr("Atajo de la ventana rápida"), "text", placeholder="Ctrl+Alt+J",
+                   help=tr("Abre una barrita para preguntar a %s desde cualquier programa, con opción de adjuntar una captura de la pantalla. "
+                        "Funciona mientras %s esté abierto (también en la bandeja). Déjalo vacío para desactivarlo.") % (APP_NAME, APP_NAME))
 
     def p_personal(self, v):
-        self.field(v, "user_name", "¿Cómo quieres que te llame?", "text", placeholder="Tu nombre (opcional)",
-                   help="Se usa en el saludo y para que el agente sepa cómo dirigirse a ti.")
-        self.field(v, "about_me", "¿Qué debería saber %s de ti?" % APP_NAME, "area",
-                   placeholder="Ej.: Soy diseñador, trabajo con Python y Figma, uso %s y guardo mis proyectos en %s." % (SYSTEM, "D:\\Trabajo" if osys.WIN else "~/Trabajo"))
-        self.field(v, "response_style", "¿Cómo quieres que responda?", "area",
-                   placeholder="Ej.: Respuestas breves y directas, con ejemplos de código y sin relleno.")
-        self.field(v, "response_language", "Idioma de las respuestas", "choice", choices=LANGS)
-        self.field(v, "custom_instructions", "Instrucciones adicionales para el agente", "area",
-                   placeholder="Ej.: Antes de borrar o mover archivos, explícame qué vas a hacer.")
-        self._section(v, "Voz")
+        self.field(v, "user_name", tr("¿Cómo quieres que te llame?"), "text", placeholder=tr("Tu nombre (opcional)"),
+                   help=tr("Se usa en el saludo y para que el agente sepa cómo dirigirse a ti."))
+        self.field(v, "about_me", tr("¿Qué debería saber %s de ti?") % APP_NAME, "area",
+                   placeholder=tr("Ej.: Soy diseñador, trabajo con Python y Figma, uso %s y guardo mis proyectos en %s.") % (SYSTEM, "D:\\Trabajo" if osys.WIN else "~/Trabajo"))
+        self.field(v, "response_style", tr("¿Cómo quieres que responda?"), "area",
+                   placeholder=tr("Ej.: Respuestas breves y directas, con ejemplos de código y sin relleno."))
+        self.field(v, "response_language", tr("Idioma de las respuestas"), "choice", choices=LANGS)
+        self.field(v, "custom_instructions", tr("Instrucciones adicionales para el agente"), "area",
+                   placeholder=tr("Ej.: Antes de borrar o mover archivos, explícame qué vas a hacer."))
+        self._section(v, tr("Voz"))
         from . import voice as _voice
-        self.field(v, "voice_model", "Precisión del dictado", "choice", choices=[("%s: %s" % (k.capitalize(), d), k) for k, d in _voice.MODELS.items()],
-                   help="El dictado funciona en tu equipo. El modelo elegido se descarga la primera vez que lo uses.")
-        self.field(v, "voice_lang", "Idioma del dictado", "choice",
-                   choices=[("Detectar automáticamente", ""), ("Español", "es"), ("Inglés", "en"), ("Portugués", "pt"), ("Francés", "fr"), ("Alemán", "de"), ("Italiano", "it")])
-        self._section(v, "Memoria")
-        v.addWidget(lbl("Lo que %s recuerda de ti entre conversaciones (lo guarda cuando le dices algo duradero, como «uso pnpm»). "
-                        "Puedes editarlo o borrarlo." % APP_NAME, "faint"))
-        self.field(v, "memory_enabled", "Usar la memoria (recordar cosas entre conversaciones)", "bool",
-                   help="Apagada, %s no lee ni guarda recuerdos. Para una sola conversación sin memoria usa el chat temporal." % APP_NAME)
+        self.field(v, "voice_model", tr("Precisión del dictado"), "choice", choices=[("%s: %s" % (k.capitalize(), d), k) for k, d in _voice.MODELS.items()],
+                   help=tr("El dictado funciona en tu equipo. El modelo elegido se descarga la primera vez que lo uses."))
+        self.field(v, "voice_lang", tr("Idioma del dictado"), "choice",
+                   choices=[(tr("Detectar automáticamente"), ""), (tr("Español"), "es"), (tr("Inglés"), "en"), (tr("Portugués"), "pt"), (tr("Francés"), "fr"), (tr("Alemán"), "de"), (tr("Italiano"), "it")])
+        self._section(v, tr("Memoria"))
+        v.addWidget(lbl(tr("Lo que %s recuerda de ti entre conversaciones (lo guarda cuando le dices algo duradero, como «uso pnpm»). "
+                        "Puedes editarlo o borrarlo.") % APP_NAME, "faint"))
+        self.field(v, "memory_enabled", tr("Usar la memoria (recordar cosas entre conversaciones)"), "bool",
+                   help=tr("Apagada, %s no lee ni guarda recuerdos. Para una sola conversación sin memoria usa el chat temporal.") % APP_NAME)
         self.mem_box = QVBoxLayout()
         self.mem_box.setSpacing(4)
         v.addLayout(self.mem_box)
         r = QHBoxLayout()
         self.mem_new = QLineEdit()
-        self.mem_new.setPlaceholderText("Añadir un recuerdo, p. ej.: Prefiero respuestas cortas")
+        self.mem_new.setPlaceholderText(tr("Añadir un recuerdo, p. ej.: Prefiero respuestas cortas"))
         self.mem_new.returnPressed.connect(self._mem_add)
         r.addWidget(self.mem_new, 1)
-        r.addWidget(btn("Añadir", None, self._mem_add, "acc_anadir"))
+        r.addWidget(btn(tr("Añadir"), None, self._mem_add, "acc_anadir"))
         v.addLayout(r)
         r = QHBoxLayout()
-        self.mem_clear = btn("Borrar toda la memoria", "danger", self._mem_clear)
+        self.mem_clear = btn(tr("Borrar toda la memoria"), "danger", self._mem_clear)
         r.addWidget(self.mem_clear)
         r.addStretch(1)
         v.addLayout(r)
         self._mem_render()
-        v.addWidget(lbl("En los proyectos, %s también lee AGENTS.md, JAYTH.md o CLAUDE.md de la carpeta: escribe ahí las normas del proyecto." % APP_NAME, "faint"))
+        v.addWidget(lbl(tr("En los proyectos, %s también lee AGENTS.md, JAYTH.md o CLAUDE.md de la carpeta: escribe ahí las normas del proyecto.") % APP_NAME, "faint"))
 
     # ---- memoria: un recuerdo por fila, cada uno se puede corregir o borrar
     def _mem_render(self):
@@ -344,7 +373,7 @@ class SettingsDialog(QDialog):
         items = harness.memory_items()
         self.mem_clear.setVisible(bool(items))
         if not items:
-            self.mem_box.addWidget(lbl("Todavía no hay recuerdos guardados.", "faint"))
+            self.mem_box.addWidget(lbl(tr("Todavía no hay recuerdos guardados."), "faint"))
         for i, (text, date) in enumerate(items):
             row = QFrame()
             row.setObjectName("noteBox")
@@ -353,12 +382,12 @@ class SettingsDialog(QDialog):
             e = QLineEdit(text)
             e.setFrame(False)
             e.setStyleSheet("background: transparent")
-            e.setToolTip("Edita el recuerdo y pulsa Enter para guardarlo")
+            e.setToolTip(tr("Edita el recuerdo y pulsa Enter para guardarlo"))
             e.editingFinished.connect(lambda i=i, e=e: self._mem_edit(i, e.text()))
             h.addWidget(e, 1)
             if date:
                 h.addWidget(lbl(date, "faint", wrap=False))
-            b = btn("Olvidar", None, lambda _=False, i=i: self._mem_edit(i, ""))
+            b = btn(tr("Olvidar"), None, lambda _=False, i=i: self._mem_edit(i, ""))
             b.setProperty("kind", "flat")
             h.addWidget(b)
             self.mem_box.addWidget(row)
@@ -373,7 +402,7 @@ class SettingsDialog(QDialog):
         else:
             del items[i]
         harness.memory_save(items)
-        self.saved.setText("Memoria actualizada.")
+        self.saved.setText(tr("Memoria actualizada."))
         if not text.strip():
             QTimer.singleShot(0, self._mem_render)
 
@@ -387,7 +416,7 @@ class SettingsDialog(QDialog):
 
     def _mem_clear(self):
         from . import harness
-        if QMessageBox.question(self, "Borrar la memoria", "¿Borrar todos los recuerdos? No se puede deshacer.") == QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, tr("Borrar la memoria"), tr("¿Borrar todos los recuerdos? No se puede deshacer.")) == QMessageBox.StandardButton.Yes:
             harness.memory_save([])
             self._mem_render()
 
@@ -398,26 +427,26 @@ class SettingsDialog(QDialog):
         card.setObjectName("noteBox")
         cl = QVBoxLayout(card)
         cl.setContentsMargins(14, 12, 14, 12)
-        cl.addWidget(lbl("<b>Modelo activo:</b> %s" % ((core.model_title(m) if m else "ninguno") if cfg["llm_mode"] == "local" else "servidor externo")))
+        cl.addWidget(lbl(tr("<b>Modelo activo:</b> %s") % ((core.model_title(m) if m else tr("ninguno")) if cfg["llm_mode"] == "local" else tr("servidor externo"))))
         if m and cfg["llm_mode"] == "local":
             cl.addWidget(lbl("%s · %s · %s" % (core.model_quant(m) or "GGUF", HW.human(m.get("size", 0)), m.get("path", "")), "faint"))
         row = QHBoxLayout()
-        row.addWidget(btn("Gestionar modelos…", cb=lambda: ModelsDialog(self).exec(), ico="ia_controlador"))
-        row.addWidget(btn("Añadir modelo…", cb=lambda: SetupWizard(self, start="model").exec(), ico="acc_anadir"))
-        row.addWidget(btn("Asistente de configuración…", cb=lambda: SetupWizard(self).exec(), ico="vfx_magia"))
+        row.addWidget(btn(tr("Gestionar modelos…"), cb=lambda: ModelsDialog(self).exec(), ico="ia_controlador"))
+        row.addWidget(btn(tr("Añadir modelo…"), cb=lambda: SetupWizard(self, start="model").exec(), ico="acc_anadir"))
+        row.addWidget(btn(tr("Asistente de configuración…"), cb=lambda: SetupWizard(self).exec(), ico="vfx_magia"))
         row.addStretch(1)
         cl.addLayout(row)
         v.addWidget(card)
-        self.field(v, "models_dir", "Carpeta donde se descargan los modelos", "dir")
-        self._section(v, "Proveedor")
-        self.field(v, "llm_mode", "¿Qué motor usa el agente?", "choice",
-                   choices=[("Local: llama.cpp en este equipo", "local"), ("Servidor externo compatible con OpenAI", "external")])
-        self.field(v, "external_url", "URL del servidor externo (termina en /v1)", "text", placeholder="http://127.0.0.1:11434/v1",
-                   help="Ollama: http://127.0.0.1:11434/v1 · LM Studio: http://127.0.0.1:1234/v1 · otro PC de tu red: http://IP:puerto/v1")
-        self.field(v, "external_model", "Nombre del modelo en ese servidor", "text", placeholder="qwen3:8b")
-        self.field(v, "external_key", "Clave de API (si el servidor la pide)", "secret")
+        self.field(v, "models_dir", tr("Carpeta donde se descargan los modelos"), "dir")
+        self._section(v, tr("Proveedor"))
+        self.field(v, "llm_mode", tr("¿Qué motor usa el agente?"), "choice",
+                   choices=[(tr("Local: llama.cpp en este equipo"), "local"), (tr("Servidor externo compatible con OpenAI"), "external")])
+        self.field(v, "external_url", tr("URL del servidor externo (termina en /v1)"), "text", placeholder="http://127.0.0.1:11434/v1",
+                   help=tr("Ollama: http://127.0.0.1:11434/v1 · LM Studio: http://127.0.0.1:1234/v1 · otro PC de tu red: http://IP:puerto/v1"))
+        self.field(v, "external_model", tr("Nombre del modelo en ese servidor"), "text", placeholder="qwen3:8b")
+        self.field(v, "external_key", tr("Clave de API (si el servidor la pide)"), "secret")
         res = lbl("", "faint")
-        b = btn("Probar conexión", cb=lambda: self._test_ext(res), ico="hub_conectar")
+        b = btn(tr("Probar conexión"), cb=lambda: self._test_ext(res), ico="hub_conectar")
         r = QHBoxLayout()
         r.addWidget(b)
         r.addWidget(res, 1)
@@ -425,28 +454,28 @@ class SettingsDialog(QDialog):
 
     def _test_ext(self, out):
         cfg = core.SET.snapshot()
-        out.setText("Probando…")
+        out.setText(tr("Probando…"))
 
         def probe():
             req = urllib.request.Request(cfg["external_url"].rstrip("/") + "/models", headers={"Authorization": "Bearer " + (cfg["external_key"] or "local")})
             return [m.get("id") for m in json.loads(urllib.request.urlopen(req, timeout=5).read().decode("utf-8")).get("data", [])]
-        run_bg(probe, lambda r: out.setText(("✗ No responde: %s" % r) if isinstance(r, Exception) else "✓ Conectado · " + (", ".join(r[:6]) or "sin modelos listados")))
+        run_bg(probe, lambda r: out.setText((tr("✗ No responde: %s") % r) if isinstance(r, Exception) else tr("✓ Conectado · %s") % (", ".join(r[:6]) or tr("sin modelos listados"))))
 
     def p_generation(self, v):
-        self.field(v, "thinking", "Pensar a fondo por defecto (mejores respuestas, más lento)", "bool")
-        self.field(v, "sampling", "Parámetros de muestreo", "choice",
-                   choices=[("Recomendados para el modelo activo (automático)", "auto"), ("Personalizados (los de abajo)", "custom")],
-                   help="Automático usa los valores que publica cada laboratorio (Qwen, Gemma, Llama, Mistral, DeepSeek…) según si piensa o no.")
-        self.field(v, "temperature", "Temperatura", "float", min=0, max=2, help="Más alta = más creativa y variada; más baja = más precisa y estable.")
-        self.field(v, "max_tokens", "Longitud máxima de cada respuesta (tokens)", "int", min=64, max=65536)
-        self._section(v, "Muestreo avanzado")
+        self.field(v, "thinking", tr("Pensar a fondo por defecto (mejores respuestas, más lento)"), "bool")
+        self.field(v, "sampling", tr("Parámetros de muestreo"), "choice",
+                   choices=[(tr("Recomendados para el modelo activo (automático)"), "auto"), (tr("Personalizados (los de abajo)"), "custom")],
+                   help=tr("Automático usa los valores que publica cada laboratorio (Qwen, Gemma, Llama, Mistral, DeepSeek…) según si piensa o no."))
+        self.field(v, "temperature", tr("Temperatura"), "float", min=0, max=2, help=tr("Más alta = más creativa y variada; más baja = más precisa y estable."))
+        self.field(v, "max_tokens", tr("Longitud máxima de cada respuesta (tokens)"), "int", min=64, max=65536)
+        self._section(v, tr("Muestreo avanzado"))
         self.field(v, "top_p", "Top-p", "float", min=0, max=1)
-        self.field(v, "top_k", "Top-k", "int", min=0, max=500, special="sin límite")
+        self.field(v, "top_k", "Top-k", "int", min=0, max=500, special=tr("sin límite"))
         self.field(v, "min_p", "Min-p", "float", min=0, max=1)
-        self.field(v, "repeat_penalty", "Penalización por repetición", "float", min=1, max=2, help="1,00 = desactivada.")
-        self.field(v, "seed", "Semilla", "int", min=-1, max=2_000_000_000, special="aleatoria", help="Fija un número para obtener siempre la misma respuesta.")
+        self.field(v, "repeat_penalty", tr("Penalización por repetición"), "float", min=1, max=2, help=tr("1,00 = desactivada."))
+        self.field(v, "seed", tr("Semilla"), "int", min=-1, max=2_000_000_000, special=tr("aleatoria"), help=tr("Fija un número para obtener siempre la misma respuesta."))
         r = QHBoxLayout()
-        r.addWidget(btn("Restablecer valores recomendados", cb=self._reset_generation))
+        r.addWidget(btn(tr("Restablecer valores recomendados"), cb=self._reset_generation))
         r.addStretch(1)
         v.addLayout(r)
 
@@ -466,56 +495,56 @@ class SettingsDialog(QDialog):
         card.setObjectName("noteBox")
         cl = QVBoxLayout(card)
         cl.setContentsMargins(14, 12, 14, 12)
-        hw = lbl("Detectando tu equipo…")
+        hw = lbl(tr("Detectando tu equipo…"))
         cl.addWidget(hw)
-        cl.addWidget(lbl("Motor: llama.cpp %s · %s" % (cfg["llama_tag"] or "", {"cpu": "CPU", "cuda": "GPU NVIDIA (CUDA)", "vulkan": "GPU (Vulkan)"}.get(cfg["backend"], cfg["backend"])), "faint"))
+        cl.addWidget(lbl(tr("Motor: llama.cpp %s · %s") % (cfg["llama_tag"] or "", {"cpu": "CPU", "cuda": tr("GPU NVIDIA (CUDA)"), "vulkan": "GPU (Vulkan)"}.get(cfg["backend"], cfg["backend"])), "faint"))
         r = QHBoxLayout()
-        r.addWidget(btn("Cambiar o actualizar el motor…", cb=lambda: SetupWizard(self).exec(), ico="acc_refrescar"))
+        r.addWidget(btn(tr("Cambiar o actualizar el motor…"), cb=lambda: SetupWizard(self).exec(), ico="acc_refrescar"))
         r.addStretch(1)
         cl.addLayout(r)
         v.addWidget(card)
-        run_bg(HW.detect, lambda h: hw.setText(HW.summary(h) if not isinstance(h, Exception) else "No se pudo detectar el hardware."))
-        self.field(v, "warmup", "Precalentar al encender el modelo", "bool",
-                   help="Procesa una vez las instrucciones y herramientas del agente: el primer mensaje responde muchísimo antes.")
-        self.field(v, "n_ctx", "Memoria de la conversación (contexto)", "choice",
-                   choices=[("4 000 tokens", 4096), ("8 000 tokens", 8192), ("16 000 tokens (recomendado)", 16384), ("32 000 tokens", 32768),
-                            ("64 000 tokens", 65536), ("128 000 tokens", 131072)], help="Más contexto permite tareas más largas, pero usa más memoria.")
-        self.field(v, "idle_unload", "Apagar el modelo si no se usa durante", "choice",
-                   choices=[("Nunca", 0), ("5 minutos", 5), ("15 minutos", 15), ("30 minutos", 30), ("1 hora", 60)], help="Libera memoria cuando no lo estás usando.")
-        self._section(v, "Ajustes del motor")
-        self.field(v, "threads", "Hilos de CPU", "int", min=1, max=256, help="Lo ideal suele ser el número de núcleos físicos.")
-        self.field(v, "gpu_layers", "Capas en la GPU", "int", min=-1, max=999, special="automático", help="Solo con GPU. Automático reparte el modelo entre GPU y RAM.")
-        self.field(v, "batch_size", "Tamaño de lote", "choice", choices=[(str(x), x) for x in (128, 256, 512, 1024, 2048)],
-                   help="Más grande procesa más rápido los textos largos, con algo más de memoria.")
-        self.field(v, "cache_type", "Contexto comprimido", "choice",
-                   choices=[("No (máxima calidad)", "f16"), ("8 bits (la mitad de memoria, casi sin pérdida)", "q8_0"), ("4 bits (un cuarto de memoria)", "q4_0")])
-        self.field(v, "flash_attn", "Flash attention", "choice", choices=[("Automático", "auto"), ("Activado", "on"), ("Desactivado", "off")])
-        self.field(v, "mmap", "Cargar el modelo con mmap (arranque más rápido)", "bool")
-        self.field(v, "mlock", "Bloquear el modelo en la RAM (evita que el sistema lo mueva al disco)", "bool",
-                   help="Útil si tienes RAM de sobra; si no, puede ralentizar el equipo.")
-        self.field(v, "llm_port", "Puerto local del motor", "int", min=1024, max=65535)
-        self._section(v, "Descargas")
-        self.field(v, "download_connections", "Conexiones simultáneas al descargar modelos", "int", min=1, max=16,
-                   help="Varias conexiones aprovechan mejor tu internet (como un gestor de descargas). Pon 1 si tu red "
-                        "o tu router van mal con muchas conexiones a la vez.")
+        run_bg(HW.detect, lambda h: hw.setText(HW.summary(h) if not isinstance(h, Exception) else tr("No se pudo detectar el hardware.")))
+        self.field(v, "warmup", tr("Precalentar al encender el modelo"), "bool",
+                   help=tr("Procesa una vez las instrucciones y herramientas del agente: el primer mensaje responde muchísimo antes."))
+        self.field(v, "n_ctx", tr("Memoria de la conversación (contexto)"), "choice",
+                   choices=[(tr("4 000 tokens"), 4096), (tr("8 000 tokens"), 8192), (tr("16 000 tokens (recomendado)"), 16384), (tr("32 000 tokens"), 32768),
+                            (tr("64 000 tokens"), 65536), (tr("128 000 tokens"), 131072)], help=tr("Más contexto permite tareas más largas, pero usa más memoria."))
+        self.field(v, "idle_unload", tr("Apagar el modelo si no se usa durante"), "choice",
+                   choices=[(tr("Nunca"), 0), (tr("5 minutos"), 5), (tr("15 minutos"), 15), (tr("30 minutos"), 30), (tr("1 hora"), 60)], help=tr("Libera memoria cuando no lo estás usando."))
+        self._section(v, tr("Ajustes del motor"))
+        self.field(v, "threads", tr("Hilos de CPU"), "int", min=1, max=256, help=tr("Lo ideal suele ser el número de núcleos físicos."))
+        self.field(v, "gpu_layers", tr("Capas en la GPU"), "int", min=-1, max=999, special=tr("automático"), help=tr("Solo con GPU. Automático reparte el modelo entre GPU y RAM."))
+        self.field(v, "batch_size", tr("Tamaño de lote"), "choice", choices=[(str(x), x) for x in (128, 256, 512, 1024, 2048)],
+                   help=tr("Más grande procesa más rápido los textos largos, con algo más de memoria."))
+        self.field(v, "cache_type", tr("Contexto comprimido"), "choice",
+                   choices=[(tr("No (máxima calidad)"), "f16"), (tr("8 bits (la mitad de memoria, casi sin pérdida)"), "q8_0"), (tr("4 bits (un cuarto de memoria)"), "q4_0")])
+        self.field(v, "flash_attn", "Flash attention", "choice", choices=[(tr("Automático"), "auto"), (tr("Activado"), "on"), (tr("Desactivado"), "off")])
+        self.field(v, "mmap", tr("Cargar el modelo con mmap (arranque más rápido)"), "bool")
+        self.field(v, "mlock", tr("Bloquear el modelo en la RAM (evita que el sistema lo mueva al disco)"), "bool",
+                   help=tr("Útil si tienes RAM de sobra; si no, puede ralentizar el equipo."))
+        self.field(v, "llm_port", tr("Puerto local del motor"), "int", min=1024, max=65535)
+        self._section(v, tr("Descargas"))
+        self.field(v, "download_connections", tr("Conexiones simultáneas al descargar modelos"), "int", min=1, max=16,
+                   help=tr("Varias conexiones aprovechan mejor tu internet (como un gestor de descargas). Pon 1 si tu red "
+                        "o tu router van mal con muchas conexiones a la vez."))
 
     def p_agent(self, v):
-        self.field(v, "mode", "Permisos por defecto", "choice", choices=[(d, k) for k, d in A.MODES.items()])
-        self.field(v, "workspace", "Carpeta de trabajo del modo Chat", "dir")
-        self.field(v, "auto_allow_commands", "Comandos que se permiten sin preguntar", "list", height=90,
+        self.field(v, "mode", tr("Permisos por defecto"), "choice", choices=[(d, k) for k, d in A.MODES.items()])
+        self.field(v, "workspace", tr("Carpeta de trabajo del modo Chat"), "dir")
+        self.field(v, "auto_allow_commands", tr("Comandos que se permiten sin preguntar"), "list", height=90,
                    placeholder="git status\nnpm test\npython -m pytest",
-                   help="Uno por línea. Se aplica si el comando empieza así y no encadena otros (; | &). Las acciones delicadas siempre preguntan.")
-        self._section(v, "Límites")
-        self.field(v, "max_steps", "Máximo de pasos por tarea", "int", min=1, max=500)
-        self.field(v, "command_timeout", "Tiempo máximo de cada comando", "int", min=5, max=900, suffix=" s")
-        self.field(v, "max_tool_output", "Máximo de texto que recibe el modelo de cada acción", "int", min=1000, max=200000, suffix=" caracteres")
-        self.field(v, "vision", "Enviar capturas e imágenes al modelo (si tiene visión)", "bool")
-        self.field(v, "keep_images", "Imágenes recientes que recuerda", "int", min=0, max=10)
+                   help=tr("Uno por línea. Se aplica si el comando empieza así y no encadena otros (; | &). Las acciones delicadas siempre preguntan."))
+        self._section(v, tr("Límites"))
+        self.field(v, "max_steps", tr("Máximo de pasos por tarea"), "int", min=1, max=500)
+        self.field(v, "command_timeout", tr("Tiempo máximo de cada comando"), "int", min=5, max=900, suffix=" s")
+        self.field(v, "max_tool_output", tr("Máximo de texto que recibe el modelo de cada acción"), "int", min=1000, max=200000, suffix=tr(" caracteres"))
+        self.field(v, "vision", tr("Enviar capturas e imágenes al modelo (si tiene visión)"), "bool")
+        self.field(v, "keep_images", tr("Imágenes recientes que recuerda"), "int", min=0, max=10)
 
     def p_tools(self, v):
-        self.field(v, "web_access", "Permitir el acceso a internet (buscar, leer páginas y descargar)", "bool")
-        self.field(v, "computer_control", "Permitir el control del ordenador (ratón, teclado, capturas)", "bool")
-        self._section(v, "Herramientas disponibles")
+        self.field(v, "web_access", tr("Permitir el acceso a internet (buscar, leer páginas y descargar)"), "bool")
+        self.field(v, "computer_control", tr("Permitir el control del ordenador (ratón, teclado, capturas)"), "bool")
+        self._section(v, tr("Herramientas disponibles"))
         off = set(core.SET.snapshot()["tools_disabled"])
         grid = QGridLayout()
         grid.setHorizontalSpacing(18)
@@ -538,15 +567,15 @@ class SettingsDialog(QDialog):
             grid.addLayout(box, col // 3, col % 3)
             col += 1
         v.addLayout(grid)
-        self._section(v, "Búsqueda web")
-        self.field(v, "search_provider", "Buscador", "choice",
-                   choices=[("Automático (DuckDuckGo; si lo bloquea, Wikipedia)", "auto"), ("Brave Search (necesita clave)", "brave"), ("SearXNG (tu propio buscador)", "searxng")])
-        self.field(v, "brave_key", "Clave de Brave Search", "secret", help="Gratis en api.search.brave.com para uso personal.")
-        self.field(v, "searxng_url", "URL de SearXNG", "text", placeholder="http://127.0.0.1:8888")
-        self._section(v, "Conectores MCP")
-        v.addWidget(lbl("Amplían lo que puede hacer el agente con herramientas externas (archivos, GitHub, bases de datos, navegador, "
+        self._section(v, tr("Búsqueda web"))
+        self.field(v, "search_provider", tr("Buscador"), "choice",
+                   choices=[(tr("Automático (DuckDuckGo; si lo bloquea, Wikipedia)"), "auto"), (tr("Brave Search (necesita clave)"), "brave"), (tr("SearXNG (tu propio buscador)"), "searxng")])
+        self.field(v, "brave_key", tr("Clave de Brave Search"), "secret", help=tr("Gratis en api.search.brave.com para uso personal."))
+        self.field(v, "searxng_url", tr("URL de SearXNG"), "text", placeholder="http://127.0.0.1:8888")
+        self._section(v, tr("Conectores MCP"))
+        v.addWidget(lbl(tr("Amplían lo que puede hacer el agente con herramientas externas (archivos, GitHub, bases de datos, navegador, "
                         "Notion…) mediante el estándar Model Context Protocol. Pueden ser un programa de tu equipo o un servicio "
-                        "remoto con su dirección y clave.", "faint"))
+                        "remoto con su dirección y clave."), "faint"))
         self.mcp_box = QVBoxLayout()
         self.mcp_box.setSpacing(6)
         v.addLayout(self.mcp_box)
@@ -556,33 +585,33 @@ class SettingsDialog(QDialog):
         g = QGridLayout(f)
         g.setContentsMargins(12, 10, 12, 10)
         g.setVerticalSpacing(6)
-        title = QLabel("Añadir conector")
+        title = QLabel(tr("Añadir conector"))
         title.setStyleSheet("font-weight:600")
         g.addWidget(title, 0, 0)
         self.mcp_tpl = QComboBox()
-        self.mcp_tpl.addItem("Plantillas…", None)
+        self.mcp_tpl.addItem(tr("Plantillas…"), None)
         for t in MCP_TEMPLATES:
             self.mcp_tpl.addItem(t["label"], t)
         self.mcp_tpl.activated.connect(self._mcp_template)
         g.addWidget(self.mcp_tpl, 0, 1)
         self.mcp_kind = QComboBox()
-        self.mcp_kind.addItem("Programa de este equipo", "local")
-        self.mcp_kind.addItem("Servicio remoto (dirección web)", "remote")
+        self.mcp_kind.addItem(tr("Programa de este equipo"), "local")
+        self.mcp_kind.addItem(tr("Servicio remoto (dirección web)"), "remote")
         self.mcp_kind.currentIndexChanged.connect(self._mcp_kind_changed)
         self.mcp_name = QLineEdit()
-        self.mcp_name.setPlaceholderText("Nombre (p. ej. Archivos)")
+        self.mcp_name.setPlaceholderText(tr("Nombre (p. ej. Archivos)"))
         g.addWidget(self.mcp_name, 1, 0)
         g.addWidget(self.mcp_kind, 1, 1)
         self.mcp_cmd = QLineEdit()
-        self.mcp_cmd.setPlaceholderText("Comando (p. ej. npx, uvx o python)")
+        self.mcp_cmd.setPlaceholderText(tr("Comando (p. ej. npx, uvx o python)"))
         self.mcp_args = QLineEdit()
-        self.mcp_args.setPlaceholderText("Argumentos (p. ej. -y @modelcontextprotocol/server-filesystem C:\\Users\\tú\\Documents)")
+        self.mcp_args.setPlaceholderText(tr("Argumentos (p. ej. -y @modelcontextprotocol/server-filesystem C:\\Users\\tú\\Documents)"))
         self.mcp_env = QLineEdit()
-        self.mcp_env.setPlaceholderText("Variables (opcional): CLAVE=valor; OTRA=valor")
+        self.mcp_env.setPlaceholderText(tr("Variables (opcional): CLAVE=valor; OTRA=valor"))
         self.mcp_url = QLineEdit()
-        self.mcp_url.setPlaceholderText("Dirección del servicio (p. ej. https://servicio.com/mcp)")
+        self.mcp_url.setPlaceholderText(tr("Dirección del servicio (p. ej. https://servicio.com/mcp)"))
         self.mcp_hdr = QLineEdit()
-        self.mcp_hdr.setPlaceholderText("Clave o token (opcional): se envía como «Authorization: Bearer …»")
+        self.mcp_hdr.setPlaceholderText(tr("Clave o token (opcional): se envía como «Authorization: Bearer …»"))
         self.mcp_hdr.setEchoMode(QLineEdit.Password)
         g.addWidget(self.mcp_cmd, 2, 0, 1, 2)
         g.addWidget(self.mcp_args, 3, 0, 1, 2)
@@ -591,7 +620,7 @@ class SettingsDialog(QDialog):
         g.addWidget(self.mcp_hdr, 6, 0, 1, 2)
         self.mcp_res = lbl("", "faint")
         g.addWidget(self.mcp_res, 7, 0)
-        g.addWidget(btn("Añadir y probar", "primary", self._mcp_add, "acc_anadir"), 7, 1, Qt.AlignRight)
+        g.addWidget(btn(tr("Añadir y probar"), "primary", self._mcp_add, "acc_anadir"), 7, 1, Qt.AlignRight)
         v.addWidget(f)
         self._mcp_kind_changed()
 
@@ -627,7 +656,7 @@ class SettingsDialog(QDialog):
                 it.widget().deleteLater()
         servers = core.SET.snapshot().get("mcp_servers") or []
         if not servers:
-            self.mcp_box.addWidget(lbl("Aún no hay conectores. Elige una plantilla abajo o añade el tuyo.", "faint"))
+            self.mcp_box.addWidget(lbl(tr("Aún no hay conectores. Elige una plantilla abajo o añade el tuyo."), "faint"))
         for s in servers:
             row = QFrame()
             row.setObjectName("noteBox")
@@ -636,13 +665,13 @@ class SettingsDialog(QDialog):
             srv = harness.MCP.get(s["name"])
             err = harness.MCP_STATUS.get(s["name"])
             if not s.get("enabled", True):
-                state, col = "○ desactivado", C["faint"]
+                state, col = tr("○ desactivado"), C["faint"]
             elif srv:
-                state, col = "● conectado · %d herramientas" % len(srv.tools), C["ok"]
+                state, col = tr("● conectado · %d herramientas") % len(srv.tools), C["ok"]
             elif err:
-                state, col = "✗ no conecta", C["bad"]
+                state, col = tr("✗ no conecta"), C["bad"]
             else:
-                state, col = "○ sin conectar", C["faint"]
+                state, col = tr("○ sin conectar"), C["faint"]
             full = s.get("url") or ("%s %s" % (s.get("command", ""), " ".join(s.get("args") or [])))
             short = lambda a: ("…" + os.sep + os.path.basename(a.rstrip("\\/"))) if os.path.isabs(a) and len(a) > 32 else a
             where = s.get("url") or " ".join([os.path.basename(s.get("command", ""))] + [short(a) for a in s.get("args") or []])
@@ -652,15 +681,15 @@ class SettingsDialog(QDialog):
                 if err and not srv and s.get("enabled", True) else ""))
             tip = full
             if srv and srv.tools:
-                tip += "\n\nHerramientas:\n" + "\n".join("• %s — %s" % (t["name"], (t.get("description") or "")[:80]) for t in srv.tools[:40])
+                tip += "\n\n" + tr("Herramientas:\n%s") % "\n".join("• %s — %s" % (t["name"], (t.get("description") or "")[:80]) for t in srv.tools[:40])
             info.setToolTip(tip)
             h.addWidget(info, 1)
-            cb = QCheckBox("Activo")
+            cb = QCheckBox(tr("Activo"))
             cb.setChecked(s.get("enabled", True))
             cb.toggled.connect(lambda on, n=s["name"]: self._mcp_update(n, enabled=on))
             h.addWidget(cb)
-            h.addWidget(btn("Reconectar", None, lambda _=False, n=s["name"]: self._mcp_update(n, reconnect=True), "acc_refrescar"))
-            h.addWidget(btn("Quitar", "danger", lambda _=False, n=s["name"]: self._mcp_update(n, remove=True)))
+            h.addWidget(btn(tr("Reconectar"), None, lambda _=False, n=s["name"]: self._mcp_update(n, reconnect=True), "acc_refrescar"))
+            h.addWidget(btn(tr("Quitar"), "danger", lambda _=False, n=s["name"]: self._mcp_update(n, remove=True)))
             self.mcp_box.addWidget(row)
 
     def _mcp_update(self, name, enabled=None, remove=False, reconnect=False):
@@ -682,7 +711,7 @@ class SettingsDialog(QDialog):
         if remote:
             url = self.mcp_url.text().strip()
             if not name or not re.match(r"(?i)https?://", url):
-                return self.mcp_res.setText("Escribe un nombre y una dirección que empiece por https://")
+                return self.mcp_res.setText(tr("Escribe un nombre y una dirección que empiece por https://"))
             entry = {"name": name, "url": url, "enabled": True}
             tok = self.mcp_hdr.text().strip()
             if tok:
@@ -690,11 +719,11 @@ class SettingsDialog(QDialog):
         else:
             cmd = self.mcp_cmd.text().strip()
             if not name or not cmd:
-                return self.mcp_res.setText("Escribe un nombre y un comando.")
+                return self.mcp_res.setText(tr("Escribe un nombre y un comando."))
             if cmd in ("npx", "node") and not shutil.which("npx"):
-                return self.mcp_res.setText("Este conector necesita Node.js. Instálalo desde nodejs.org y vuelve a intentarlo.")
+                return self.mcp_res.setText(tr("Este conector necesita Node.js. Instálalo desde nodejs.org y vuelve a intentarlo."))
             if cmd == "uvx" and not shutil.which("uvx"):
-                return self.mcp_res.setText("Este conector necesita uv (docs.astral.sh/uv). Instálalo y vuelve a intentarlo.")
+                return self.mcp_res.setText(tr("Este conector necesita uv (docs.astral.sh/uv). Instálalo y vuelve a intentarlo."))
             try:
                 args = [a.strip('"') for a in shlex.split(self.mcp_args.text(), posix=False)]
             except ValueError:
@@ -709,16 +738,16 @@ class SettingsDialog(QDialog):
                 entry["env"] = env
         servers = [s for s in core.SET.snapshot().get("mcp_servers") or [] if s["name"] != name] + [entry]
         core.SET.update({"mcp_servers": servers})
-        self.mcp_res.setText("Conectando… (la primera vez npx o uvx pueden tardar en descargar el conector)")
+        self.mcp_res.setText(tr("Conectando… (la primera vez npx o uvx pueden tardar en descargar el conector)"))
 
         def done(st):
             if isinstance(st, Exception):
                 self.mcp_res.setText("✗ %s" % st)
             elif st.get(name):
-                self.mcp_res.setText("✗ No se pudo conectar: %s" % st[name][:220])
+                self.mcp_res.setText(tr("✗ No se pudo conectar: %s") % st[name][:220])
             else:
                 n = len(harness.MCP[name].tools) if name in harness.MCP else 0
-                self.mcp_res.setText("✓ Conectado: %d herramientas disponibles para el agente." % n)
+                self.mcp_res.setText(tr("✓ Conectado: %d herramientas disponibles para el agente.") % n)
                 for w in (self.mcp_name, self.mcp_cmd, self.mcp_args, self.mcp_env, self.mcp_url, self.mcp_hdr):
                     w.clear()
             self._mcp_render()
@@ -730,35 +759,35 @@ class SettingsDialog(QDialog):
         self._save("tools_disabled", sorted(off))
 
     def p_data(self, v):
-        v.addWidget(lbl("Todo se guarda solo en este equipo. %s no envía tus conversaciones ni archivos a ningún servidor. "
-                        "Solo se conecta a internet para descargar modelos y para las herramientas web que tú permitas." % APP_NAME, "muted"))
+        v.addWidget(lbl(tr("Todo se guarda solo en este equipo. %s no envía tus conversaciones ni archivos a ningún servidor. "
+                        "Solo se conecta a internet para descargar modelos y para las herramientas web que tú permitas.") % APP_NAME, "muted"))
         r = QHBoxLayout()
-        r.addWidget(lbl("Datos: " + paths.HOME, "faint"), 1)
-        r.addWidget(btn("Abrir carpeta", cb=lambda: osys.open_path(paths.HOME), ico="act_carpeta_abierta"))
+        r.addWidget(lbl(tr("Datos: %s") % paths.HOME, "faint"), 1)
+        r.addWidget(btn(tr("Abrir carpeta"), cb=lambda: osys.open_path(paths.HOME), ico="act_carpeta_abierta"))
         v.addLayout(r)
-        self._section(v, "Conversaciones")
+        self._section(v, tr("Conversaciones"))
         n = len(core.SESSIONS)
         r = QHBoxLayout()
-        r.addWidget(btn("Exportar conversaciones (Markdown)…", cb=self._export, ico="acc_descargar"))
+        r.addWidget(btn(tr("Exportar conversaciones (Markdown)…"), cb=self._export, ico="acc_descargar"))
         r.addStretch(1)
         v.addLayout(r)
         imgs = unused_images()
         size = sum(os.path.getsize(f) for f in imgs if os.path.isfile(f))
         r = QHBoxLayout()
-        b = btn("Liberar espacio: borrar %d imágenes sin usar (%s)" % (len(imgs), HW.human(size)), cb=self._clean_images, ico="acc_eliminar")
+        b = btn(tr("Liberar espacio: borrar %d imágenes sin usar (%s)") % (len(imgs), HW.human(size)), cb=self._clean_images, ico="acc_eliminar")
         b.setEnabled(bool(imgs))
         r.addWidget(b)
         r.addStretch(1)
         v.addLayout(r)
         r = QHBoxLayout()
-        r.addWidget(btn("Borrar todas las conversaciones (%d)…" % n, "danger", self._delete_all))
+        r.addWidget(btn(tr("Borrar todas las conversaciones (%d)…") % n, "danger", self._delete_all))
         r.addStretch(1)
         v.addLayout(r)
 
     def _export(self):
-        d = QFileDialog.getExistingDirectory(self, "Exportar conversaciones a…", os.path.expanduser("~"))
+        d = QFileDialog.getExistingDirectory(self, tr("Exportar conversaciones a…"), os.path.expanduser("~"))
         if d:
-            QMessageBox.information(self, "Exportado", "%d conversaciones exportadas a %s" % (export_conversations(d), d))
+            QMessageBox.information(self, tr("Exportado"), tr("%d conversaciones exportadas a %s") % (export_conversations(d), d))
 
     def _clean_images(self):
         for f in unused_images():
@@ -770,22 +799,22 @@ class SettingsDialog(QDialog):
 
     def _delete_all(self):
         n = len(core.SESSIONS)
-        if QMessageBox.question(self, "Borrar todo", "Se borrarán permanentemente %d conversaciones (las de Chat y las de tus proyectos). "
-                                "No se puede deshacer. ¿Continuar?" % n) != QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, tr("Borrar todo"), tr("Se borrarán permanentemente %d conversaciones (las de Chat y las de tus proyectos). "
+                                "No se puede deshacer. ¿Continuar?") % n) != QMessageBox.StandardButton.Yes:
             return
         for s in list(core.SESSIONS.values()):
             s.delete()
         self._reload("Datos y privacidad")
 
     def p_log(self, v):
-        self.log = QPlainTextEdit(core.LLM_MGR.tail(300) or "(vacío)")
+        self.log = QPlainTextEdit(core.LLM_MGR.tail(300) or tr("(vacío)"))
         self.log.setObjectName("mono")
         self.log.setReadOnly(True)
         self.log.setMinimumHeight(380)
         v.addWidget(self.log)
-        v.addWidget(lbl("Comando: " + " ".join(core.LLM_MGR.command()), "faint"))
+        v.addWidget(lbl(tr("Comando: %s") % " ".join(core.LLM_MGR.command()), "faint"))
         r = QHBoxLayout()
-        r.addWidget(btn("Actualizar", cb=lambda: self.log.setPlainText(core.LLM_MGR.tail(300) or "(vacío)"), ico="acc_refrescar"))
+        r.addWidget(btn(tr("Actualizar"), cb=lambda: self.log.setPlainText(core.LLM_MGR.tail(300) or tr("(vacío)")), ico="acc_refrescar"))
         r.addStretch(1)
         v.addLayout(r)
 
@@ -812,53 +841,56 @@ class SettingsDialog(QDialog):
         n = QLabel(APP_NAME)
         n.setStyleSheet("font-size:18pt; font-weight:700")
         tl.addWidget(n)
-        tl.addWidget(lbl("Agente de IA local para tu escritorio · versión %s" % __version__, "muted"))
-        tl.addWidget(lbl("Creado por Ing. Jeison Tuiran", "muted"))
+        tl.addWidget(lbl(tr("Agente de IA local para tu escritorio · versión %s") % __version__, "muted"))
+        tl.addWidget(lbl(tr("Creado por Ing. Jeison Tuiran"), "muted"))
         head.addLayout(tl, 1)
         v.addLayout(head)
-        lic = lbl("Software libre con licencia GNU GPL-3.0 · Copyright (C) 2026 Ing. Jeison Tuiran.\nEl nombre «Jayth» y su logotipo son la marca "
-                  "del proyecto: las versiones modificadas deben llevar otro nombre.", "faint")
+        lic = lbl(tr("Software libre con licencia GNU GPL-3.0 · Copyright (C) 2026 Ing. Jeison Tuiran.\nEl nombre «Jayth» y su logotipo son la marca "
+                  "del proyecto: las versiones modificadas deben llevar otro nombre."), "faint")
         lic.setWordWrap(True)
         v.addWidget(lic)
         r = QHBoxLayout()
-        r.addWidget(btn("Ver la licencia", cb=lambda: webbrowser.open("https://github.com/%s/blob/main/LICENSE" % REPO), ico="est_info"))
-        r.addWidget(btn("Política de marca", cb=lambda: webbrowser.open("https://github.com/%s/blob/main/MARCA.md" % REPO), ico="est_info"))
+        r.addWidget(btn(tr("Ver la licencia"), cb=lambda: webbrowser.open("https://github.com/%s/blob/main/LICENSE" % REPO), ico="est_info"))
+        r.addWidget(btn(tr("Política de marca"), cb=lambda: webbrowser.open("https://github.com/%s/blob/main/MARCA.md" % REPO), ico="est_info"))
         r.addStretch(1)
         v.addLayout(r)
         commit = local_commit()
-        v.addWidget(lbl("Código: %s%s\nMotor: llama.cpp %s\nDatos: %s" % (paths.APP_DIR, (" · " + commit[:7]) if commit else "", cfg["llama_tag"] or "—", paths.HOME), "faint"))
+        v.addWidget(lbl(tr("Código: %s%s\nMotor: llama.cpp %s\nDatos: %s") % (paths.APP_DIR, (" · " + commit[:7]) if commit else "", cfg["llama_tag"] or "—", paths.HOME), "faint"))
         self.upd = lbl("", "muted")
         r = QHBoxLayout()
-        r.addWidget(btn("Buscar actualizaciones", cb=self._check_updates, ico="acc_refrescar"))
-        r.addWidget(btn("Abrir en GitHub", cb=lambda: webbrowser.open("https://github.com/" + REPO), ico="acc_abrir_externo"))
+        r.addWidget(btn(tr("Buscar actualizaciones"), cb=self._check_updates, ico="acc_refrescar"))
+        r.addWidget(btn(tr("Abrir en GitHub"), cb=lambda: webbrowser.open("https://github.com/" + REPO), ico="acc_abrir_externo"))
         r.addStretch(1)
         v.addLayout(r)
         v.addWidget(self.upd)
-        self._section(v, "Novedades")
-        self.field(v, "auto_update_check", "Avisarme cuando haya una versión nueva de %s" % APP_NAME, "bool")
-        self.field(v, "model_news", "Avisarme cuando se publique una versión nueva de mis modelos", "bool",
-                   help="Busca en Hugging Face versiones más recientes de la misma familia, tamaño y variante (p. ej. de Gemma 3 12B a Gemma 4 12B).")
-        self._section(v, "Comentarios")
-        v.addWidget(lbl("¿Encontraste un error o tienes una idea? Tu comentario ayuda a mejorar %s." % APP_NAME, "muted"))
+        self._section(v, tr("Novedades"))
+        self.field(v, "auto_update_check", tr("Avisarme cuando haya una versión nueva de %s") % APP_NAME, "bool")
+        self.field(v, "auto_install_updates", tr("Descargar las actualizaciones en segundo plano e instalarlas al cerrar %s") % APP_NAME, "bool",
+                   help=tr("No interrumpe lo que estés haciendo. Si quieres tenerla antes, pulsa «Reiniciar para actualizar» en la "
+                           "barra lateral cuando te venga bien."))
+        self.field(v, "model_news", tr("Avisarme cuando se publique una versión nueva de mis modelos"), "bool",
+                   help=tr("Busca en Hugging Face versiones más recientes de la misma familia, tamaño y variante (p. ej. de Gemma 3 12B a Gemma 4 12B)."))
+        self._section(v, tr("Comentarios"))
+        v.addWidget(lbl(tr("¿Encontraste un error o tienes una idea? Tu comentario ayuda a mejorar %s.") % APP_NAME, "muted"))
         r = QHBoxLayout()
         from .feedback import FeedbackDialog
-        r.addWidget(btn("Informar de un error…", cb=lambda: FeedbackDialog(self, "error").exec(), ico="est_error"))
-        r.addWidget(btn("Sugerir una mejora…", cb=lambda: FeedbackDialog(self, "idea").exec(), ico="vfx_magia"))
+        r.addWidget(btn(tr("Informar de un error…"), cb=lambda: FeedbackDialog(self, "error").exec(), ico="est_error"))
+        r.addWidget(btn(tr("Sugerir una mejora…"), cb=lambda: FeedbackDialog(self, "idea").exec(), ico="vfx_magia"))
         r.addStretch(1)
         v.addLayout(r)
 
     def _check_updates(self):
-        self.upd.setText("Consultando GitHub…")
+        self.upd.setText(tr("Consultando GitHub…"))
 
         from . import updater
 
         def done(r):
             if isinstance(r, Exception):
-                return self.upd.setText("No se pudo consultar GitHub (¿sin internet?).")
+                return self.upd.setText(tr("No se pudo consultar GitHub (¿sin internet?)."))
             if not r:
-                return self.upd.setText("✓ Tienes la última versión de %s." % APP_NAME)
-            self.upd.setText("Hay una versión nueva (%s): «%s».\nUsa el botón «Actualizar» de la barra lateral; %s se reiniciará solo." % (
-                r.get("date") or r.get("version"), r["message"], APP_NAME))
+                return self.upd.setText(tr("✓ Tienes la última versión de %s.") % APP_NAME)
+            self.upd.setText(tr("Hay una versión nueva (%s): «%s».\nSe descarga en segundo plano; cuando esté lista, pulsa «Reiniciar para "
+                                "actualizar» en la barra lateral o se instalará al cerrar %s.") % (r.get("date") or r.get("version"), r["message"], APP_NAME))
             win = self.parent()
             if hasattr(win, "_got_app_news"):
                 win._got_app_news(r, False)

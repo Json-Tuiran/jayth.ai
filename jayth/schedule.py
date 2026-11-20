@@ -6,9 +6,10 @@ si a la hora prevista estaba cerrado, la tarea se ejecuta al abrirlo.
 """
 import time, uuid, datetime
 from . import core
+from .i18n import tr
 
-KINDS = [("once", "Una vez"), ("daily", "Cada día"), ("weekdays", "De lunes a viernes"), ("weekly", "Cada semana"), ("interval", "Cada cierto tiempo")]
-DAYS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+KINDS = [("once", tr("Una vez")), ("daily", tr("Cada día")), ("weekdays", tr("De lunes a viernes")), ("weekly", tr("Cada semana")), ("interval", tr("Cada cierto tiempo"))]
+DAYS = [tr("lunes"), tr("martes"), tr("miércoles"), tr("jueves"), tr("viernes"), tr("sábado"), tr("domingo")]
 CATCH_UP = 24 * 3600          # una tarea que tocaba con Jayth cerrado se recupera si no han pasado más de 24 h
 
 
@@ -61,16 +62,16 @@ def describe(t):
     hm = "%02d:%02d" % (h, m)
     kind = t.get("kind", "daily")
     if kind == "once":
-        return "Una vez, el %s a las %s" % (t.get("date", ""), hm)
+        return tr("Una vez, el %s a las %s") % (t.get("date", ""), hm)
     if kind == "daily":
-        return "Cada día a las %s" % hm
+        return tr("Cada día a las %s") % hm
     if kind == "weekdays":
-        return "De lunes a viernes a las %s" % hm
+        return tr("De lunes a viernes a las %s") % hm
     if kind == "weekly":
         ds = [DAYS[int(x)] for x in (t.get("days") or [])] or ["?"]
-        return "Cada %s a las %s" % (", ".join(ds[:-1]) + (" y " if len(ds) > 1 else "") + ds[-1], hm)
+        return tr("Cada %s a las %s") % (", ".join(ds[:-1]) + (tr(" y ") if len(ds) > 1 else "") + ds[-1], hm)
     n = max(5, int(t.get("every_min") or 60))
-    return "Cada %s" % ("%d minutos" % n if n < 60 or n % 60 else ("hora" if n == 60 else "%d horas" % (n // 60)))
+    return tr("Cada %s") % (tr("%d minutos") % n if n < 60 or n % 60 else (tr("hora") if n == 60 else tr("%d horas") % (n // 60)))
 
 
 def when_text(ts):
@@ -78,13 +79,14 @@ def when_text(ts):
         return "—"
     d = datetime.datetime.fromtimestamp(ts)
     today = datetime.date.today()
-    day = "hoy" if d.date() == today else "mañana" if d.date() == today + datetime.timedelta(days=1) else \
-        "ayer" if d.date() == today - datetime.timedelta(days=1) else "%s %d/%d" % (DAYS[d.weekday()], d.day, d.month)
-    return "%s a las %02d:%02d" % (day, d.hour, d.minute)
+    day = tr("hoy") if d.date() == today else tr("mañana") if d.date() == today + datetime.timedelta(days=1) else \
+        tr("ayer") if d.date() == today - datetime.timedelta(days=1) else \
+        tr("%(dia)s %(d)d/%(m)d") % {"dia": DAYS[d.weekday()], "d": d.day, "m": d.month}
+    return tr("%s a las %02d:%02d") % (day, d.hour, d.minute)
 
 
 def new_task(name, prompt, kind="daily", time_="09:00", date="", days=(), every_min=60, mode="auto"):
-    t = {"id": uuid.uuid4().hex[:8], "name": name.strip()[:80] or "Tarea", "prompt": prompt.strip(), "kind": kind, "time": time_,
+    t = {"id": uuid.uuid4().hex[:8], "name": name.strip()[:80] or tr("Tarea"), "prompt": prompt.strip(), "kind": kind, "time": time_,
          "date": date, "days": [int(x) for x in days], "every_min": int(every_min or 60), "mode": mode, "enabled": True,
          "created": time.time(), "last_run": 0, "last_session": ""}
     t["next"] = next_run(t)

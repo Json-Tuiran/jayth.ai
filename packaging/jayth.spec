@@ -66,11 +66,11 @@ _DROP = ("qt6pdf", "qt6virtualkeyboard", "virtualkeyboard", "qpdf", "qt6quick3d"
          "qt6quickparticles", "qt6quickshapes", "qt6quicktest", "qt6quicktimeline", "qt6webenginequick", "qt6labs")
 a.binaries = [b for b in a.binaries if not any(d in os.path.basename(b[0]).lower() for d in _DROP)]
 a.datas = [d for d in a.datas if not any(x in d[0].lower().replace("\\", "/") for x in ("/qml/", "qtvirtualkeyboard"))]
-# del navegador solo hacen falta los idiomas de la interfaz en español e inglés (el resto son ~25 MB)
+# del navegador solo hacen falta los idiomas de la interfaz: español, inglés y portugués de Brasil (el resto son ~25 MB)
 a.datas = [d for d in a.datas if "devtools_resources" not in d[0].lower()]        # inspector del navegador: 83 MB que no se usan
 a.binaries = [b for b in a.binaries if "devtools_resources" not in b[0].lower()]
 a.datas = [d for d in a.datas if "qtwebengine_locales" not in d[0].lower().replace("\\", "/")
-           or os.path.basename(d[0]).lower() in ("es.pak", "es-419.pak", "en-us.pak")]
+           or os.path.basename(d[0]).lower() in ("es.pak", "es-419.pak", "en-us.pak", "pt-br.pak")]
 pyz = PYZ(a.pure)
 
 exe = EXE(

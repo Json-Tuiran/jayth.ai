@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt, Signal, QTimer, QVariantAnimation, QEasingCurve, 
 from PySide6.QtGui import QPainter, QColor
 from PySide6.QtWidgets import QSplitter, QSplitterHandle, QWidget, QPushButton, QHBoxLayout, QSizePolicy
 from .theme import C, icon
+from .i18n import tr
 
 
 class _Handle(QSplitterHandle):
@@ -159,7 +160,7 @@ class Section(QWidget):
 
     def _paint(self):
         self.btn.setIcon(icon("ui_chevron_abajo" if self.opened else "ui_chevron_derecha", C["faint"], 11))
-        self.btn.setToolTip("Plegar" if self.opened else "Desplegar")
+        self.btn.setToolTip(tr("Plegar") if self.opened else tr("Desplegar"))
 
     def set_open(self, on, emit=False):
         self.opened = bool(on)

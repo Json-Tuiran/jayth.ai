@@ -12,18 +12,19 @@
 import os, re, sys, json, glob, time, shutil, platform, subprocess, threading
 from . import paths, osys
 from .provision import download, extract_archive, get_json, Cancelled, pretty_name
+from .i18n import tr
 
 TOOLS = os.path.join(paths.RUNTIME_DIR, "convert")
-QUANT_TARGETS = [("Q4_K_M", 4.85, "Equilibrada: la habitual para usar en el día a día"),
-                 ("Q5_K_M", 5.69, "Algo más fiel, algo más grande y lenta"),
-                 ("Q6_K", 6.56, "Muy fiel"),
-                 ("Q8_0", 8.5, "Casi idéntica al original; el doble de grande que Q4"),
-                 ("Q3_K_M", 3.91, "Más ligera, pierde algo de calidad"),
-                 ("IQ4_XS", 4.25, "Ligera y buena, algo más lenta de crear")]
-UNSUPPORTED = {"awq": "AWQ (motores para GPU NVIDIA como vLLM o SGLang)", "gptq": "GPTQ (vLLM, SGLang o ExLlama en GPU NVIDIA)",
-               "exl2": "EXL2 (ExLlamaV2/TabbyAPI en GPU NVIDIA)", "exl3": "EXL3 (ExLlamaV3/TabbyAPI en GPU NVIDIA)",
-               "bitsandbytes": "bitsandbytes (Transformers con GPU)", "hqq": "HQQ (Transformers)", "mlx": "MLX (mlx-lm en Mac con Apple Silicon)",
-               "onnx": "ONNX (onnxruntime-genai)", "compressed-tensors": "compressed-tensors (vLLM)", "fp8": "FP8 (vLLM o SGLang en GPU moderna)"}
+QUANT_TARGETS = [("Q4_K_M", 4.85, tr("Equilibrada: la habitual para usar en el día a día")),
+                 ("Q5_K_M", 5.69, tr("Algo más fiel, algo más grande y lenta")),
+                 ("Q6_K", 6.56, tr("Muy fiel")),
+                 ("Q8_0", 8.5, tr("Casi idéntica al original; el doble de grande que Q4")),
+                 ("Q3_K_M", 3.91, tr("Más ligera, pierde algo de calidad")),
+                 ("IQ4_XS", 4.25, tr("Ligera y buena, algo más lenta de crear"))]
+UNSUPPORTED = {"awq": tr("AWQ (motores para GPU NVIDIA como vLLM o SGLang)"), "gptq": tr("GPTQ (vLLM, SGLang o ExLlama en GPU NVIDIA)"),
+               "exl2": tr("EXL2 (ExLlamaV2/TabbyAPI en GPU NVIDIA)"), "exl3": tr("EXL3 (ExLlamaV3/TabbyAPI en GPU NVIDIA)"),
+               "bitsandbytes": tr("bitsandbytes (Transformers con GPU)"), "hqq": "HQQ (Transformers)", "mlx": tr("MLX (mlx-lm en Mac con Apple Silicon)"),
+               "onnx": "ONNX (onnxruntime-genai)", "compressed-tensors": "compressed-tensors (vLLM)", "fp8": tr("FP8 (vLLM o SGLang en GPU moderna)")}
 
 
 # ---------------------------------------------------------------- deteccion de formato
@@ -55,8 +56,8 @@ def describe_config(cfg, size, n_files=0):
     info["quant_method"] = qm
     info["convertible"] = not qm
     if qm:
-        info["why_not"] = "Este modelo ya viene cuantizado en %s; llama.cpp no lo puede convertir. Úsalo con ese motor y conéctalo " \
-                          "como servidor externo, o elige la versión original sin cuantizar." % UNSUPPORTED.get(qm, qm.upper())
+        info["why_not"] = tr("Este modelo ya viene cuantizado en %s; llama.cpp no lo puede convertir. Úsalo con ese motor y conéctalo " \
+                          "como servidor externo, o elige la versión original sin cuantizar.") % UNSUPPORTED.get(qm, qm.upper())
     return info
 
 
@@ -70,8 +71,8 @@ def detect(path):
         if os.path.basename(low) == "config.json" or low.endswith((".safetensors", ".bin")):
             return detect(os.path.dirname(path))
         if low.endswith(".onnx"):
-            return {"format": "other", "path": path, "why_not": "ONNX no lo ejecuta llama.cpp; " + UNSUPPORTED["onnx"] + "."}
-        return {"format": "other", "path": path, "why_not": "Formato no reconocido. Elige un .gguf o la carpeta del modelo original."}
+            return {"format": "other", "path": path, "why_not": tr("ONNX no lo ejecuta llama.cpp; ") + UNSUPPORTED["onnx"] + "."}
+        return {"format": "other", "path": path, "why_not": tr("Formato no reconocido. Elige un .gguf o la carpeta del modelo original.")}
     if not os.path.isdir(path):
         return {"format": "missing", "path": path}
     ggufs = sorted(glob.glob(os.path.join(path, "*.gguf")))
@@ -84,14 +85,14 @@ def detect(path):
                      "weights": "safetensors" if weights[0].endswith(".safetensors") else "pytorch"})
         return info
     if glob.glob(os.path.join(path, "*.onnx")):
-        return {"format": "other", "path": path, "why_not": "ONNX no lo ejecuta llama.cpp; " + UNSUPPORTED["onnx"] + "."}
+        return {"format": "other", "path": path, "why_not": tr("ONNX no lo ejecuta llama.cpp; ") + UNSUPPORTED["onnx"] + "."}
     if ggufs:
         main = [g for g in ggufs if "mmproj" not in os.path.basename(g).lower()]
         mm = [g for g in ggufs if "mmproj" in os.path.basename(g).lower()]
         if main:
             return {"format": "gguf", "path": main[0], "mmproj": mm[0] if mm else "", "name": pretty_name(os.path.basename(main[0])),
                     "size": sum(os.path.getsize(g) for g in main)}
-    return {"format": "other", "path": path, "why_not": "En esa carpeta no hay un modelo (falta config.json con sus pesos .safetensors, o un .gguf)."}
+    return {"format": "other", "path": path, "why_not": tr("En esa carpeta no hay un modelo (falta config.json con sus pesos .safetensors, o un .gguf).")}
 
 
 def target_size(params, quant):
@@ -207,7 +208,7 @@ def _run(cmd, progress=None, stop=None, parse=None, label=""):
                     progress(*r)
     code = p.wait()
     if code != 0:
-        raise RuntimeError("%s falló (código %s):\n%s" % (label or os.path.basename(cmd[0]), code, "\n".join(tail[-12:])))
+        raise RuntimeError(tr("%s falló (código %s):\n%s") % (label or os.path.basename(cmd[0]), code, "\n".join(tail[-12:])))
     return tail
 
 
@@ -216,7 +217,7 @@ def ensure_tools(llama_exe, progress=None, stop=None):
     codigo del convertidor y sus dependencias (torch para CPU, transformers…). ~1-2 GB en la carpeta de Jayth."""
     build = llama_build(llama_exe)
     if not build:
-        raise RuntimeError("No pude saber la versión de llama.cpp (%s)." % llama_exe)
+        raise RuntimeError(tr("No pude saber la versión de llama.cpp (%s).") % llama_exe)
     if tools_ready(build):
         return build
     os.makedirs(TOOLS, exist_ok=True)
@@ -231,7 +232,7 @@ def ensure_tools(llama_exe, progress=None, stop=None):
         extract_archive(dl, tmp)
         found = next((os.path.join(r, f) for r, _, fs in os.walk(tmp) for f in fs if f == osys.exe("uv")), None)
         if not found:
-            raise RuntimeError("El paquete de uv no contiene %s" % osys.exe("uv"))
+            raise RuntimeError(tr("El paquete de uv no contiene %s") % osys.exe("uv"))
         shutil.move(found, uv)
         shutil.rmtree(tmp, ignore_errors=True)
         if not osys.WIN:
@@ -241,8 +242,8 @@ def ensure_tools(llama_exe, progress=None, stop=None):
     stamp_src = _read_json(os.path.join(src, "build.json")).get("build")
     if stamp_src != build:
         z = os.path.join(TOOLS, "downloads", "llama.cpp-b%d.zip" % build)
-        download("https://codeload.github.com/ggml-org/llama.cpp/zip/refs/tags/b%d" % build, z, 0, "", lambda d, t, ph: pr(d, t, "convertidor: " + ph), stop)
-        pr(0, 0, "descomprimiendo el convertidor")
+        download("https://codeload.github.com/ggml-org/llama.cpp/zip/refs/tags/b%d" % build, z, 0, "", lambda d, t, ph: pr(d, t, tr("convertidor: ") + ph), stop)
+        pr(0, 0, tr("descomprimiendo el convertidor"))
         import zipfile
         shutil.rmtree(src, ignore_errors=True)
         os.makedirs(src)
@@ -263,23 +264,23 @@ def ensure_tools(llama_exe, progress=None, stop=None):
     # 3) Python aislado y dependencias (torch solo para CPU: basta para convertir y pesa mucho menos)
     py = env_python()
     if not os.path.isfile(py):
-        pr(0, 0, "preparando Python (una sola vez)")
+        pr(0, 0, tr("preparando Python (una sola vez)"))
         venv = [uv, "venv", "--python", "3.12", "--seed", os.path.join(TOOLS, "env")]
         try:
-            _run(venv, label="Preparar Python", stop=stop)
+            _run(venv, label=tr("Preparar Python"), stop=stop)
         except RuntimeError:
             # uv en Windows a veces descarga Python bien pero falla al crear su acceso directo interno la primera vez;
             # el segundo intento usa el Python ya descargado
             shutil.rmtree(os.path.join(TOOLS, "env"), ignore_errors=True)
-            _run(venv, label="Preparar Python", stop=stop)
+            _run(venv, label=tr("Preparar Python"), stop=stop)
     reqs = _requirements(src)
     torch = [r for r in reqs if r.lower().startswith("torch")]
     rest = [r for r in reqs if not r.lower().startswith("torch")]
-    pr(0, 0, "instalando dependencias del convertidor (torch, transformers…)")
+    pr(0, 0, tr("instalando dependencias del convertidor (torch, transformers…)"))
     if torch:
-        _run([uv, "pip", "install", "--python", py, "--index-url", "https://download.pytorch.org/whl/cpu"] + torch, label="instalar torch", stop=stop)
-    _run([uv, "pip", "install", "--python", py] + rest + ["safetensors", "pyyaml", "tqdm", "requests", "jinja2"], label="instalar dependencias", stop=stop)
-    _run([uv, "cache", "clean"], label="limpiar cache")
+        _run([uv, "pip", "install", "--python", py, "--index-url", "https://download.pytorch.org/whl/cpu"] + torch, label=tr("instalar torch"), stop=stop)
+    _run([uv, "pip", "install", "--python", py] + rest + ["safetensors", "pyyaml", "tqdm", "requests", "jinja2"], label=tr("instalar dependencias"), stop=stop)
+    _run([uv, "cache", "clean"], label=tr("limpiar cache"))
     with open(os.path.join(TOOLS, "ready.json"), "w") as f:
         json.dump({"build": build, "date": time.strftime("%Y-%m-%d")}, f)
     shutil.rmtree(os.path.join(TOOLS, "downloads"), ignore_errors=True)
@@ -309,34 +310,34 @@ def _requirements(src):
 # ---------------------------------------------------------------- conversion
 def _pct_convert(s):
     m = re.search(r"(\d{1,3})%\|", s)
-    return (int(m.group(1)), 100, "convirtiendo a GGUF") if m else None
+    return (int(m.group(1)), 100, tr("convirtiendo a GGUF")) if m else None
 
 
 def _pct_quant(s):
     m = re.search(r"\[\s*(\d+)\s*/\s*(\d+)\s*\]", s)
-    return (int(m.group(1)), int(m.group(2)), "reduciendo") if m else None
+    return (int(m.group(1)), int(m.group(2)), tr("reduciendo")) if m else None
 
 
 def convert_to_gguf(src_dir, out_file, outtype="bf16", mmproj=False, progress=None, stop=None):
     py = env_python()
     script = os.path.join(TOOLS, "src", "convert_hf_to_gguf.py")
     cmd = [py, script, src_dir, "--outfile", out_file, "--outtype", outtype] + (["--mmproj"] if mmproj else [])
-    _run(cmd, progress, stop, _pct_convert, "La conversión a GGUF")
+    _run(cmd, progress, stop, _pct_convert, tr("La conversión a GGUF"))
     if mmproj and not os.path.isfile(out_file):          # algunas versiones añaden el prefijo mmproj- al nombre
         cands = glob.glob(os.path.join(os.path.dirname(out_file), "mmproj*.gguf"))
         if cands:
             shutil.move(cands[0], out_file)
     if not os.path.isfile(out_file):
-        raise RuntimeError("El convertidor terminó pero no creó %s" % out_file)
+        raise RuntimeError(tr("El convertidor terminó pero no creó %s") % out_file)
     return out_file
 
 
 def quantize(llama_exe, src_gguf, out_file, quant, threads=0, progress=None, stop=None):
     q = tool_exe(llama_exe, "llama-quantize")
     if not q:
-        raise RuntimeError("Falta llama-quantize junto a %s (instala el motor desde el asistente)." % llama_exe)
+        raise RuntimeError(tr("Falta llama-quantize junto a %s (instala el motor desde el asistente).") % llama_exe)
     cmd = [q, src_gguf, out_file, quant] + ([str(threads)] if threads else [])
-    _run(cmd, progress, stop, _pct_quant, "La reducción a %s" % quant)
+    _run(cmd, progress, stop, _pct_quant, tr("La reducción a %s") % quant)
     return out_file
 
 
@@ -352,7 +353,7 @@ def convert_model(src_dir, out_dir, quant, llama_exe, vision=True, threads=0, pr
     'name': nombre del modelo para los archivos (si no, el de la carpeta)."""
     info = detect(src_dir)
     if info.get("format") != "hf":
-        raise RuntimeError("No es una carpeta con un modelo original de Hugging Face: %s" % src_dir)
+        raise RuntimeError(tr("No es una carpeta con un modelo original de Hugging Face: %s") % src_dir)
     if info.get("why_not"):
         raise RuntimeError(info["why_not"])
     os.makedirs(out_dir, exist_ok=True)
@@ -363,7 +364,7 @@ def convert_model(src_dir, out_dir, quant, llama_exe, vision=True, threads=0, pr
     need, _ = plan_space(info, quant)
     free = shutil.disk_usage(out_dir).free
     if free < need:
-        raise RuntimeError("Hace falta ~%.0f GB libres en %s para convertir (hay %.0f GB)." % (need / 1024 ** 3, out_dir, free / 1024 ** 3))
+        raise RuntimeError(tr("Hace falta ~%.0f GB libres en %s para convertir (hay %.0f GB).") % (need / 1024 ** 3, out_dir, free / 1024 ** 3))
     pr = progress or (lambda *a: None)
     if not os.path.isfile(final):
         convert_to_gguf(src_dir, inter, "bf16", False, pr, stop)
@@ -374,5 +375,5 @@ def convert_model(src_dir, out_dir, quant, llama_exe, vision=True, threads=0, pr
         except OSError:
             pass
     if vision and info.get("vision") and not os.path.isfile(mm):
-        convert_to_gguf(src_dir, mm, "f16", True, lambda d, t, ph: pr(d, t, "visión: " + ph), stop)
+        convert_to_gguf(src_dir, mm, "f16", True, lambda d, t, ph: pr(d, t, tr("visión: ") + ph), stop)
     return final, (mm if os.path.isfile(mm) else "")

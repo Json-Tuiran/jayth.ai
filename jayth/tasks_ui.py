@@ -7,17 +7,18 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineE
                                QComboBox, QTimeEdit, QDateEdit, QCheckBox, QSpinBox, QMessageBox)
 from . import APP_NAME, core, schedule as SC
 from .wizard import btn, lbl
+from .i18n import tr
 
-MODES = [("auto", "Automático: actúa sin preguntar (lo delicado siempre pide permiso)"),
-         ("readonly", "Solo lectura: puede mirar y buscar, pero no cambia nada"),
-         ("ask", "Preguntar: espera tu permiso antes de cada acción")]
+MODES = [("auto", tr("Automático: actúa sin preguntar (lo delicado siempre pide permiso)")),
+         ("readonly", tr("Solo lectura: puede mirar y buscar, pero no cambia nada")),
+         ("ask", tr("Preguntar: espera tu permiso antes de cada acción"))]
 
 
 class TasksDialog(QDialog):
     def __init__(self, main=None):
         super().__init__(main)
         self.main = main
-        self.setWindowTitle("Tareas programadas")
+        self.setWindowTitle(tr("Tareas programadas"))
         self.resize(900, 620)
         self.cur = None
         root = QHBoxLayout(self)
@@ -28,7 +29,7 @@ class TasksDialog(QDialog):
         left.setFixedWidth(290)
         lv = QVBoxLayout(left)
         lv.setContentsMargins(10, 14, 10, 10)
-        t = QLabel("Tus tareas")
+        t = QLabel(tr("Tus tareas"))
         t.setObjectName("h1")
         lv.addWidget(t)
         self.lst = QListWidget()
@@ -36,30 +37,30 @@ class TasksDialog(QDialog):
         self.lst.setWordWrap(True)
         self.lst.currentRowChanged.connect(self._pick)
         lv.addWidget(self.lst, 1)
-        lv.addWidget(btn("Nueva tarea", None, self._new, "acc_anadir"))
+        lv.addWidget(btn(tr("Nueva tarea"), None, self._new, "acc_anadir"))
         root.addWidget(left)
         right = QWidget()
         v = QVBoxLayout(right)
         v.setContentsMargins(22, 16, 22, 14)
         v.setSpacing(7)
-        v.addWidget(lbl("%s hace el encargo solo a su hora y te avisa al terminar. Las tareas se ejecutan mientras %s esté abierto "
-                        "(también minimizado en la bandeja); si a esa hora estaba cerrado, se hacen al abrirlo." % (APP_NAME, APP_NAME), "faint"))
-        v.addWidget(QLabel("Nombre"))
+        v.addWidget(lbl(tr("%s hace el encargo solo a su hora y te avisa al terminar. Las tareas se ejecutan mientras %s esté abierto "
+                        "(también minimizado en la bandeja); si a esa hora estaba cerrado, se hacen al abrirlo.") % (APP_NAME, APP_NAME), "faint"))
+        v.addWidget(QLabel(tr("Nombre")))
         self.e_name = QLineEdit()
-        self.e_name.setPlaceholderText("Ej.: Resumen de noticias")
+        self.e_name.setPlaceholderText(tr("Ej.: Resumen de noticias"))
         v.addWidget(self.e_name)
-        v.addWidget(QLabel("Qué debe hacer"))
+        v.addWidget(QLabel(tr("Qué debe hacer")))
         self.e_prompt = QPlainTextEdit()
-        self.e_prompt.setPlaceholderText("Ej.: Busca las noticias de hoy sobre inteligencia artificial y hazme un resumen de 5 puntos con sus enlaces.")
+        self.e_prompt.setPlaceholderText(tr("Ej.: Busca las noticias de hoy sobre inteligencia artificial y hazme un resumen de 5 puntos con sus enlaces."))
         v.addWidget(self.e_prompt, 1)
         row = QHBoxLayout()
-        row.addWidget(QLabel("Cuándo"))
+        row.addWidget(QLabel(tr("Cuándo")))
         self.kind = QComboBox()
         for k, l in SC.KINDS:
             self.kind.addItem(l, k)
         self.kind.currentIndexChanged.connect(self._sync_kind)
         row.addWidget(self.kind, 1)
-        self.l_at = QLabel("a las")
+        self.l_at = QLabel(tr("a las"))
         row.addWidget(self.l_at)
         self.time = QTimeEdit(QTime(9, 0))
         self.time.setDisplayFormat("HH:mm")
@@ -71,7 +72,7 @@ class TasksDialog(QDialog):
         self.every = QSpinBox()
         self.every.setRange(5, 10080)
         self.every.setValue(60)
-        self.every.setSuffix(" minutos")
+        self.every.setSuffix(tr(" minutos"))
         row.addWidget(self.every)
         v.addLayout(row)
         self.days_w = QWidget()
@@ -85,12 +86,12 @@ class TasksDialog(QDialog):
             self.days.append(cb)
         dl.addStretch(1)
         v.addWidget(self.days_w)
-        v.addWidget(QLabel("Cómo actúa"))
+        v.addWidget(QLabel(tr("Cómo actúa")))
         self.mode = QComboBox()
         for k, l in MODES:
             self.mode.addItem(l, k)
         v.addWidget(self.mode)
-        self.on = QCheckBox("Tarea activa")
+        self.on = QCheckBox(tr("Tarea activa"))
         self.on.setChecked(True)
         v.addWidget(self.on)
         self.info = lbl("", "faint")
@@ -98,15 +99,15 @@ class TasksDialog(QDialog):
         self.msg = lbl("", "faint")
         v.addWidget(self.msg)
         foot = QHBoxLayout()
-        self.b_del = btn("Quitar", "danger", self._delete)
+        self.b_del = btn(tr("Quitar"), "danger", self._delete)
         foot.addWidget(self.b_del)
-        self.b_run = btn("Ejecutar ahora", None, self._run_now, "hub_lanzar")
+        self.b_run = btn(tr("Ejecutar ahora"), None, self._run_now, "hub_lanzar")
         foot.addWidget(self.b_run)
-        self.b_open = btn("Ver último resultado", None, self._open_last)
+        self.b_open = btn(tr("Ver último resultado"), None, self._open_last)
         foot.addWidget(self.b_open)
         foot.addStretch(1)
-        foot.addWidget(btn("Guardar", "primary", self._save))
-        foot.addWidget(btn("Cerrar", None, self.accept))
+        foot.addWidget(btn(tr("Guardar"), "primary", self._save))
+        foot.addWidget(btn(tr("Cerrar"), None, self.accept))
         v.addLayout(foot)
         root.addWidget(right, 1)
         self._reload()
@@ -119,8 +120,8 @@ class TasksDialog(QDialog):
         self.lst.blockSignals(True)
         self.lst.clear()
         for t in SC.all_tasks():
-            state = ("Próxima: " + SC.when_text(t.get("next"))) if t.get("enabled", True) and t.get("next") else \
-                ("Hecha" if t.get("kind") == "once" and t.get("last_run") else "En pausa")
+            state = (tr("Próxima: %s") % SC.when_text(t.get("next"))) if t.get("enabled", True) and t.get("next") else \
+                (tr("Hecha") if t.get("kind") == "once" and t.get("last_run") else tr("En pausa"))
             it = QListWidgetItem("%s\n%s · %s" % (t["name"], SC.describe(t), state))
             it.setData(Qt.UserRole, t["id"])
             self.lst.addItem(it)
@@ -151,8 +152,8 @@ class TasksDialog(QDialog):
             cb.setChecked(i in (t.get("days") or []))
         self.mode.setCurrentIndex(max(0, self.mode.findData(t.get("mode") or "auto")))
         self.on.setChecked(t.get("enabled", True))
-        last = ("Última vez: %s. " % SC.when_text(t["last_run"])) if t.get("last_run") else "Aún no se ha ejecutado. "
-        self.info.setText(last + ("Próxima: %s." % SC.when_text(t["next"]) if t.get("enabled", True) and t.get("next") else ""))
+        last = (tr("Última vez: %s. ") % SC.when_text(t["last_run"])) if t.get("last_run") else tr("Aún no se ha ejecutado. ")
+        self.info.setText(last + (tr("Próxima: %s.") % SC.when_text(t["next"]) if t.get("enabled", True) and t.get("next") else ""))
         for b in (self.b_del, self.b_run):
             b.show()
         self.b_open.setVisible(bool(t.get("last_session")) and t["last_session"] in core.SESSIONS)
@@ -197,25 +198,25 @@ class TasksDialog(QDialog):
     def _save(self):
         val = self._values()
         if not val["name"] or not val["prompt"]:
-            return self.msg.setText("La tarea necesita un nombre y saber qué debe hacer.")
+            return self.msg.setText(tr("La tarea necesita un nombre y saber qué debe hacer."))
         if val["kind"] == "weekly" and not val["days"]:
-            return self.msg.setText("Marca al menos un día de la semana.")
+            return self.msg.setText(tr("Marca al menos un día de la semana."))
         if self.cur and self._task():
             SC.update(self.cur, **val)
         else:
             t = SC.new_task(val["name"], val["prompt"], val["kind"], val["time"], val["date"], val["days"], val["every_min"], val["mode"])
             t["enabled"] = val["enabled"]
             if val["kind"] == "once" and not t["next"]:
-                return self.msg.setText("Esa fecha y hora ya han pasado.")
+                return self.msg.setText(tr("Esa fecha y hora ya han pasado."))
             SC.add(t)
             self.cur = t["id"]
         self._reload(self.cur)
         self._pick(self.lst.currentRow())
-        self.msg.setText("✓ Tarea guardada.")
+        self.msg.setText(tr("✓ Tarea guardada."))
 
     def _delete(self):
         t = self._task()
-        if t and QMessageBox.question(self, "Quitar tarea", "¿Quitar la tarea «%s»?" % t["name"]) == QMessageBox.StandardButton.Yes:
+        if t and QMessageBox.question(self, tr("Quitar tarea"), tr("¿Quitar la tarea «%s»?") % t["name"]) == QMessageBox.StandardButton.Yes:
             SC.remove(t["id"])
             self._reload()
             if self.lst.count():
@@ -228,7 +229,7 @@ class TasksDialog(QDialog):
         if not t or self.main is None:
             return
         err = self.main.run_task(t, manual=True)
-        self.msg.setText(("✗ %s" % err) if err else "✓ En marcha. Te aviso cuando termine; el resultado queda en el historial.")
+        self.msg.setText(("✗ %s" % err) if err else tr("✓ En marcha. Te aviso cuando termine; el resultado queda en el historial."))
         self._reload(self.cur)
 
     def _open_last(self):

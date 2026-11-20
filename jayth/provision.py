@@ -4,6 +4,7 @@
 Reanudables (.part + HTTP Range), con reintentos y verificacion SHA-256 cuando la fuente la publica."""
 import os, re, json, time, hashlib, zipfile, platform, threading, subprocess, http.client, urllib.request, urllib.error, urllib.parse
 from . import osys
+from .i18n import tr
 
 UA = {"User-Agent": "Jayth (+python-urllib)"}
 CHUNK = 1 << 20
@@ -115,14 +116,14 @@ def kind_text(e):
     """Etiqueta corta del tipo de modelo para la tabla del catálogo."""
     parts = []
     if e.get("tools"):
-        parts.append("Agente")
+        parts.append(tr("Agente"))
     if e.get("vision"):
-        parts.append("Visión" + (" y audio" if e.get("audio") else ""))
+        parts.append(tr("Visión y audio") if e.get("audio") else tr("Visión"))
     if "código" in e.get("tags", []):
-        parts.append("Código")
+        parts.append(tr("Código"))
     if "razonamiento" in e.get("tags", []):
-        parts.append("Razona")
-    return " · ".join(parts) or "Texto"
+        parts.append(tr("Razona"))
+    return " · ".join(parts) or tr("Texto")
 
 
 def matches_kind(e, kind):
@@ -327,7 +328,7 @@ else:
 def llama_release(backend):
     """Ultima compilacion oficial de llama.cpp para este sistema con los archivos del motor elegido."""
     if backend not in LLAMA_PATTERNS:
-        raise RuntimeError("El motor «%s» no está disponible en %s." % (backend, osys.os_label()))
+        raise RuntimeError(tr("El motor «%s» no está disponible en %s.") % (backend, osys.os_label()))
     pats = LLAMA_PATTERNS[backend]
     for rel in get_json("https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=10"):
         if rel.get("draft"):
@@ -342,7 +343,7 @@ def llama_release(backend):
                            "sha256": dig.split(":", 1)[1] if dig.startswith("sha256:") else ""})
         if len(assets) == len(pats):
             return {"tag": rel["tag_name"], "assets": assets}
-    raise RuntimeError("No encontré una versión de llama.cpp para %s (%s)." % (osys.os_label(), backend))
+    raise RuntimeError(tr("No encontré una versión de llama.cpp para %s (%s).") % (osys.os_label(), backend))
 
 
 # ---------------------------------------------------------------- descarga generica
@@ -448,12 +449,12 @@ def _download_parallel(url, part, size, progress, stop, n, retries):
                         return
                     except (urllib.error.URLError, http.client.HTTPException, ConnectionError, TimeoutError, OSError) as ex:
                         if isinstance(ex, urllib.error.HTTPError) and ex.code in (401, 403, 404):
-                            err.append(RuntimeError("No se puede descargar (%s): %s" % (ex.code, url)))
+                            err.append(RuntimeError(tr("No se puede descargar (%s): %s") % (ex.code, url)))
                             quit_.set()
                             return
                         attempt += 1
                         if attempt > retries:
-                            err.append(RuntimeError("Falló la descarga tras %d intentos: %s" % (retries, ex)))
+                            err.append(RuntimeError(tr("Falló la descarga tras %d intentos: %s") % (retries, ex)))
                             quit_.set()
                             return
                         for _ in range(min(30, 2 ** attempt) * 4):
@@ -483,7 +484,7 @@ def _download_parallel(url, part, size, progress, stop, n, retries):
     if err:
         raise err[0]
     if sum(done) != size:
-        raise RuntimeError("La descarga quedó incompleta; vuelve a intentarlo y seguirá donde iba.")
+        raise RuntimeError(tr("La descarga quedó incompleta; vuelve a intentarlo y seguirá donde iba."))
     if progress:
         progress(size, size, "descargando")
     try:
@@ -542,17 +543,17 @@ def download(url, dest, size=0, sha256="", progress=None, stop=None, retries=8, 
                 break
             if os.path.getsize(part) >= size:
                 break
-            raise IOError("conexión cortada")
+            raise IOError(tr("conexión cortada"))
         except Cancelled:
             raise
         except (urllib.error.URLError, http.client.HTTPException, ConnectionError, TimeoutError, IOError) as e:
             if isinstance(e, urllib.error.HTTPError) and e.code in (401, 403, 404):
-                raise RuntimeError("No se puede descargar (%s): %s" % (e.code, url))
+                raise RuntimeError(tr("No se puede descargar (%s): %s") % (e.code, url))
             if isinstance(e, urllib.error.HTTPError) and e.code == 416:   # rango invalido: ya estaba completo
                 break
             attempt += 1
             if attempt > retries:
-                raise RuntimeError("Falló la descarga tras %d intentos: %s" % (retries, e))
+                raise RuntimeError(tr("Falló la descarga tras %d intentos: %s") % (retries, e))
             if progress:
                 progress(have, size or have, "reintentando (%d/%d)…" % (attempt, retries))
             for _ in range(min(30, 2 ** attempt)):
@@ -564,12 +565,12 @@ def download(url, dest, size=0, sha256="", progress=None, stop=None, retries=8, 
 
 def _finish(part, dest, size, sha256, progress, stop):
     if size and os.path.getsize(part) != size:
-        raise RuntimeError("Tamaño incorrecto tras descargar %s" % os.path.basename(dest))
+        raise RuntimeError(tr("Tamaño incorrecto tras descargar %s") % os.path.basename(dest))
     if sha256:
         got = sha256_file(part, progress, stop)
         if got.lower() != sha256.lower():
             os.remove(part)
-            raise RuntimeError("La verificación SHA-256 falló para %s; se borró el archivo dañado." % os.path.basename(dest))
+            raise RuntimeError(tr("La verificación SHA-256 falló para %s; se borró el archivo dañado.") % os.path.basename(dest))
     os.replace(part, dest)
     return dest
 
@@ -580,7 +581,7 @@ def extract_zip(zpath, dest):
         for m in z.infolist():
             target = os.path.abspath(os.path.join(dest, m.filename))
             if not target.startswith(os.path.abspath(dest) + os.sep) and target != os.path.abspath(dest):
-                raise RuntimeError("Ruta peligrosa en el zip: " + m.filename)
+                raise RuntimeError(tr("Ruta peligrosa en el zip: %s") % m.filename)
         z.extractall(dest)
 
 
@@ -595,7 +596,7 @@ def extract_archive(path, dest):
         for m in t.getmembers():
             target = os.path.abspath(os.path.join(dest, m.name))
             if not (target == root or target.startswith(root + os.sep)):
-                raise RuntimeError("Ruta peligrosa en el paquete: " + m.name)
+                raise RuntimeError(tr("Ruta peligrosa en el paquete: %s") % m.name)
         try:
             t.extractall(dest, filter="tar")         # Python 3.12+: bloquea rutas absolutas y enlaces hacia fuera
         except TypeError:
@@ -622,7 +623,7 @@ def find_server(folder):
 def fmt_duration(s):
     """Duracion legible: 45 s · 3 min 20 s · 14 min · 1 h 27 min · 2 d 5 h."""
     if s < 1:
-        return "menos de 1 s"
+        return tr("menos de 1 s")
     s = int(round(s))
     if s < 60:
         return "%d s" % s
@@ -647,6 +648,16 @@ def fmt_bytes(n):
 
 
 DOWNLOAD_PHASES = ("descargando", "ya descargado")
+# las fases de download() se comparan (no se traducen): este es su texto en pantalla
+_PHASE_TXT = {"descargando": tr("descargando"), "verificando": tr("verificando"), "ya descargado": tr("ya descargado"),
+              "descomprimiendo": tr("descomprimiendo")}
+
+
+def _phase_text(ph):
+    """Texto en pantalla de una fase interna, también con el prefijo que le ponen otros módulos («uv: descargando»)."""
+    pre, sep, last = ph.rpartition(": ")
+    m = re.match(r"reintentando \((\d+/\d+)\)…$", last)
+    return pre + sep + (tr("reintentando (%s)…") % m.group(1) if m else _PHASE_TXT.get(last, last))
 
 
 class Job:
@@ -726,7 +737,7 @@ class Job:
             for st in self.steps:
                 if st["status"] == "running":
                     st["status"] = "cancelled"
-            self.error = "Cancelado. Lo descargado se conserva y se reanudará la próxima vez."
+            self.error = tr("Cancelado. Lo descargado se conserva y se reanudará la próxima vez.")
         except Exception as e:
             for st in self.steps:
                 if st["status"] == "running":
@@ -740,49 +751,49 @@ class Job:
 def describe_step(st):
     """Texto de estado de un paso para la interfaz."""
     if st["status"] == "pending":
-        return "en espera" + (" · %s" % fmt_bytes(st["size"]) if st["size"] else "")
+        return tr("en espera") + (" · %s" % fmt_bytes(st["size"]) if st["size"] else "")
     if st["status"] == "done":
         if st.get("skipped"):
-            return "✓ ya estaba descargado" + (" · %s" % fmt_bytes(st["size"]) if st["size"] else "")
+            return tr("✓ ya estaba descargado") + (" · %s" % fmt_bytes(st["size"]) if st["size"] else "")
         took = st["ended"] - st["started"]
         moved = st["got"] - (st["base"] or 0)
         avg = moved / took if took > 0.5 and moved > 0 else 0
-        parts = ["✓ listo"]
+        parts = [tr("✓ listo")]
         if st["size"]:
             parts.append(fmt_bytes(st["size"]))
-        parts.append("en " + fmt_duration(took))
+        parts.append(tr("en %s") % fmt_duration(took))
         if avg:
-            parts.append("%s/s de media" % fmt_bytes(avg))
+            parts.append(tr("%s/s de media") % fmt_bytes(avg))
         return " · ".join(parts)
     if st["status"] == "cancelled":
-        return "✗ cancelado · %s de %s conservados" % (fmt_bytes(st["got"]), fmt_bytes(st["size"] or st["total"]))
+        return tr("✗ cancelado · %s de %s conservados") % (fmt_bytes(st["got"]), fmt_bytes(st["size"] or st["total"]))
     if st["status"] == "error":
-        return "✗ error"
+        return tr("✗ error")
     # en curso
     ph, done, total = st["phase"], st["done"], st["total"]
     if ph == "verificando":
-        head = "Verificando la integridad (SHA-256)"
+        head = tr("Verificando la integridad (SHA-256)")
     elif ph == "descomprimiendo":
-        return "Descomprimiendo…"
+        return tr("Descomprimiendo…")
     elif ph.startswith("reintentando"):
-        head = "Conexión perdida · " + ph
+        head = tr("Conexión perdida · %s") % _phase_text(ph)
     elif ph == "descargando":
-        head = "Descargando"
+        head = tr("Descargando")
     else:
-        head = ph.capitalize() if ph else "Preparando…"
+        head = _phase_text(ph).capitalize() if ph else tr("Preparando…")
     parts = [head]
     if total:
         parts.append("%s %%" % (("%.1f" % (100.0 * done / total)) if total > 2 * 1024 ** 3 else ("%d" % (100 * done // total))))
-        parts.append("%s de %s" % (fmt_bytes(done), fmt_bytes(total)))
+        parts.append(tr("%s de %s") % (fmt_bytes(done), fmt_bytes(total)))
     elif done:
         parts.append(fmt_bytes(done))
     if ph in ("descargando", "verificando"):
         if st["speed"] > 0:
             parts.append("%s/s" % fmt_bytes(st["speed"]))
             if st["eta"] is not None:
-                parts.append("quedan " + fmt_duration(st["eta"]))
+                parts.append(tr("quedan %s") % fmt_duration(st["eta"]))
         else:
-            parts.append("calculando velocidad…")
+            parts.append(tr("calculando velocidad…"))
     return " · ".join(parts)
 
 
@@ -790,12 +801,12 @@ def describe_overall(o):
     """Resumen de todo el trabajo: '6.5 GB de 17.1 GB · paso 2 de 3 · 11.2 MB/s · quedan ~16 min · llevas 9 min'."""
     parts = []
     if o["total"]:
-        parts.append("%s de %s" % (fmt_bytes(o["got"]), fmt_bytes(o["total"])))
-    parts.append("paso %d de %d" % (min(o["done_steps"] + 1, o["steps"]), o["steps"]))
+        parts.append(tr("%s de %s") % (fmt_bytes(o["got"]), fmt_bytes(o["total"])))
+    parts.append(tr("paso %d de %d") % (min(o["done_steps"] + 1, o["steps"]), o["steps"]))
     if o["speed"] > 0:
         parts.append("%s/s" % fmt_bytes(o["speed"]))
     if o["eta"] is not None:
-        parts.append(("quedan ~" if o["eta"] >= 1 else "quedan ") + fmt_duration(o["eta"]))
+        parts.append((tr("quedan ~%s") if o["eta"] >= 1 else tr("quedan %s")) % fmt_duration(o["eta"]))
     if o["elapsed"] >= 1:
-        parts.append("llevas " + fmt_duration(o["elapsed"]))
+        parts.append(tr("llevas %s") % fmt_duration(o["elapsed"]))
     return " · ".join(parts)

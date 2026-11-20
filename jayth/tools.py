@@ -5,6 +5,7 @@ directamente y, en macOS y Linux, mss + pynput (ver control_posix)."""
 import os, re, sys, json, time, html, struct, zlib, ctypes, subprocess, threading, fnmatch, base64
 import urllib.request, urllib.parse, urllib.error
 from . import osys
+from .i18n import tr
 if osys.WIN:
     from ctypes import wintypes
 else:
@@ -27,22 +28,22 @@ TOOLS = {}
 
 # Nombres comprensibles para la interfaz (el modelo usa los internos)
 TOOL_LABELS = {
-    "read_file": "Leer archivos", "write_file": "Crear archivos", "edit_file": "Editar archivos", "multi_edit": "Editar varias partes",
-    "move_path": "Mover o renombrar", "delete_path": "Enviar a la papelera", "list_dir": "Ver carpetas", "search_files": "Buscar en archivos",
-    "run_command": "Ejecutar comandos", "open_target": "Abrir programas y archivos", "wait": "Esperar", "web_fetch": "Leer páginas web",
-    "web_search": "Buscar en internet", "download_file": "Descargar archivos", "screenshot": "Capturas de pantalla", "click": "Hacer clic",
-    "move_mouse": "Mover el ratón", "scroll": "Desplazar (rueda)", "type_text": "Escribir con el teclado", "press_keys": "Pulsar teclas",
-    "list_windows": "Ver ventanas abiertas", "focus_window": "Activar una ventana", "command_output": "Ver salida de procesos",
-    "stop_command": "Detener procesos", "read_document": "Leer documentos", "view_image": "Ver imágenes", "update_plan": "Plan de tareas",
-    "run_python": "Analizar datos con Python", "show_canvas": "Mostrar en el lienzo", "ask_user": "Preguntarte", "remember": "Recordar preferencias", "forget": "Olvidar un recuerdo", "use_skill": "Usar una habilidad", "schedule_task": "Programar tareas", "list_tasks": "Ver tareas programadas",
-    "cancel_task": "Quitar tareas programadas", "create_document": "Crear documentos (Word, Excel, PowerPoint, PDF)",
-    "ui_elements": "Leer la interfaz de un programa", "click_element": "Pulsar un elemento de un programa", "drag": "Arrastrar con el ratón",
-    "window_action": "Manejar ventanas", "clipboard": "Usar el portapapeles",
-    "browser_open": "Abrir páginas en el navegador de Jayth", "browser_read": "Leer la página del navegador", "browser_click": "Pulsar en el navegador",
-    "browser_type": "Escribir en el navegador", "browser_nav": "Navegar (atrás, recargar, desplazar)", "browser_screenshot": "Capturar el navegador",
+    "read_file": tr("Leer archivos"), "write_file": tr("Crear archivos"), "edit_file": tr("Editar archivos"), "multi_edit": tr("Editar varias partes"),
+    "move_path": tr("Mover o renombrar"), "delete_path": tr("Enviar a la papelera"), "list_dir": tr("Ver carpetas"), "search_files": tr("Buscar en archivos"),
+    "run_command": tr("Ejecutar comandos"), "open_target": tr("Abrir programas y archivos"), "wait": tr("Esperar"), "web_fetch": tr("Leer páginas web"),
+    "web_search": tr("Buscar en internet"), "download_file": tr("Descargar archivos"), "screenshot": tr("Capturas de pantalla"), "click": tr("Hacer clic"),
+    "move_mouse": tr("Mover el ratón"), "scroll": tr("Desplazar (rueda)"), "type_text": tr("Escribir con el teclado"), "press_keys": tr("Pulsar teclas"),
+    "list_windows": tr("Ver ventanas abiertas"), "focus_window": tr("Activar una ventana"), "command_output": tr("Ver salida de procesos"),
+    "stop_command": tr("Detener procesos"), "read_document": tr("Leer documentos"), "view_image": tr("Ver imágenes"), "update_plan": tr("Plan de tareas"),
+    "run_python": tr("Analizar datos con Python"), "show_canvas": tr("Mostrar en el lienzo"), "ask_user": tr("Preguntarte"), "remember": tr("Recordar preferencias"), "forget": tr("Olvidar un recuerdo"), "use_skill": tr("Usar una habilidad"), "schedule_task": tr("Programar tareas"), "list_tasks": tr("Ver tareas programadas"),
+    "cancel_task": tr("Quitar tareas programadas"), "create_document": tr("Crear documentos (Word, Excel, PowerPoint, PDF)"),
+    "ui_elements": tr("Leer la interfaz de un programa"), "click_element": tr("Pulsar un elemento de un programa"), "drag": tr("Arrastrar con el ratón"),
+    "window_action": tr("Manejar ventanas"), "clipboard": tr("Usar el portapapeles"),
+    "browser_open": tr("Abrir páginas en el navegador de Jayth"), "browser_read": tr("Leer la página del navegador"), "browser_click": tr("Pulsar en el navegador"),
+    "browser_type": tr("Escribir en el navegador"), "browser_nav": tr("Navegar (atrás, recargar, desplazar)"), "browser_screenshot": tr("Capturar el navegador"),
 }
-CATEGORIES = {"read": "Lectura", "write": "Escritura", "exec": "Ejecución", "net": "Red", "control": "Control del PC",
-              "agent": "Agente", "mcp": "Conector"}
+CATEGORIES = {"read": tr("Lectura"), "write": tr("Escritura"), "exec": tr("Ejecución"), "net": tr("Red"), "control": tr("Control del PC"),
+              "agent": tr("Agente"), "mcp": tr("Conector")}
 WRITE_TOOLS = {"write_file", "edit_file", "multi_edit", "move_path", "delete_path", "create_document"}   # crean punto de restauracion
 
 
@@ -846,7 +847,7 @@ def _cursor():
 def _failsafe():
     x, y = _cursor()
     if x <= 0 and y <= 0:
-        raise Abort("Failsafe: el ratón está en la esquina superior izquierda; se detuvo el agente.")
+        raise Abort(tr("Failsafe: el ratón está en la esquina superior izquierda; se detuvo el agente."))
 
 
 def _real(ctx, x, y):

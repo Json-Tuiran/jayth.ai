@@ -10,20 +10,21 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineE
 from . import APP_NAME, core
 from .theme import C
 from .wizard import btn, lbl, run_bg
+from .i18n import tr
 
 # (nombre, URL base, dónde se consigue la clave, modelos sugeridos por si el servicio no deja listar)
 TEMPLATES = [
     ("OpenAI", "https://api.openai.com/v1", "platform.openai.com/api-keys", []),
     ("Claude (Anthropic)", "https://api.anthropic.com/v1", "console.anthropic.com/settings/keys", []),
     ("Gemini (Google)", "https://generativelanguage.googleapis.com/v1beta/openai", "aistudio.google.com/apikey", []),
-    ("OpenRouter (muchos modelos)", "https://openrouter.ai/api/v1", "openrouter.ai/keys", []),
+    (tr("OpenRouter (muchos modelos)"), "https://openrouter.ai/api/v1", "openrouter.ai/keys", []),
     ("Groq", "https://api.groq.com/openai/v1", "console.groq.com/keys", []),
     ("Mistral", "https://api.mistral.ai/v1", "console.mistral.ai/api-keys", []),
     ("DeepSeek", "https://api.deepseek.com/v1", "platform.deepseek.com/api_keys", []),
     ("xAI (Grok)", "https://api.x.ai/v1", "console.x.ai", []),
-    ("Ollama (en este equipo)", "http://127.0.0.1:11434/v1", "", []),
-    ("LM Studio (en este equipo)", "http://127.0.0.1:1234/v1", "", []),
-    ("Otro servidor compatible con OpenAI", "", "", []),
+    (tr("Ollama (en este equipo)"), "http://127.0.0.1:11434/v1", "", []),
+    (tr("LM Studio (en este equipo)"), "http://127.0.0.1:1234/v1", "", []),
+    (tr("Otro servidor compatible con OpenAI"), "", "", []),
 ]
 
 
@@ -31,7 +32,7 @@ def list_models(url, key, timeout=15):
     """Nombres de los modelos que ofrece el servicio (GET /models). Lanza RuntimeError con un mensaje claro."""
     url = (url or "").strip().rstrip("/")
     if not url.lower().startswith(("http://", "https://")):
-        raise RuntimeError("La dirección debe empezar por http:// o https://")
+        raise RuntimeError(tr("La dirección debe empezar por http:// o https://"))
     headers = {"Authorization": "Bearer " + (key or "local"), "User-Agent": APP_NAME, "Accept": "application/json"}
     if "anthropic.com" in url:                    # Claude también acepta su cabecera propia
         headers.update({"x-api-key": key or "", "anthropic-version": "2023-06-01"})
@@ -39,16 +40,16 @@ def list_models(url, key, timeout=15):
         raw = urllib.request.urlopen(urllib.request.Request(url + "/models", headers=headers), timeout=timeout).read(4_000_000)
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
-            raise RuntimeError("El servicio rechazó la clave (HTTP %d). Revisa que esté bien copiada y activa." % e.code)
+            raise RuntimeError(tr("El servicio rechazó la clave (HTTP %d). Revisa que esté bien copiada y activa.") % e.code)
         if e.code == 404:
-            raise RuntimeError("El servicio no ofrece la lista de modelos (HTTP 404). Escribe el nombre del modelo a mano.")
-        raise RuntimeError("El servicio respondió HTTP %d." % e.code)
+            raise RuntimeError(tr("El servicio no ofrece la lista de modelos (HTTP 404). Escribe el nombre del modelo a mano."))
+        raise RuntimeError(tr("El servicio respondió HTTP %d.") % e.code)
     except Exception as e:
-        raise RuntimeError("No se pudo conectar: %s" % getattr(e, "reason", e))
+        raise RuntimeError(tr("No se pudo conectar: %s") % getattr(e, "reason", e))
     try:
         j = json.loads(raw.decode("utf-8", "replace"))
     except ValueError:
-        raise RuntimeError("La respuesta del servicio no es válida (¿la dirección termina en /v1?).")
+        raise RuntimeError(tr("La respuesta del servicio no es válida (¿la dirección termina en /v1?)."))
     data = j.get("data") if isinstance(j, dict) else j
     if data is None and isinstance(j, dict):
         data = j.get("models") or []
@@ -80,11 +81,11 @@ def test_chat(url, key, model, timeout=40):
             pass
         raise RuntimeError("HTTP %d: %s" % (e.code, str(body)[:300]))
     except Exception as e:
-        raise RuntimeError("No se pudo conectar: %s" % getattr(e, "reason", e))
+        raise RuntimeError(tr("No se pudo conectar: %s") % getattr(e, "reason", e))
     try:
-        return (j["choices"][0]["message"].get("content") or "").strip() or "(respuesta vacía, pero el servicio contestó)"
+        return (j["choices"][0]["message"].get("content") or "").strip() or tr("(respuesta vacía, pero el servicio contestó)")
     except (KeyError, IndexError, TypeError):
-        raise RuntimeError("Respuesta inesperada del servicio.")
+        raise RuntimeError(tr("Respuesta inesperada del servicio."))
 
 
 def saved(cfg=None):
@@ -103,7 +104,7 @@ def migrate():
     cfg = core.SET.snapshot()
     if cfg.get("providers") or not cfg.get("external_model") or not cfg.get("external_url"):
         return
-    name = next((t[0] for t in TEMPLATES if t[1] and t[1].rstrip("/") == cfg["external_url"].rstrip("/")), "Servidor externo")
+    name = next((t[0] for t in TEMPLATES if t[1] and t[1].rstrip("/") == cfg["external_url"].rstrip("/")), tr("Servidor externo"))
     p = {"id": uuid.uuid4().hex[:8], "name": name, "url": cfg["external_url"], "key": cfg.get("external_key", ""), "models": [cfg["external_model"]]}
     core.SET.update({"providers": [p], "external_provider": p["id"]})
 
@@ -111,7 +112,7 @@ def migrate():
 class ProvidersDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Modelos por API")
+        self.setWindowTitle(tr("Modelos por API"))
         self.resize(860, 620)
         self.cur = None                       # proveedor que se está editando (None = nuevo)
         root = QHBoxLayout(self)
@@ -122,46 +123,46 @@ class ProvidersDialog(QDialog):
         left.setFixedWidth(250)
         lv = QVBoxLayout(left)
         lv.setContentsMargins(10, 14, 10, 10)
-        t = QLabel("Servicios guardados")
+        t = QLabel(tr("Servicios guardados"))
         t.setObjectName("h1")
         lv.addWidget(t)
         self.lst = QListWidget()
         self.lst.setObjectName("history")
         self.lst.currentRowChanged.connect(self._pick)
         lv.addWidget(self.lst, 1)
-        lv.addWidget(btn("Añadir servicio", None, self._new, "acc_anadir"))
+        lv.addWidget(btn(tr("Añadir servicio"), None, self._new, "acc_anadir"))
         root.addWidget(left)
         right = QWidget()
         v = QVBoxLayout(right)
         v.setContentsMargins(22, 16, 22, 14)
         v.setSpacing(8)
-        v.addWidget(lbl("Usa modelos de servicios en la nube o de tu propio servidor con tu clave de API. La clave se guarda solo en este "
-                        "equipo. Las suscripciones de usuario (ChatGPT Plus, Claude Pro…) no sirven aquí: hace falta una clave de API.", "faint"))
-        v.addWidget(QLabel("Servicio"))
+        v.addWidget(lbl(tr("Usa modelos de servicios en la nube o de tu propio servidor con tu clave de API. La clave se guarda solo en este "
+                           "equipo. Las suscripciones de usuario (ChatGPT Plus, Claude Pro…) no sirven aquí: hace falta una clave de API."), "faint"))
+        v.addWidget(QLabel(tr("Servicio")))
         self.tpl = QComboBox()
         for n, u, where, _ in TEMPLATES:
             self.tpl.addItem(n, (u, where))
         self.tpl.activated.connect(self._template)
         v.addWidget(self.tpl)
-        v.addWidget(QLabel("Nombre"))
+        v.addWidget(QLabel(tr("Nombre")))
         self.e_name = QLineEdit()
         v.addWidget(self.e_name)
-        v.addWidget(QLabel("Dirección (termina en /v1)"))
+        v.addWidget(QLabel(tr("Dirección (termina en /v1)")))
         self.e_url = QLineEdit()
         self.e_url.setPlaceholderText("https://…/v1")
         v.addWidget(self.e_url)
-        v.addWidget(QLabel("Clave de API"))
+        v.addWidget(QLabel(tr("Clave de API")))
         self.e_key = QLineEdit()
         self.e_key.setEchoMode(QLineEdit.Password)
         v.addWidget(self.e_key)
         self.where = lbl("", "faint")
         v.addWidget(self.where)
         row = QHBoxLayout()
-        row.addWidget(QLabel("Modelos que quieres usar"), 1)
-        row.addWidget(btn("Ver modelos disponibles", None, self._fetch, "acc_refrescar"))
+        row.addWidget(QLabel(tr("Modelos que quieres usar")), 1)
+        row.addWidget(btn(tr("Ver modelos disponibles"), None, self._fetch, "acc_refrescar"))
         v.addLayout(row)
         self.filter = QLineEdit()
-        self.filter.setPlaceholderText("Filtrar o escribir un nombre de modelo y pulsar Enter para añadirlo…")
+        self.filter.setPlaceholderText(tr("Filtrar o escribir un nombre de modelo y pulsar Enter para añadirlo…"))
         self.filter.textChanged.connect(self._apply_filter)
         self.filter.returnPressed.connect(self._add_typed)
         v.addWidget(self.filter)
@@ -171,12 +172,12 @@ class ProvidersDialog(QDialog):
         self.msg = lbl("", "faint")
         v.addWidget(self.msg)
         foot = QHBoxLayout()
-        self.b_del = btn("Quitar servicio", "danger", self._delete)
+        self.b_del = btn(tr("Quitar servicio"), "danger", self._delete)
         foot.addWidget(self.b_del)
         foot.addStretch(1)
-        foot.addWidget(btn("Probar", None, self._test))
-        foot.addWidget(btn("Guardar", "primary", self._save))
-        foot.addWidget(btn("Cerrar", None, self.accept))
+        foot.addWidget(btn(tr("Probar"), None, self._test))
+        foot.addWidget(btn(tr("Guardar"), "primary", self._save))
+        foot.addWidget(btn(tr("Cerrar"), None, self.accept))
         v.addLayout(foot)
         root.addWidget(right, 1)
         self._reload()
@@ -225,7 +226,7 @@ class ProvidersDialog(QDialog):
         self._template(0)
         self._set_models([], [])
         self.b_del.hide()
-        self.msg.setText("Elige el servicio, pega tu clave y pulsa «Ver modelos disponibles».")
+        self.msg.setText(tr("Elige el servicio, pega tu clave y pulsa «Ver modelos disponibles»."))
 
     def _template(self, i):
         url, where = self.tpl.itemData(i)
@@ -233,7 +234,7 @@ class ProvidersDialog(QDialog):
         if self.cur is None or not self.e_name.text().strip():
             self.e_name.setText("" if not url else name)
         self.e_url.setText(url)
-        self.where.setText(("Consigue tu clave en %s" % where) if where else ("No necesita clave." if url.startswith("http://127.") else ""))
+        self.where.setText((tr("Consigue tu clave en %s") % where) if where else (tr("No necesita clave.") if url.startswith("http://127.") else ""))
 
     # ---- modelos
     def _set_models(self, names, checked):
@@ -266,24 +267,24 @@ class ProvidersDialog(QDialog):
 
     def _fetch(self):
         url, key = self.e_url.text().strip(), self.e_key.text().strip()
-        self.msg.setText("Consultando los modelos del servicio…")
+        self.msg.setText(tr("Consultando los modelos del servicio…"))
 
         def done(r):
             if isinstance(r, Exception):
                 return self.msg.setText("✗ %s" % r)
             self._set_models(r, self._checked())
-            self.msg.setText("✓ %d modelos disponibles. Marca los que quieras tener en el menú." % len(r))
+            self.msg.setText(tr("✓ %d modelos disponibles. Marca los que quieras tener en el menú.") % len(r))
         run_bg(lambda: list_models(url, key), done)
 
     def _test(self):
         url, key = self.e_url.text().strip(), self.e_key.text().strip()
         models = self._checked()
         if not models:
-            return self.msg.setText("Marca al menos un modelo para probarlo.")
-        self.msg.setText("Probando %s…" % models[0])
+            return self.msg.setText(tr("Marca al menos un modelo para probarlo."))
+        self.msg.setText(tr("Probando %s…") % models[0])
 
         def done(r):
-            self.msg.setText(("✗ %s" % r) if isinstance(r, Exception) else "✓ %s responde: %s" % (models[0], str(r)[:120]))
+            self.msg.setText(("✗ %s" % r) if isinstance(r, Exception) else tr("✓ %s responde: %s") % (models[0], str(r)[:120]))
         run_bg(lambda: test_chat(url, key, models[0]), done)
 
     # ---- guardar / quitar
@@ -291,9 +292,9 @@ class ProvidersDialog(QDialog):
         name, url = self.e_name.text().strip(), self.e_url.text().strip().rstrip("/")
         models = self._checked()
         if not name or not url.lower().startswith(("http://", "https://")):
-            return self.msg.setText("Escribe un nombre y una dirección que empiece por http:// o https://")
+            return self.msg.setText(tr("Escribe un nombre y una dirección que empiece por http:// o https://"))
         if not models:
-            return self.msg.setText("Marca al menos un modelo (pulsa «Ver modelos disponibles» o escribe su nombre y Enter).")
+            return self.msg.setText(tr("Marca al menos un modelo (pulsa «Ver modelos disponibles» o escribe su nombre y Enter)."))
         ps = saved()
         p = next((x for x in ps if x["id"] == self.cur), None)
         if p is None:
@@ -308,11 +309,11 @@ class ProvidersDialog(QDialog):
                              "external_model": cfg["external_model"] if cfg["external_model"] in models else models[0]})
         self._reload(p["id"])
         self.b_del.show()
-        self.msg.setText("✓ Guardado. Sus modelos ya aparecen en el menú de modelos.")
+        self.msg.setText(tr("✓ Guardado. Sus modelos ya aparecen en el menú de modelos."))
 
     def _delete(self):
         p = next((x for x in saved() if x["id"] == self.cur), None)
-        if not p or QMessageBox.question(self, "Quitar servicio", "¿Quitar «%s» y su clave de este equipo?" % p["name"]) != QMessageBox.StandardButton.Yes:
+        if not p or QMessageBox.question(self, tr("Quitar servicio"), tr("¿Quitar «%s» y su clave de este equipo?") % p["name"]) != QMessageBox.StandardButton.Yes:
             return
         core.SET.update({"providers": [x for x in saved() if x["id"] != p["id"]]})
         self._reload()

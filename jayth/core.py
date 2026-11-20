@@ -4,6 +4,7 @@
 import os, re, json, time, uuid, threading, subprocess, http.client
 from . import paths, osys
 from . import agent as A
+from .i18n import tr
 
 paths.ensure()
 
@@ -54,6 +55,7 @@ DEFAULTS = {
     "editor_wrap": False,        # editor de Jayth Code: ajustar las lineas largas al ancho (Alt+Z)
     "preview_modes": {},         # por extension: "preview" o "code" (Markdown y CSV se abren formateados)
     # interfaz
+    "ui_language": "auto",       # auto (el del sistema) | es | en | pt  (ver i18n.py; se aplica al reiniciar)
     "theme": "system",           # system | dark | light
     "font_scale": 100,
     "user_name": "",
@@ -66,6 +68,7 @@ DEFAULTS = {
     "animations": True,
     # novedades
     "auto_update_check": True,   # avisar cuando haya una version nueva de Jayth
+    "auto_install_updates": True,   # bajarla en segundo plano e instalarla al cerrar Jayth (o al pulsar «Reiniciar para actualizar»)
     "model_news": True,          # avisar cuando se publiquen versiones nuevas de tus modelos
     "model_news_seen": [],
     # personalizacion
@@ -130,7 +133,7 @@ class Settings:
                             os.replace(self.path, bak)
                         except OSError:
                             pass
-                        self.load_error = "No se pudieron leer tus ajustes (%s). Se guardó una copia en %s." % (e, bak)
+                        self.load_error = tr("No se pudieron leer tus ajustes (%s). Se guardó una copia en %s.") % (e, bak)
                     time.sleep(0.3)
         old_ws = os.path.join(os.path.dirname(paths.WORKSPACE_DEFAULT), "AgenteLocal")
         if os.path.normcase(os.path.normpath(self.v["workspace"])) == os.path.normcase(old_ws):
@@ -331,15 +334,15 @@ def caps_text(c, short=False):
     """«Agente · Visión · Razona» (o «Solo conversación» si no usa herramientas)."""
     if not c:
         return ""
-    parts = (["Agente"] if c.get("tools") else []) + (["Visión"] if c.get("vision") else []) + (["Razona"] if c.get("think") else [])
+    parts = ([tr("Agente")] if c.get("tools") else []) + ([tr("Visión")] if c.get("vision") else []) + ([tr("Razona")] if c.get("think") else [])
     if not c.get("tools"):
-        parts.insert(0, "Solo conversación" if not short else "Sin herramientas")
+        parts.insert(0, tr("Solo conversación") if not short else tr("Sin herramientas"))
     return " · ".join(parts)
 
 
-EFFORTS = [("low", "Bajo", "Responde directo, sin razonar antes. Lo más rápido."),
-           ("medium", "Medio", "Razona antes de responder. Mejor en tareas con varios pasos."),
-           ("high", "Alto", "Razona a fondo y con más margen de respuesta. Para lo difícil; es lo más lento.")]
+EFFORTS = [("low", tr("Bajo"), tr("Responde directo, sin razonar antes. Lo más rápido.")),
+           ("medium", tr("Medio"), tr("Razona antes de responder. Mejor en tareas con varios pasos.")),
+           ("high", tr("Alto"), tr("Razona a fondo y con más margen de respuesta. Para lo difícil; es lo más lento."))]
 
 
 def effort_of(cfg):
@@ -363,7 +366,9 @@ SET = Settings()
 
 
 # ---------------------------------------------------------------- conversaciones
-DEFAULT_TITLE = "Nueva conversación"
+DEFAULT_TITLE = tr("Nueva conversación")
+# el título se guarda en disco: una conversación aún vacía pudo crearse con la interfaz en otro idioma
+DEFAULT_TITLES = {DEFAULT_TITLE, "Nueva conversación", "New conversation", "Nova conversa"}
 
 
 class Session:
@@ -413,7 +418,7 @@ class Session:
         """Lanza el agente en un hilo. files: rutas de documentos adjuntos (su texto se incluye en el mensaje).
         Devuelve None o un mensaje de error."""
         if self.run is not None:
-            return "El agente sigue trabajando en esta conversación."
+            return tr("El agente sigue trabajando en esta conversación.")
         cfg = SET.snapshot()
         if mode:
             cfg["mode"] = mode
@@ -439,9 +444,9 @@ class Session:
             self.data["plan"] = []
         run = A.Run(self.data, cfg, self.add_event, paths.IMG_DIR)
         self.run = run
-        if self.title == DEFAULT_TITLE:
+        if self.title in DEFAULT_TITLES:
             # titulo provisional; al terminar la primera respuesta el propio modelo propone uno breve
-            self.title = re.sub(r"\s+", " ", text or "Archivo adjunto").strip()[:48]
+            self.title = re.sub(r"\s+", " ", text or tr("Archivo adjunto")).strip()[:48]
             self.data["title_auto"] = 2          # intentos que quedan
 
         def go():
@@ -518,10 +523,10 @@ class Session:
     def regenerate(self):
         """Descarta la ultima respuesta y vuelve a enviar el ultimo mensaje del usuario."""
         if self.run is not None:
-            return "El agente sigue trabajando en esta conversación."
+            return tr("El agente sigue trabajando en esta conversación.")
         ev = self.last_user()
         if not ev:
-            return "No hay ningún mensaje que regenerar."
+            return tr("No hay ningún mensaje que regenerar.")
         msgs = self.data["messages"]
         idx = max((i for i, m in enumerate(msgs) if m["role"] == "user" and not m.get("_auto")), default=None)
         if idx is not None:
@@ -628,7 +633,7 @@ class LLM:
         if h == 503 or (mine and h is None):
             return {"state": "loading"}
         if self.proc is not None and self.proc.poll() not in (None, 0):
-            return {"state": "off", "error": "El modelo se cerró (código %s). Revisa el registro." % self.proc.poll()}
+            return {"state": "off", "error": tr("El modelo se cerró (código %s). Revisa el registro.") % self.proc.poll()}
         return {"state": "off"}
 
     def _external_status(self, cfg):
@@ -640,10 +645,10 @@ class LLM:
             return {"state": "ready", "external": True}
         except urllib.error.HTTPError as e:
             if e.code in (401, 403):
-                return {"state": "off", "external": True, "error": "El servicio rechazó la clave de API (HTTP %d)." % e.code}
+                return {"state": "off", "external": True, "error": tr("El servicio rechazó la clave de API (HTTP %d).") % e.code}
             return {"state": "ready", "external": True}      # contesta, aunque no ofrezca la lista de modelos
         except Exception as e:
-            return {"state": "off", "external": True, "error": "Servidor externo no disponible"}
+            return {"state": "off", "external": True, "error": tr("Servidor externo no disponible")}
 
     def command(self, cfg=None):
         cfg = cfg or SET.snapshot()
@@ -697,25 +702,25 @@ class LLM:
     def start(self):
         cfg = SET.snapshot()
         if cfg["llm_mode"] == "external":
-            return "Estás usando un servidor externo; enciéndelo desde ese programa."
+            return tr("Estás usando un servidor externo; enciéndelo desde ese programa.")
         if self.status()["state"] != "off":
             return None
         m = active_model(cfg)
         if not m:
-            return "No hay ningún modelo elegido. Añade uno en «Modelos»."
+            return tr("No hay ningún modelo elegido. Añade uno en «Modelos».")
         from . import relocate
         if not relocate.files_ok(m) or (m.get("mmproj") and not os.path.isfile(m["mmproj"])):
             relocate.run("guess")                   # ¿se movió? primero los sitios evidentes (es instantáneo)
             cfg = SET.snapshot()
             m = active_model(cfg)
         if not relocate.files_ok(m):
-            return ("No encuentro el archivo del modelo «%s» (%s). Si lo moviste de carpeta o de disco, Jayth lo busca solo; "
-                    "también puedes indicarle dónde está en Modelos → Localizar…" % (model_title(m) or m.get("name"), m.get("path") or "sin ruta"))
+            return (tr("No encuentro el archivo del modelo «%s» (%s). Si lo moviste de carpeta o de disco, Jayth lo busca solo; "
+                    "también puedes indicarle dónde está en Modelos → Localizar…") % (model_title(m) or m.get("name"), m.get("path") or tr("sin ruta")))
         if not cfg["llama_exe"] or not os.path.isfile(cfg["llama_exe"]):
-            return "No encuentro llama-server (%s). Abre el asistente de configuración." % (cfg["llama_exe"] or "sin configurar")
+            return tr("No encuentro llama-server (%s). Abre el asistente de configuración.") % (cfg["llama_exe"] or tr("sin configurar"))
         have = os.path.getsize(m["path"])
         if m.get("size") and have < int(m["size"]) and not re.search(r"-\d{5}-of-\d{5}\.gguf$", m["path"]):
-            return "El archivo del modelo aún está incompleto (%.1f de %.1f GB). Espera a que termine la descarga." % (have / 1024 ** 3, int(m["size"]) / 1024 ** 3)
+            return tr("El archivo del modelo aún está incompleto (%.1f de %.1f GB). Espera a que termine la descarga.") % (have / 1024 ** 3, int(m["size"]) / 1024 ** 3)
         lf = open(self.log, "wb")
         bindir = os.path.dirname(cfg["llama_exe"])
         env = dict(os.environ)
