@@ -28,6 +28,8 @@ Cómo trabajas:
 Herramientas:
 - run_command ejecuta %(shell)s (Python está disponible como `%(python)s`). Para servidores o procesos largos usa background=true y revisa con command_output.
 - Documentos Word, Excel, PowerPoint y PDF: read_document para leerlos y create_document para crearlos (escribes el contenido en Markdown). Imágenes del disco: view_image.
+- Datos (CSV, Excel), cálculos y gráficos: run_python con pandas y matplotlib; los gráficos se muestran solos al usuario.
+- Páginas web, documentos largos, diagramas SVG o programas completos que el usuario quiera VER: show_canvas (lienzo junto al chat). No pegues ese contenido en tu respuesta.
 - Programas con interfaz: screenshot -> click / type_text / press_keys -> screenshot para verificar. Las coordenadas son píxeles de la última captura.
 - Web (solo con internet): web_search, web_fetch y download_file.
 - remember: guarda una preferencia duradera cuando el usuario te la diga (p. ej. "usa pnpm", "mis proyectos están en %(example)s").
@@ -245,7 +247,7 @@ class Run:
         self.holder = {}
         self.sid = settings.get("_sid", "sin_sesion")
         self.ctx = T.Ctx(settings["workspace"], self.stop, images_dir, int(settings["max_tool_output"]),
-                         {"brave_key": settings.get("brave_key"), "search_provider": settings.get("search_provider", "auto"),
+                         {"sid": self.sid, "brave_key": settings.get("brave_key"), "search_provider": settings.get("search_provider", "auto"),
                           "searxng_url": settings.get("searxng_url", ""), "command_timeout": int(settings.get("command_timeout", 60))})
         self._buf, self._last = {"kind": None, "text": ""}, 0.0
         self.calls_seen = Counter()
@@ -519,7 +521,10 @@ class Run:
                 self.s["plan"] = [{"content": str(i.get("content", "")), "status": str(i.get("status", "pending"))} for i in args.get("items") or []]
                 self.emit({"t": "plan", "items": self.s["plan"]})
             if isinstance(r, dict):
-                return True, T.clip(r["text"], self.ctx.max_out), r.get("image"), extra
+                if r.get("ui"):                          # datos para la interfaz (lienzo, archivos creados…)
+                    extra.update(r["ui"])
+                imgs = list(r.get("images") or ([r["image"]] if r.get("image") else []))
+                return True, T.clip(r["text"], self.ctx.max_out), (imgs or None), extra
             return True, T.clip(str(r), self.ctx.max_out), None, extra
         except T.Abort:
             raise
@@ -629,12 +634,16 @@ class Run:
                         msgs.append({"role": "tool", "tool_call_id": call["id"], "content": "Cancelado por el usuario."})
                         continue
                     ok, out, img, extra = self._exec(call)
-                    name = None
-                    if img:
-                        name = uuid.uuid4().hex[:12] + ".png"
-                        with open(os.path.join(self.images_dir, name), "wb") as f:
-                            f.write(img)
-                        images.append(name)
+                    names = []
+                    for one in ([img] if isinstance(img, (bytes, bytearray)) else (img or [])):
+                        n = uuid.uuid4().hex[:12] + ".png"
+                        with open(os.path.join(self.images_dir, n), "wb") as f:
+                            f.write(one)
+                        names.append(n)
+                    images += names[:2]                  # el modelo ve como mucho dos por acción (cada imagen gasta contexto)
+                    name = names[0] if names else None
+                    if len(names) > 1:
+                        extra = dict(extra, images=names)    # la interfaz las muestra todas
                     self.emit(dict({"t": "tool_result", "id": call["id"], "ok": ok, "text": out, "image": name}, **extra))
                     msgs.append({"role": "tool", "tool_call_id": call["id"], "content": out if ok else "ERROR: " + out})
                 if images:

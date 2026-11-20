@@ -32,7 +32,7 @@ TOOL_LABELS = {
     "move_mouse": "Mover el ratón", "scroll": "Desplazar (rueda)", "type_text": "Escribir con el teclado", "press_keys": "Pulsar teclas",
     "list_windows": "Ver ventanas abiertas", "focus_window": "Activar una ventana", "command_output": "Ver salida de procesos",
     "stop_command": "Detener procesos", "read_document": "Leer documentos", "view_image": "Ver imágenes", "update_plan": "Plan de tareas",
-    "ask_user": "Preguntarte", "remember": "Recordar preferencias", "create_document": "Crear documentos (Word, Excel, PowerPoint, PDF)",
+    "run_python": "Analizar datos con Python", "show_canvas": "Mostrar en el lienzo", "ask_user": "Preguntarte", "remember": "Recordar preferencias", "create_document": "Crear documentos (Word, Excel, PowerPoint, PDF)",
 }
 CATEGORIES = {"read": "Lectura", "write": "Escritura", "exec": "Ejecución", "net": "Red", "control": "Control del PC",
               "agent": "Agente", "mcp": "Conector"}
@@ -119,6 +119,9 @@ def is_dangerous(name, args, ctx):
         if name == "run_command":
             cmd = str(args.get("command", ""))
             return any(re.search(p, cmd, re.I) for p in DANGEROUS_CMD)
+        if name == "run_python":                # un script de análisis no debería borrar, lanzar programas ni usar la red
+            return bool(re.search(r"\b(os\.(remove|unlink|rmdir|system|popen|startfile)|shutil\.(rmtree|move)|subprocess|socket|urllib|requests|"
+                                  r"ctypes|winreg|eval\(|exec\(|__import__)", str(args.get("code", ""))))
         if name == "delete_path":
             return True                         # borrar siempre se confirma
         if name in ("write_file", "edit_file", "multi_edit", "download_file", "move_path"):
@@ -450,6 +453,33 @@ def run_command(a, ctx):
     if why:
         return (out + "\n" if out else "") + "[Proceso terminado: %s]" % why
     return (out or "(sin salida)") + "\n[código de salida %d]" % p.returncode
+
+
+@tool("run_python", "exec",
+      "Ejecuta un script de Python para analizar datos o hacer cálculos y gráficos. Tiene pandas (pd), numpy y matplotlib. "
+      "Lee los archivos de la carpeta de trabajo (pd.read_csv, pd.read_excel…), imprime con print() lo que quieras ver "
+      "y dibuja con matplotlib: cada figura se muestra al usuario en la conversación (no hace falta plt.show ni guardar). "
+      "Para dejar un gráfico como archivo usa plt.savefig('nombre.png').",
+      {"code": S("Código Python completo"), "timeout": I("Segundos máximos (por defecto 120, máx. 900)")}, ["code"])
+def run_python(a, ctx):
+    from . import analysis
+    code = str(a.get("code") or "")
+    if not code.strip():
+        raise ToolError("Falta el código.")
+    timeout = min(max(int(a.get("timeout") or 120), 5), 900)
+    try:
+        out, figs, note, status, ok = analysis.run_code(code, ctx.workspace, ctx.stop, timeout)
+    except RuntimeError as e:
+        raise ToolError("No se pudo preparar Python para el análisis: %s" % e)
+    out = re.sub(r"\n{3,}", "\n\n", "\n".join(l.rstrip() for l in out.splitlines()))
+    text = note + (clip(out, ctx.max_out) or "(sin salida de texto)")
+    if figs:
+        text += "\n[%s al usuario]" % ("1 gráfico mostrado" if len(figs) == 1 else "%d gráficos mostrados" % len(figs))
+    if status:
+        text += "\n" + status
+    if not ok and not figs:
+        raise ToolError(text)
+    return {"text": text, "images": figs} if figs else text
 
 
 @tool("open_target", "exec", "Abre un programa, archivo, carpeta o URL con la aplicación predeterminada del sistema (no espera a que termine).",
@@ -1068,6 +1098,49 @@ def update_plan(a, ctx):
     items = a.get("items") or []
     done = sum(1 for i in items if i.get("status") == "completed")
     return "Plan actualizado (%d de %d completadas)." % (done, len(items))
+
+
+CANVAS_EXT = {"html": ".html", "markdown": ".md", "svg": ".svg", "code": ".txt"}
+
+
+@tool("show_canvas", "agent",
+      "Muestra contenido en el lienzo, un panel grande junto a la conversación, en vez de pegarlo en el chat. Úsalo para "
+      "páginas o aplicaciones web completas (kind=html, con su CSS y JavaScript dentro), documentos largos (kind=markdown), "
+      "dibujos o diagramas (kind=svg) y programas completos (kind=code). Para corregirlo, llama de nuevo con el mismo "
+      "title y el contenido entero: se guarda como una versión nueva.",
+      {"title": S("Título corto del contenido"), "kind": S("html, markdown, svg o code"), "content": S("Contenido completo"),
+       "language": S("Lenguaje, solo para kind=code (python, javascript…)")}, ["title", "content"])
+def show_canvas(a, ctx):
+    from . import paths
+    content = str(a.get("content") or "")
+    if not content.strip():
+        raise ToolError("Falta el contenido.")
+    kind = str(a.get("kind") or "").lower().strip()
+    head = content.lstrip()[:400].lower()
+    if kind in ("md", "texto", "text", "documento"):
+        kind = "markdown"
+    if kind not in CANVAS_EXT:               # sin tipo (o desconocido): se deduce del contenido
+        kind = "svg" if head.startswith("<svg") or (head.startswith("<?xml") and "<svg" in head) else \
+            "html" if re.search(r"<!doctype html|<html|<body|<div|<script|<style", head) else "markdown"
+    title = re.sub(r"\s+", " ", str(a.get("title") or "Sin título")).strip()[:80]
+    m = re.match(r"^```[\w-]*\n(.*)\n```\s*$", content.strip(), re.S)      # los modelos a veces envuelven todo en ```
+    if m:
+        content = m.group(1)
+    d = os.path.join(paths.DATA, "canvas", str((ctx.extras or {}).get("sid") or "sin_sesion"))
+    os.makedirs(d, exist_ok=True)
+    slug = re.sub(r"[^\w-]+", "_", title.lower()).strip("_")[:40] or "lienzo"
+    lang = str(a.get("language") or "").lower().strip()
+    ext = CANVAS_EXT[kind] if kind != "code" else {"python": ".py", "javascript": ".js", "typescript": ".ts", "json": ".json", "css": ".css",
+                                                   "sql": ".sql", "bash": ".sh", "powershell": ".ps1", "c": ".c", "cpp": ".cpp",
+                                                   "java": ".java", "go": ".go", "rust": ".rs"}.get(lang, ".txt")
+    ver = 1
+    while os.path.exists(os.path.join(d, "%s_v%d%s" % (slug, ver, ext))):
+        ver += 1
+    p = os.path.join(d, "%s_v%d%s" % (slug, ver, ext))
+    _write_text(p, content)
+    what = {"html": "página web", "markdown": "documento", "svg": "dibujo", "code": "código"}[kind]
+    return {"text": "Mostrado en el lienzo: «%s» (%s, versión %d). El usuario ya lo ve; no repitas el contenido en tu respuesta." % (title, what, ver),
+            "ui": {"canvas": {"title": title, "kind": kind, "path": p, "version": ver, "slug": slug, "language": lang}}}
 
 
 @tool("ask_user", "agent", "Pregunta al usuario cuando falta información o hay que elegir entre opciones. Espera su respuesta.",

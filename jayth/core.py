@@ -52,6 +52,8 @@ DEFAULTS = {
     "start_with_windows": False,
     "close_to_tray": False,
     "notifications": True,
+    "quick_hotkey": "Ctrl+Alt+J",       # atajo global de la ventana rápida (vacío = desactivado). Ctrl+Alt+Espacio lo usa
+                                        # la app de Claude y Alt+Espacio la de ChatGPT: se evita chocar con ellas
     "custom_titlebar": True,     # barra de titulo integrada en la ventana (como las apps de escritorio modernas)
     "animations": True,
     # novedades

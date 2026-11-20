@@ -289,6 +289,9 @@ class SettingsDialog(QDialog):
                    help="Así está listo cuando lo necesites. Usa la memoria del modelo mientras la app esté abierta.")
         self.field(v, "close_to_tray", "Al cerrar la ventana, seguir funcionando en la bandeja del sistema", "bool")
         self.field(v, "notifications", "Avisarme cuando el agente necesite mi aprobación", "bool")
+        self.field(v, "quick_hotkey", "Atajo de la ventana rápida", "text", placeholder="Ctrl+Alt+J",
+                   help="Abre una barrita para preguntar a %s desde cualquier programa, con opción de adjuntar una captura de la pantalla. "
+                        "Funciona mientras %s esté abierto (también en la bandeja). Déjalo vacío para desactivarlo." % (APP_NAME, APP_NAME))
 
     def p_personal(self, v):
         self.field(v, "user_name", "¿Cómo quieres que te llame?", "text", placeholder="Tu nombre (opcional)",

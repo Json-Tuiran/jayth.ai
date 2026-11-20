@@ -74,6 +74,8 @@ class Clickable(QWidget):
             self.clicked.emit()
 
 
+_HOTKEY = None
+
 # ---------------------------------------------------------------- animaciones
 def animations_on():
     return core.SET.snapshot().get("animations", True)
@@ -296,6 +298,8 @@ STEP = {  # herramienta: (infinitivo, pasado, objeto)
     "read_file": ("leer", "Leyó", lambda a: _b(a.get("path"))),
     "write_file": ("escribir", "Escribió", lambda a: _b(a.get("path"))),
     "create_document": ("crear el documento", "Creó el documento", lambda a: _b(a.get("path"))),
+    "run_python": ("analizar con Python", "Analizó con Python", lambda a: ""),
+    "show_canvas": ("mostrar en el lienzo", "Mostró en el lienzo", lambda a: "«%s»" % _q(a.get("title"), 50)),
     "edit_file": ("editar", "Editó", lambda a: _b(a.get("path"))),
     "list_dir": ("listar", "Listó", lambda a: _b(a.get("path")) or "la carpeta de trabajo"),
     "search_files": ("buscar", "Buscó", lambda a: "«%s»" % _q(a.get("pattern") or a.get("glob") or "*", 40)),
@@ -536,6 +540,7 @@ GROUP = {
     "delete_path": ("envió un archivo a la papelera", "envió %d archivos a la papelera"), "remember": ("guardó una preferencia", "guardó %d preferencias"),
     "control": ("usó el ratón y el teclado", "usó el ratón y el teclado"), "open_target": ("abrió un programa o archivo", "abrió %d programas o archivos"),
     "wait": ("esperó un momento", "esperó %d veces"),
+    "run_python": ("analizó los datos con Python", "hizo %d análisis con Python"), "show_canvas": ("mostró algo en el lienzo", "actualizó el lienzo %d veces"),
 }
 _GROUP_ALIAS = {"multi_edit": "edit_file", "click": "control", "move_mouse": "control", "scroll": "control", "type_text": "control",
                 "press_keys": "control", "list_windows": "control", "focus_window": "control"}
@@ -606,6 +611,40 @@ class DocCard(QFrame):
         h.addWidget(btn("Abrir", "primary", lambda: os.path.isfile(self.path) and osys.open_path(self.path)))
         h.addWidget(tbtn("act_carpeta_abierta", "Mostrar en la carpeta", lambda: reveal(self.path), size=15))
         self.setToolTip(path)
+
+
+class CanvasCard(QFrame):
+    """Tarjeta de algo que el agente puso en el lienzo; un clic lo vuelve a abrir."""
+
+    def __init__(self, item, on_open):
+        super().__init__()
+        self.setObjectName("docCard")
+        self.setCursor(Qt.PointingHandCursor)
+        self.item, self.on_open = item, on_open
+        h = QHBoxLayout(self)
+        h.setContentsMargins(10, 8, 8, 8)
+        h.setSpacing(10)
+        tag = {"html": "</>", "markdown": "¶", "svg": "◇", "code": "{ }"}.get(item.get("kind"), "▣")
+        badge = QLabel(tag)
+        badge.setAlignment(Qt.AlignCenter)
+        badge.setFixedSize(38, 46)
+        badge.setStyleSheet("background:%s; color:%s; border-radius:6px; font-weight:700; font-size:11pt" % (C["acc_bg"], C["acc"]))
+        h.addWidget(badge)
+        info = QVBoxLayout()
+        info.setSpacing(1)
+        name = ElidedLabel(item.get("title", ""))
+        name.setStyleSheet("font-weight:600")
+        info.addWidget(name)
+        kind = {"html": "Página web", "markdown": "Documento", "svg": "Dibujo", "code": "Código"}.get(item.get("kind"), "Lienzo")
+        sub = ElidedLabel("%s · versión %s" % (kind, item.get("version", 1)))
+        sub.setObjectName("faint")
+        info.addWidget(sub)
+        h.addLayout(info, 1)
+        h.addWidget(btn("Ver en el lienzo", "primary", lambda: self.on_open(self.item)))
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.on_open(self.item)
 
 
 class Preview(QLabel):
@@ -703,6 +742,10 @@ class StepsBox(QFrame):
         if path and os.path.isfile(path):
             self.ev_.addWidget(Preview(path), 0, Qt.AlignLeft)
             self.extras.show()
+
+    def add_canvas(self, item, on_open):
+        self.ev_.addWidget(CanvasCard(item, on_open))
+        self.extras.show()
 
     def add_doc(self, path):
         if path and os.path.isfile(path):
@@ -1479,6 +1522,13 @@ class ChatPanel(QWidget):
             r = self.rows.get(ev["id"])
             if r:
                 r.result(ev["ok"], ev.get("text") or "", ev.get("image"))
+                if ev["ok"] and r.box is not None:
+                    for n in (ev.get("images") or [])[1:]:           # el resto de gráficos de un análisis
+                        r.box.add_preview(os.path.join(paths.IMG_DIR, n))
+                    if ev.get("canvas"):
+                        r.box.add_canvas(ev["canvas"], self.main.open_canvas)
+                        if ev["ts"] > time.time() - 10:               # en directo se abre solo; al reabrir la conversación, no
+                            self.main.open_canvas(ev["canvas"])
                 if ev.get("undo") and ev["ok"]:
                     from . import harness
                     if harness.has_snapshot(self.sid, ev["id"]):
@@ -2132,6 +2182,7 @@ class Main(QMainWindow):
         self.folded, self.chat_width, self._side_sized = set(), 780, False
         self._build()
         self._init_peek()
+        self._init_quick()
         self._tray()
         self.chat.open_session(None)
         self.code.set_project(core.project(cfg, cfg["active_project"]))
@@ -2300,7 +2351,17 @@ class Main(QMainWindow):
         self.pages.addWidget(self.chat)
         self.code = CodePage(self)
         self.pages.addWidget(self.code)
-        mv.addWidget(self.pages, 1)
+        # lienzo: a la derecha de la conversacion; aparece cuando el agente muestra algo en el
+        from .canvas import CanvasPanel
+        self.body_split = panels.Splitter(Qt.Horizontal, "bodySplit")
+        self.body_split.addWidget(self.pages)
+        self.canvas = CanvasPanel(self)
+        self.canvas.closed.connect(lambda: self.set_canvas(False))
+        self.canvas.hide()
+        self.body_split.addWidget(self.canvas)
+        self.body_split.setStretchFactor(0, 1)
+        self.body_split.setStretchFactor(1, 1)
+        mv.addWidget(self.body_split, 1)
         self.hsplit.addWidget(main)
         self.hsplit.setStretchFactor(0, 0)
         self.hsplit.setStretchFactor(1, 1)
@@ -2618,11 +2679,84 @@ class Main(QMainWindow):
                 return 2           # HTCAPTION: arrastrar, doble clic para maximizar y ajuste a los bordes
         return 1
 
+    # ---- ventana rápida (atajo global)
+    def _init_quick(self):
+        from .quick import QuickWindow, GlobalHotkey
+        self.quick = QuickWindow()
+        self.quick.submit.connect(self.quick_send)
+        global _HOTKEY                    # uno por proceso: al recrear la ventana (cambio de tema) se reutiliza
+        if _HOTKEY is None:
+            _HOTKEY = GlobalHotkey()
+        else:
+            try:
+                _HOTKEY.pressed.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+        self.hotkey = _HOTKEY
+        self.hotkey.pressed.connect(self.quick_open)
+        if os.environ.get("JAYTH_NO_HOTKEY") != "1":       # las pruebas no registran atajos globales
+            self._apply_hotkey()
+
+    def _apply_hotkey(self, tell=False):
+        combo = (core.SET.snapshot().get("quick_hotkey") or "").strip()
+        if combo and combo == self.hotkey.combo and self.hotkey.active():
+            return
+        ok = self.hotkey.start(combo)
+        if combo and not ok:
+            self.toast(self.hotkey.error, icon_name="est_aviso", color=C["warn"])
+        elif tell and ok:
+            self.toast("Ventana rápida: pulsa %s desde cualquier programa." % combo, icon_name="ui_check", color=C["ok"])
+
+    def quick_open(self):
+        if self.quick.isVisible():
+            return self.quick.hide()
+        shot = None
+        if core.SET.snapshot().get("computer_control", True) is not False:
+            try:
+                shot = T.capture(1600)[0]              # lo que hay en pantalla ahora, antes de que aparezca la ventana
+            except Exception:
+                shot = None
+        self.quick.popup(shot)
+
+    def quick_send(self, text, shot):
+        """Pregunta hecha desde la ventana rápida: conversación nueva en modo Chat, con la captura si se pidió."""
+        self._show()
+        if self.mode != "chat":
+            self.set_mode("chat")
+        p = self.chat
+        if p.busy:
+            return self.toast("El agente sigue trabajando; espera a que termine o detenlo.", icon_name="est_aviso", color=C["warn"])
+        p.open_session(None)
+        if shot:
+            p._add_image(qimage=QImage.fromData(shot))
+        p.input.setPlainText(text)
+        p.send()
+
+    # ---- lienzo
+    def open_canvas(self, item):
+        """Muestra en el lienzo un contenido creado por el agente ({title, kind, path, version, slug})."""
+        if not item or not os.path.isfile(item.get("path", "")):
+            return self.toast("Ese contenido del lienzo ya no existe.", icon_name="est_aviso", color=C["warn"])
+        self.canvas.load(item)
+        self.set_canvas(True)
+
+    def set_canvas(self, on):
+        if on == (not self.canvas.isHidden()):
+            return
+        size = None
+        if on:                                   # la primera vez, algo más de la mitad: es donde está el trabajo
+            total = self.body_split.width()
+            size = int(self.canvas.property("last_size") or 0)
+            if size < total * 0.35:              # nunca se abre como una tira estrecha
+                size = int(total * 0.52)
+        panels.set_visible(self.body_split, self.canvas, on, animated=animations_on() and self.isVisible(), size=size)
+
     def _tray(self):
         self.tray = QSystemTrayIcon(make_icon(), self)
         self.tray.setToolTip(APP_NAME)
         m = QMenu()
         m.addAction(icon("acc_abrir_externo"), "Mostrar", self._show)
+        m.addAction(icon("mat_comentario"), "Pregunta rápida", lambda: QTimer.singleShot(250, self.quick_open))
         m.addAction(icon("trans_detener"), "Detener agente", lambda: (self.chat.stop(), self.code.chat.stop()))
         m.addSeparator()
         m.addAction(icon("ui_cerrar"), "Salir", self.quit_app)
@@ -3138,6 +3272,8 @@ class Main(QMainWindow):
         b = core.SET.snapshot()
         SettingsDialog(self, page).exec()
         a = core.SET.snapshot()
+        if a.get("quick_hotkey") != b.get("quick_hotkey"):
+            self._apply_hotkey(tell=True)
         if (a["theme"], a["font_scale"]) != (b["theme"], b["font_scale"]):
             return self._swap_window()
         self.poll()
