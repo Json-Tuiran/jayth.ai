@@ -7,7 +7,7 @@ from PySide6.QtGui import QPixmap, QImage, QKeySequence, QShortcut, QGuiApplicat
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
                                QListWidget, QListWidgetItem, QScrollArea, QFrame, QPlainTextEdit, QFileDialog, QMessageBox, QMenu,
                                QSystemTrayIcon, QSizePolicy, QToolButton, QInputDialog, QLineEdit, QStackedWidget, QSplitter,
-                               QGraphicsOpacityEffect, QAbstractButton, QComboBox)
+                               QGraphicsOpacityEffect, QAbstractButton, QComboBox, QLayout)
 from . import APP_NAME, core, paths, osys, agent as A, tools as T
 if osys.WIN:
     from ctypes import wintypes
@@ -17,6 +17,7 @@ from .wizard import SetupWizard, ModelsDialog, btn, lbl, set_icon, run_bg
 from .settings_ui import SettingsDialog
 from .codeview import EditorTabs, FileTree, Terminal, ProjectDialog
 from .feedback import FeedbackDialog
+from .widgets import TextView, FlowLayout, OptionRow, ElidedLabel
 from . import updater
 
 MODE_LABEL = {k: v.split(":")[0] for k, v in A.MODES.items()}
@@ -66,15 +67,8 @@ def mono(text, kind=None, max_h=260):
 
 
 def md_label(text=""):
-    l = QLabel()
-    l.setTextFormat(Qt.MarkdownText)
-    l.setWordWrap(True)
-    l.setOpenExternalLinks(True)
-    l.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.LinksAccessibleByMouse)
-    l.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-    l.setStyleSheet("font-size: 10.5pt;")
-    l.setText(text)
-    return l
+    """Respuesta del agente en Markdown. Nunca ensancha el panel: parte código, rutas y URL largas."""
+    return TextView(text, "md", size="10.5pt")
 
 
 class Clickable(QWidget):
@@ -188,14 +182,38 @@ class Toast(QFrame):
 
 
 class ImageLabel(QLabel):
+    """Imagen que se reduce al ancho disponible (sin ensanchar el panel); clic para verla a tamaño completo."""
+
     def __init__(self, path, max_w=600, max_h=380):
         super().__init__()
         self.path = path
-        pm = QPixmap(path)
-        if not pm.isNull():
-            self.setPixmap(pm.scaled(max_w, max_h, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.max_w, self.max_h = max_w, max_h
+        self.src = QPixmap(path)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.setMinimumWidth(40)
+        self._scaled_w = -1
+        self._rescale(max_w)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("Clic para abrir a tamaño completo")
+
+    def _rescale(self, avail):
+        if self.src.isNull():
+            return
+        w = max(40, min(self.max_w, avail))
+        if w == self._scaled_w:
+            return
+        self._scaled_w = w
+        pm = self.src.scaled(w, self.max_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.setPixmap(pm)
+        self.setFixedHeight(pm.height())
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._rescale(self.width())
+
+    def sizeHint(self):
+        pm = self.pixmap()
+        return QSize(pm.width() if pm is not None and not pm.isNull() else 40, self.height())
 
     def mousePressEvent(self, e):
         if os.path.isfile(self.path):
@@ -208,9 +226,7 @@ def note(text, error=False):
     h = QHBoxLayout(f)
     h.setContentsMargins(12, 8, 12, 8)
     h.addWidget(pix_label("est_error" if error else "est_info", C["bad"] if error else C["mut"]), 0, Qt.AlignTop)
-    t = lbl(text)
-    t.setStyleSheet("color:%s" % (C["bad"] if error else C["mut"]))
-    h.addWidget(t, 1)
+    h.addWidget(TextView(text, "plain", color=C["bad"] if error else C["mut"]), 1)
     return f
 
 
@@ -356,8 +372,7 @@ class StepRow(QWidget):
         h.setSpacing(8)
         self.st_icon = Spinner(size=14)
         h.addWidget(self.st_icon)
-        self.title = QLabel()
-        self.title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.title = ElidedLabel()            # una linea; si no cabe termina en «…» (completo en el tooltip)
         h.addWidget(self.title, 1)
         add, rem = diff_badge(ev["name"], ev.get("args") or {})
         for txt, col in ((add, C["ok"]), (rem, C["bad"])):
@@ -392,18 +407,16 @@ class StepRow(QWidget):
             av = QVBoxLayout(self.approval)
             av.setContentsMargins(12, 10, 12, 10)
             if ev.get("danger"):
-                w = QLabel("Acción delicada: revisa bien el detalle antes de permitirla.")
-                w.setObjectName("badgeWarn")
-                av.addWidget(w)
-            row = QHBoxLayout()
+                av.addWidget(TextView("Acción delicada: revisa bien el detalle antes de permitirla.", "plain", color=C["warn"], size="9pt"))
+            bw = QWidget()
+            row = FlowLayout(bw)
             cat = T.CATEGORIES.get(ev["category"], ev["category"])
             for text, kind, dec in (("Permitir", "primary", "allow"), ("Siempre «%s» aquí" % cat.lower(), None, "allow_category"),
                                     ("Denegar", "danger", "deny")):
                 b = btn(text, kind)
                 b.clicked.connect(lambda _=False, d=dec: self._decide(d, on_decide))
                 row.addWidget(b)
-            row.addStretch(1)
-            av.addLayout(row)
+            av.addWidget(bw)
             wrap = QWidget()
             wl = QVBoxLayout(wrap)
             wl.setContentsMargins(10, 0, 10, 10)
@@ -418,7 +431,7 @@ class StepRow(QWidget):
             self._set("run")
 
     def _args(self, name, a):
-        kv = lambda k, val: lbl("<span style='color:%s'>%s:</span> %s" % (C["faint"], k, str(val).replace("<", "&lt;")))
+        kv = lambda k, val: TextView("<span style='color:%s'>%s:</span> %s" % (C["faint"], k, str(val).replace("&", "&amp;").replace("<", "&lt;")), "html")
         if name == "run_command":
             self.dl.addWidget(mono(a.get("command", "")))
             if a.get("cwd"):
@@ -560,7 +573,11 @@ class AssistantBlock(QWidget):
         ah.addStretch(1)
         self.stats = QLabel()
         self.stats.setObjectName("stats")
-        ah.addWidget(self.stats)
+        self.stats.setWordWrap(True)
+        self.stats.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.stats.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.stats.setMinimumWidth(60)
+        ah.addWidget(self.stats, 1)
         self.actions.hide()
         v.addWidget(self.actions)
         self.text = ""
@@ -585,8 +602,12 @@ class AssistantBlock(QWidget):
         else:
             self._end_think(ts)
             self.text += text
-            self.body.setText(self.text)
             self.body.show()
+            # el Markdown se vuelve a dibujar como mucho cada 90 ms: con modelos rapidos llegan decenas de trozos por segundo
+            if not getattr(self, "_render_t", None):
+                self._render_t = QTimer(self, singleShot=True, interval=90, timeout=lambda: self.body.setText(self.text))
+            if not self._render_t.isActive():
+                self._render_t.start()
 
     def _end_think(self, ts):
         if self.r_start and not self.r_end:
@@ -597,6 +618,10 @@ class AssistantBlock(QWidget):
         self.spin.stop()
         self.status.hide()
         self._end_think(ts)
+        if getattr(self, "_render_t", None):
+            self._render_t.stop()
+        if not text and self.text:
+            self.body.setText(self.text)            # ultimo trozo pendiente de dibujar
         if text:
             self.text = text
             self.body.setText(text)
@@ -629,13 +654,16 @@ def user_bubble(ev, compact=False):
         v.addWidget(ImageLabel(os.path.join(paths.IMG_DIR, n), 240, 160))
     for fname in ev.get("files") or []:
         fl = QHBoxLayout()
-        fl.addWidget(pix_label("acc_nuevo", C["acc"], 14))
-        fl.addWidget(lbl(fname, "muted"), 1)
+        fl.addWidget(pix_label("acc_nuevo", C["acc"], 14), 0, Qt.AlignTop)
+        fv = TextView(fname, "plain", color=C["mut"])
+        fv.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        fl.addWidget(fv, 1)
         v.addLayout(fl)
-    t = lbl(ev["text"])
-    t.setStyleSheet("font-size:10.5pt")
+    t = TextView(ev["text"], "plain", size="10.5pt")
+    t.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)     # la burbuja se ajusta al texto y se parte si no cabe
     v.addWidget(t)
-    h.addWidget(box)
+    box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+    h.addWidget(box, 100)
     return wrap
 
 
@@ -693,9 +721,9 @@ class PlanPanel(QFrame):
                 r.addWidget(sp)
             else:
                 r.addWidget(pix_label("ui_check", C["ok"], 12) if st == "completed" else QLabel("○"))
-            t = lbl(i.get("content", ""))
-            t.setStyleSheet("color:%s;%s" % (C["faint"] if st == "completed" else C["tx"], " text-decoration: line-through;" if st == "completed" else
-                                              " font-weight:600;" if st == "in_progress" else ""))
+            esc = str(i.get("content", "")).replace("&", "&amp;").replace("<", "&lt;")
+            style = "text-decoration: line-through;" if st == "completed" else "font-weight:600;" if st == "in_progress" else ""
+            t = TextView("<span style='%s'>%s</span>" % (style, esc), "html", color=C["faint"] if st == "completed" else C["tx"])
             r.addWidget(t, 1)
             self.bl.addWidget(row)
         self.show()
@@ -715,20 +743,16 @@ class QuestionCard(QFrame):
         v.setSpacing(8)
         hh = QHBoxLayout()
         hh.addWidget(pix_label("ui_ayuda", C["acc"], 16), 0, Qt.AlignTop)
-        q = lbl(ev["question"])
-        q.setStyleSheet("font-weight:600; font-size:10.5pt")
-        hh.addWidget(q, 1)
+        hh.addWidget(TextView(ev["question"], "plain", size="10.5pt", bold=True), 1)
         v.addLayout(hh)
         self.inputs = QWidget()
         il = QVBoxLayout(self.inputs)
         il.setContentsMargins(24, 0, 0, 0)
-        row = QHBoxLayout()
+        il.setSpacing(6)
         for o in ev.get("options") or []:
-            b = btn(o)
-            b.clicked.connect(lambda _=False, o=o: self._send(o, on_answer))
-            row.addWidget(b)
-        row.addStretch(1)
-        il.addLayout(row)
+            b = OptionRow(o)
+            b.clicked.connect(lambda o=o: self._send(o, on_answer))
+            il.addWidget(b)
         r2 = QHBoxLayout()
         self.free = QLineEdit()
         self.free.setPlaceholderText("Otra respuesta…")
@@ -737,7 +761,7 @@ class QuestionCard(QFrame):
         r2.addWidget(btn("Responder", "primary", lambda: self.free.text().strip() and self._send(self.free.text().strip(), on_answer)))
         il.addLayout(r2)
         v.addWidget(self.inputs)
-        self.answer_lbl = lbl("", "muted")
+        self.answer_lbl = TextView("", "plain", color=C["mut"])
         self.answer_lbl.hide()
         v.addWidget(self.answer_lbl)
         self.inputs.setVisible(live)
@@ -791,14 +815,12 @@ class EmptyState(QWidget):
         grid.setSpacing(8)
         cols = 1 if compact else 2
         for i, (ico, text) in enumerate(suggestions):
-            b = QPushButton(text)
-            b.setObjectName("suggestion")
-            b.setIcon(icon(ico, C["acc"], 16))
-            b.setIconSize(QSize(16, 16))
-            b.setCursor(Qt.PointingHandCursor)
+            b = OptionRow(text, ico, name="suggestion")
             b.setMinimumHeight(42 if compact else 48)
-            b.clicked.connect(lambda _=False, t=text: on_pick(t))
+            b.clicked.connect(lambda t=text: on_pick(t))
             grid.addWidget(b, i // cols, i % cols)
+        for c in range(cols):
+            grid.setColumnStretch(c, 1)
         v.addLayout(grid)
 
 
@@ -869,10 +891,13 @@ class ChatPanel(QWidget):
         v.setSpacing(0)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         holder = QWidget()
         holder.setObjectName("chatHolder")
+        holder.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)   # la columna nunca es mas ancha que el panel
         self.scroll.viewport().setObjectName("chatHolder")
         hl = QHBoxLayout(holder)
+        hl.setSizeConstraint(QLayout.SetNoConstraint)
         m = 14 if compact else 24
         hl.setContentsMargins(m, 12, m, 20)
         self.col = QWidget()
@@ -926,9 +951,10 @@ class ChatPanel(QWidget):
         bv = QVBoxLayout(self.box)
         bv.setContentsMargins(12, 10, 10, 8)
         bv.setSpacing(6)
-        self.thumbs = QHBoxLayout()
-        self.thumbs.addStretch(1)
-        bv.addLayout(self.thumbs)
+        self.thumbs_w = QWidget()
+        self.thumbs = FlowLayout(self.thumbs_w)
+        self.thumbs_w.hide()
+        bv.addWidget(self.thumbs_w)
         self.input = ComposerEdit()
         self.input.submit.connect(self.send)
         self.input.pasted_image.connect(lambda img: self._add_image(qimage=img))
@@ -1371,7 +1397,7 @@ class ChatPanel(QWidget):
         QTimer.singleShot(350, grab)
 
     def _render_thumbs(self):
-        while self.thumbs.count() > 1:
+        while self.thumbs.count():
             it = self.thumbs.takeAt(0)
             if it.widget():
                 it.widget().hide()
@@ -1385,7 +1411,7 @@ class ChatPanel(QWidget):
             im.setPixmap(QPixmap(os.path.join(paths.IMG_DIR, n)).scaled(72, 52, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             h.addWidget(im)
             h.addWidget(tbtn("ui_cerrar", "Quitar", lambda _=False, n=n: (self.pending_imgs.remove(n), self._render_thumbs()), size=12), 0, Qt.AlignTop)
-            self.thumbs.insertWidget(self.thumbs.count() - 1, w)
+            self.thumbs.addWidget(w)
         for f in getattr(self, "pending_files", []):
             w = QFrame()
             w.setObjectName("noteBox")
@@ -1393,10 +1419,13 @@ class ChatPanel(QWidget):
             h.setContentsMargins(8, 4, 2, 4)
             h.setSpacing(4)
             h.addWidget(pix_label("acc_nuevo", C["acc"], 13))
-            h.addWidget(QLabel(os.path.basename(f)))
+            nm = QLabel()
+            nm.setText(nm.fontMetrics().elidedText(os.path.basename(f), Qt.ElideMiddle, 170))
+            h.addWidget(nm)
             h.addWidget(tbtn("ui_cerrar", "Quitar", lambda _=False, f=f: (self.pending_files.remove(f), self._render_thumbs()), size=11))
             w.setToolTip(f)
-            self.thumbs.insertWidget(self.thumbs.count() - 1, w)
+            self.thumbs.addWidget(w)
+        self.thumbs_w.setVisible(bool(self.pending_imgs or getattr(self, "pending_files", [])))
         self._sync_send()
 
     def _sync_send(self):
@@ -2692,6 +2721,21 @@ def _dark_titlebar(w):
         theme.titlebar_colors(w)
 
 
+def install_spanish(app):
+    """Textos propios de Qt en español: menús contextuales (Copiar, Seleccionar todo…) y botones estándar (Sí/No)."""
+    from PySide6.QtCore import QTranslator, QLibraryInfo
+    folders = [QLibraryInfo.path(QLibraryInfo.TranslationsPath)]
+    if osys.FROZEN:
+        folders.append(os.path.join(getattr(sys, "_MEIPASS", paths.APP_DIR), "PySide6", "translations"))
+    for d in folders:
+        tr = QTranslator(app)
+        if tr.load("qtbase_es", d):
+            app.installTranslator(tr)
+            app._tr_es = tr
+            return True
+    return False
+
+
 def selftest(app):
     """Comprobación del paquete (se usa en la compilación automática): carga todo y cierra con código 0 si está bien."""
     import importlib.util, platform as _pf
@@ -2711,6 +2755,7 @@ def selftest(app):
     ok("certifi", lambda: os.path.isfile(__import__("certifi").where()) or "sin certificados")
     ok("hardware", lambda: HW.summary(HW.detect()) and None)
     ok("engine", lambda: bool(P.LLAMA_PATTERNS) or "sin motores")
+    ok("spanish", lambda: install_spanish(app) or "sin traducción de Qt al español")
     ok("tools", lambda: len(T.TOOLS) >= 25 or "faltan herramientas")
     ok("shell", lambda: "JAYTH_OK" in __import__("subprocess").run(osys.shell_argv("echo JAYTH_OK"), capture_output=True, text=True,
                                                                      timeout=60, **osys.popen_kwargs()).stdout or "la terminal no responde")
@@ -2741,6 +2786,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setDesktopFileName("jayth")        # Linux: enlaza la ventana con jayth.desktop (icono correcto en el dock/panel)
+    install_spanish(app)
     cfg = core.SET.snapshot()
     theme.apply(app, cfg["theme"], cfg["font_scale"])
     app.setWindowIcon(make_icon())

@@ -63,6 +63,15 @@ QPushButton#winBtn:hover { background: %(hover)s; color: %(tx)s; }
 QPushButton#winClose:hover { background: %(close)s; color: #FFFFFF; }
 QPushButton#suggestion { background: transparent; border: 1px solid %(line)s; border-radius: 12px; padding: 10px 14px; text-align: left; color: %(mut)s; }
 QPushButton#suggestion:hover { background: %(panel)s; color: %(tx)s; border-color: %(faint)s; }
+QFrame#suggestion { background: transparent; border: 1px solid %(line)s; border-radius: 12px; }
+QFrame#suggestion QLabel { color: %(mut)s; background: transparent; border: none; }
+QFrame#suggestion:hover { background: %(panel)s; border-color: %(faint)s; }
+QFrame#suggestion:hover QLabel { color: %(tx)s; }
+QFrame#optionRow { background: %(panel)s; border: 1px solid %(line)s; border-radius: 8px; }
+QFrame#optionRow QLabel { background: transparent; border: none; }
+QFrame#optionRow:hover, QFrame#optionRow:focus { border-color: %(acc)s; background: %(hover)s; }
+QFrame#optionRow:disabled QLabel { color: %(faint)s; }
+QTextBrowser#textView { background: transparent; border: none; padding: 0; }
 QPushButton#updateBtn { background: %(acc_bg)s; color: %(acc)s; border: 1px solid %(acc)s; border-radius: 8px; padding: 6px 10px; text-align: left; }
 QPushButton#updateBtn:hover { background: %(acc)s; color: %(on_acc)s; }
 QTabWidget::pane { border: none; }
