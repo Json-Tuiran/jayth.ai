@@ -64,8 +64,9 @@ DEFAULTS = {
     "response_language": "auto",
     # agente
     "workspace": paths.WORKSPACE_DEFAULT,
-    "mode": "ask",               # readonly | ask | edits | auto
-    "thinking": False,
+    "mode": "auto",              # readonly | plan | ask | edits | auto (por defecto el agente decide solo)
+    "thinking": False,           # se deriva del esfuerzo (se conserva por compatibilidad)
+    "effort": "",                # low | medium | high: cuanto razona el modelo antes de responder ("" = segun 'thinking')
     "max_tokens": 4096,
     "max_steps": 30,
     "temperature": 0.7,
@@ -221,10 +222,28 @@ def model_title(m):
 
 
 def model_quant(m):
+    """Variante del modelo (Q4_K_M…): la guardada al instalarlo; si no consta, la que indique el nombre del archivo."""
     from .provision import quant_label
+    if m and m.get("quant"):
+        return str(m["quant"])
     f = os.path.basename(m.get("file") or m.get("path") or "") if m else ""
     q = quant_label(f) if f else ""
     return "" if q == f else q
+
+
+EFFORTS = [("low", "Bajo", "Responde directo, sin razonar antes. Lo más rápido."),
+           ("medium", "Medio", "Razona antes de responder. Mejor en tareas con varios pasos."),
+           ("high", "Alto", "Razona a fondo y con más margen de respuesta. Para lo difícil; es lo más lento.")]
+
+
+def effort_of(cfg):
+    """Esfuerzo efectivo: el elegido o, si no hay, el que corresponde al antiguo ajuste 'Pensar'."""
+    e = cfg.get("effort") or ""
+    return e if e in ("low", "medium", "high") else ("medium" if cfg.get("thinking") else "low")
+
+
+def set_effort(e):
+    SET.update({"effort": e, "thinking": e != "low"})
 
 
 def llm_base(cfg):
@@ -305,7 +324,9 @@ class Session:
         run = A.Run(self.data, cfg, self.add_event, paths.IMG_DIR)
         self.run = run
         if self.title == DEFAULT_TITLE:
-            self.title = (text or "Archivo adjunto")[:48]
+            # titulo provisional; al terminar la primera respuesta el propio modelo propone uno breve
+            self.title = re.sub(r"\s+", " ", text or "Archivo adjunto").strip()[:48]
+            self.data["title_auto"] = 2          # intentos que quedan
 
         def go():
             try:
@@ -313,8 +334,26 @@ class Session:
             finally:
                 self.run = None
                 self.save()
+            self._auto_title(cfg)
         threading.Thread(target=go, daemon=True).start()
         return None
+
+    def _auto_title(self, cfg):
+        """El modelo elegido pone nombre a la conversacion (una vez; si falla, se reintenta en la siguiente respuesta)."""
+        left = self.data.get("title_auto") or 0
+        if not left or self.run is not None:
+            return
+        self.data["title_auto"] = left - 1
+        t = A.make_title(cfg, self.data["messages"])
+        if t and self.data.get("title_auto") is not None:   # None: el usuario la renombro mientras tanto
+            self.title = t
+            self.data["title_auto"] = 0
+        self.save()
+
+    def rename(self, title):
+        self.title = title.strip()[:80]
+        self.data["title_auto"] = None
+        self.save()
 
     def answer(self, cid, text):
         """Respuesta del usuario a una pregunta del agente (ask_user)."""
@@ -522,7 +561,8 @@ class LLM:
             cfg = SET.snapshot()
             payload = {"model": "local", "stream": False, "max_tokens": 1, "cache_prompt": True, "temperature": 0,
                        "messages": [{"role": "system", "content": A.system_prompt(cfg)}, {"role": "user", "content": "hola"}],
-                       "tools": A.tool_schemas(cfg), "chat_template_kwargs": {"enable_thinking": bool(cfg["thinking"])}}
+                       "tools": A.tool_schemas(cfg), "chat_template_kwargs": {"enable_thinking": effort_of(cfg) != "low",
+                                                                               "reasoning_effort": effort_of(cfg)}}
             c = http.client.HTTPConnection("127.0.0.1", int(cfg["llm_port"]), timeout=10)
             c.connect()
             c.sock.settimeout(None)

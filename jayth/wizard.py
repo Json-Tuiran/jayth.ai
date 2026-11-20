@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QGrid
                                QButtonGroup, QStackedWidget, QComboBox, QLineEdit, QTableWidget, QTableWidgetItem, QAbstractItemView,
                                QHeaderView, QCheckBox, QSpinBox, QDoubleSpinBox, QFileDialog, QProgressBar, QMessageBox, QPlainTextEdit,
                                QTabWidget, QScrollArea, QFrame)
-from . import core, paths, osys, hardware as HW, provision as P, agent as A
+from . import core, paths, osys, hardware as HW, provision as P, agent as A, convert as CV
 from .theme import C, restyle, icon
 from PySide6.QtCore import QSize
 
@@ -100,7 +100,7 @@ class SetupWizard(QDialog):
         super().__init__(parent)
         self.preset_repo = repo           # p. ej. al pulsar «Ver» en el aviso de un modelo nuevo
         self.setWindowTitle("Asistente de configuración")
-        self.resize(780, 600)
+        self.resize(940, 720)
         self.cfg = core.SET.snapshot()
         self.hw = None
         self.info = None
@@ -124,9 +124,6 @@ class SetupWizard(QDialog):
             self.stack.addWidget(p)
         self.timer = QTimer(self, interval=300, timeout=self._tick)
         self.history = []
-        if repo:
-            self.repo.insertItem(0, repo, repo)
-            self.repo.setCurrentIndex(0)
         self.go(self.p_model if start == "model" else self.p_welcome, push=False)
         run_bg(HW.detect, self._got_hw)
 
@@ -159,7 +156,7 @@ class SetupWizard(QDialog):
     def _model(self):
         w, v = self._page("Elige el modelo", "Puedes usar cualquier modelo en formato GGUF. Luego podrás añadir más desde «Modelos».")
         self.r_hf = QRadioButton("Descargar un modelo de Hugging Face")
-        self.r_file = QRadioButton("Usar un archivo .gguf que ya tengo")
+        self.r_file = QRadioButton("Usar un modelo que ya tengo (GGUF, original de Hugging Face, Ollama o LM Studio)")
         self.r_ext = QRadioButton("Conectar a un servidor externo compatible con OpenAI (Ollama, LM Studio, otro PC…)")
         grp = QButtonGroup(w)
         for r, ico in ((self.r_hf, "acc_descargar"), (self.r_file, "act_carpeta_abierta"), (self.r_ext, "hub_conectar")):
@@ -174,17 +171,48 @@ class SetupWizard(QDialog):
         hf = QWidget()
         hv = QVBoxLayout(hf)
         hv.setContentsMargins(22, 4, 0, 0)
-        row = QHBoxLayout()
-        self.repo = QComboBox()
-        self.repo.setEditable(True)
-        for c in P.CATALOG:
-            self.repo.addItem("%s  —  %s" % (c["repo"], c["name"]), c["repo"])
-        self.repo.setToolTip("Escribe cualquier repositorio GGUF, por ejemplo usuario/Modelo-GGUF")
-        row.addWidget(self.repo, 1)
-        row.addWidget(btn("Ver archivos", cb=self.load_repo))
-        hv.addLayout(row)
+        hv.setSpacing(6)
+        # catalogo: modelos abiertos de todos los laboratorios, marcados segun este equipo
+        frow = QHBoxLayout()
+        self.cat_search = QLineEdit()
+        self.cat_search.setPlaceholderText("Buscar modelo o laboratorio (Gemma, DeepSeek, Mistral, Llama…)")
+        self.cat_search.setClearButtonEnabled(True)
+        self.cat_search.textChanged.connect(self._fill_catalog)
+        frow.addWidget(self.cat_search, 1)
+        self.cat_filter = QComboBox()
+        for t, k in (("Todos los modelos", "all"), ("Caben en tu equipo", "fit"), ("Rápidos en tu equipo", "fast"),
+                     ("Con visión (imágenes)", "vision"), ("Para programar", "code"), ("Con razonamiento", "reason")):
+            self.cat_filter.addItem(t, k)
+        self.cat_filter.currentIndexChanged.connect(self._fill_catalog)
+        frow.addWidget(self.cat_filter)
+        self.cat_lab = QComboBox()
+        self.cat_lab.addItem("Todos los laboratorios", "")
+        self.cat_lab.currentIndexChanged.connect(self._fill_catalog)
+        frow.addWidget(self.cat_lab)
+        hv.addLayout(frow)
+        self.cat_table = QTableWidget(0, 5)
+        self.cat_table.setHorizontalHeaderLabels(["Modelo", "Laboratorio", "Descarga", "Velocidad aprox.", "En tu equipo"])
+        self.cat_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        for c in range(1, 5):
+            self.cat_table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        self.cat_table.verticalHeader().setVisible(False)
+        self.cat_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.cat_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.cat_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.cat_table.setMinimumHeight(190)
+        self.cat_table.itemSelectionChanged.connect(self._cat_selected)
+        hv.addWidget(self.cat_table, 2)
+        orow = QHBoxLayout()
+        orow.addWidget(lbl("¿Otro? Repositorio de Hugging Face:", "muted"))
+        self.repo_edit = QLineEdit()
+        self.repo_edit.setPlaceholderText("usuario/Modelo-GGUF")
+        self.repo_edit.returnPressed.connect(lambda: self.load_repo(self.repo_edit.text().strip()))
+        orow.addWidget(self.repo_edit, 1)
+        orow.addWidget(btn("Ver", cb=lambda: self.load_repo(self.repo_edit.text().strip())))
+        hv.addLayout(orow)
         self.repo_desc = lbl("", "muted")
         hv.addWidget(self.repo_desc)
+        self.catalog, self.cur_repo = None, ""
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Cuantización", "Tamaño", "En tu equipo"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -193,7 +221,18 @@ class SetupWizard(QDialog):
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.itemSelectionChanged.connect(self._update_disk)
+        self.table.setMinimumHeight(120)
+        hv.addWidget(lbl("Variante (versión más ligera o más fiel del modelo):", "muted"))
         hv.addWidget(self.table, 1)
+        self.chk_orig = QCheckBox()
+        self.chk_orig.hide()
+        self.chk_orig.toggled.connect(self._toggle_original)
+        self.base_repo = None
+        hv.addWidget(self.chk_orig)
+        self.chk_del_orig = QCheckBox("Borrar el original descargado al terminar la conversión (libera espacio)")
+        self.chk_del_orig.setChecked(True)
+        self.chk_del_orig.hide()
+        hv.addWidget(self.chk_del_orig)
         self.chk_mm = QCheckBox("Incluir visión (permite que el modelo vea imágenes y capturas de pantalla)")
         hv.addWidget(self.chk_mm)
         self.dest = QLineEdit(self.cfg["models_dir"])
@@ -208,12 +247,39 @@ class SetupWizard(QDialog):
         fv = QFormLayout(lf)
         fv.setContentsMargins(22, 4, 0, 0)
         self.f_model = QLineEdit()
+        self.f_model.setPlaceholderText("archivo .gguf, o carpeta del modelo original (config.json + .safetensors)")
+        self.f_model.textChanged.connect(self._detect_local)
         self.f_mm = QLineEdit()
         self.f_mm.setPlaceholderText("opcional")
-        fv.addRow("Modelo (.gguf):", browse_row(self.f_model, parent=self))
-        fv.addRow("Proyector de visión (mmproj):", browse_row(self.f_mm, parent=self))
-        fv.addRow(lbl("Si el modelo está dividido en varias partes, elige la primera (…-00001-of-…).", "muted"))
+        mrow = QHBoxLayout()
+        mrow.addWidget(self.f_model, 1)
+        mrow.addWidget(btn("Archivo…", cb=self._pick_file))
+        mrow.addWidget(btn("Carpeta…", cb=self._pick_folder))
+        self.found = QComboBox()
+        self.found.addItem("Buscando modelos de Ollama y LM Studio…", None)
+        self.found.activated.connect(self._use_found)
+        fv.addRow("Encontrados:", self.found)
+        fv.addRow("Modelo:", mrow)
+        self.f_info = lbl("", "muted")
+        fv.addRow("", self.f_info)
+        self.f_quant = QComboBox()
+        self.f_quant.currentIndexChanged.connect(self._local_space)
+        self.f_quant_row = QWidget()
+        qr = QHBoxLayout(self.f_quant_row)
+        qr.setContentsMargins(0, 0, 0, 0)
+        qr.addWidget(self.f_quant, 1)
+        fv.addRow("Convertir a:", self.f_quant_row)
+        self.f_quant_row.setVisible(False)
+        self.f_mm_row = QWidget()
+        mmr = browse_row(self.f_mm, parent=self)
+        mmr.setContentsMargins(0, 0, 0, 0)
+        self.f_mm_row.setLayout(mmr)
+        fv.addRow("Proyector de visión (mmproj):", self.f_mm_row)
+        fv.addRow(lbl("Un modelo original se convierte a GGUF en tu equipo con las herramientas oficiales de llama.cpp "
+                      "(se preparan una sola vez). Tu carpeta original no se modifica.", "muted"))
+        self.local = {}
         self.sub.addWidget(lf)
+        run_bg(CV.other_apps_models, self._got_found)
         # -- servidor externo
         ex = QWidget()
         ev = QFormLayout(ex)
@@ -298,8 +364,8 @@ class SetupWizard(QDialog):
         self.b_next.setEnabled(page is not self.p_progress)
         self.b_cancel.setText("Cancelar descarga" if page is self.p_progress else "Cancelar")
         self.b_cancel.setVisible(page is not self.p_done)
-        if page is self.p_model and self.info is None and self.repo.count():
-            self.load_repo()
+        if page is self.p_model and self.catalog is None:
+            self.load_catalog()
         if page is self.p_engine:
             self._eng_state()
 
@@ -341,34 +407,173 @@ class SetupWizard(QDialog):
             self.backend.setCurrentIndex(max(0, self.backend.findData(self.cfg["backend"])))
         if self.info:
             self._fill_table()
+        if self.catalog:
+            self._rate_catalog()
+
+    # --- catalogo de modelos (todos los laboratorios)
+    def load_catalog(self, refresh=False):
+        self.catalog = []
+        self.repo_desc.setText("Buscando modelos abiertos publicados en Hugging Face…")
+        run_bg(lambda: P.catalog(os.path.join(paths.DATA, "catalog.json"), refresh=refresh), self._got_catalog)
+
+    def _got_catalog(self, cat):
+        if isinstance(cat, Exception) or not cat:
+            self.repo_desc.setText("No pude leer el catálogo (¿sin internet?). Escribe un repositorio a mano.")
+            return
+        self.catalog = cat
+        labs = sorted({e["lab"] for e in cat}, key=lambda l: (l == "Otros", l.lower()))
+        self.cat_lab.blockSignals(True)
+        for l in labs:
+            self.cat_lab.addItem(l, l)
+        self.cat_lab.blockSignals(False)
+        self._rate_catalog(select=True)
+
+    def _rate_catalog(self, select=False):
+        if not self.catalog:
+            return
+        hw = self.hw or {"ram": 16 * HW.GB, "vram": 0, "unified": False}
+        self.rated = HW.rate_models(self.catalog, hw, vision=True)
+        self.rec_model = HW.recommend_model(self.rated) if self.hw else None
+        self._fill_catalog()
+        if select or not self.cur_repo:
+            want = self.preset_repo or (self.rec_model["repo"] if self.rec_model else None)
+            if want and not self._select_repo(want):
+                self.repo_edit.setText(want)
+                self.load_repo(want)
+
+    def _select_repo(self, repo):
+        for i in range(self.cat_table.rowCount()):
+            it = self.cat_table.item(i, 0)
+            if it and it.data(Qt.UserRole) == repo:
+                self.cat_table.selectRow(i)
+                self.cat_table.scrollToItem(it, QAbstractItemView.PositionAtCenter)
+                return True
+        return False
+
+    def _fill_catalog(self):
+        if not getattr(self, "rated", None):
+            return
+        q = self.cat_search.text().strip().lower()
+        flt, lab = self.cat_filter.currentData(), self.cat_lab.currentData()
+        rec = self.rec_model
+        order = {"ok": 0, "tight": 1, "no": 2}
+        rows = []
+        for e in self.rated:
+            if q and q not in (e["name"] + " " + e["lab"] + " " + e["repo"]).lower():
+                continue
+            if lab and e["lab"] != lab:
+                continue
+            if (flt == "fit" and e["fit"] == "no") or (flt == "fast" and (e["fit"] == "no" or e["speed"] < 3)) or \
+               (flt == "vision" and not e["vision"]) or (flt == "code" and "código" not in e["tags"]) or \
+               (flt == "reason" and "razonamiento" not in e["tags"]):
+                continue
+            rows.append(e)
+        rows.sort(key=lambda e: (e is not rec, order[e["fit"]], -HW.capability(e)))
+        from PySide6.QtGui import QColor
+        self.cat_table.blockSignals(True)
+        self.cat_table.setRowCount(len(rows))
+        for i, e in enumerate(rows):
+            name = e["name"] + ("   ★ recomendado" if e is rec else "")
+            it = QTableWidgetItem(name)
+            it.setData(Qt.UserRole, e["repo"])
+            tip = ["%s · %s" % (e["repo"], e["lab"]), "%.1f mil millones de parámetros" % (e["params"] / 1e9)]
+            if e["active"] < e["params"] * 0.6:
+                tip.append("MoE: usa ~%.1f mil millones por palabra (por eso va más rápido de lo que su tamaño sugiere)" % (e["active"] / 1e9))
+            if e.get("ctx"):
+                tip.append("Contexto máximo: %s tokens" % format(int(e["ctx"]), ",").replace(",", "."))
+            if e["tags"]:
+                tip.append("Destaca en: " + ", ".join(e["tags"]))
+            it.setToolTip("\n".join(tip))
+            self.cat_table.setItem(i, 0, it)
+            self.cat_table.setItem(i, 1, QTableWidgetItem(e["lab"]))
+            self.cat_table.setItem(i, 2, QTableWidgetItem(HW.human(e["size"])))
+            sp = e["speed"]
+            st = QTableWidgetItem(("~%.0f tok/s" % sp) if sp >= 10 else ("~%.1f tok/s" % sp) if sp >= 0.1 else "—")
+            st.setToolTip("Velocidad aproximada al escribir la respuesta en este equipo (estimación).")
+            self.cat_table.setItem(i, 3, st)
+            if self.hw:
+                fi = QTableWidgetItem(FIT_TXT[e["fit"]])
+                fi.setForeground(QColor(FIT_COL[e["fit"]]))
+                self.cat_table.setItem(i, 4, fi)
+        self.cat_table.blockSignals(False)
+        if self.cur_repo:
+            self.cat_table.blockSignals(True)
+            self._select_repo(self.cur_repo)
+            self.cat_table.blockSignals(False)
+        n_ok = sum(e["fit"] == "ok" for e in self.rated)
+        if not self.cur_repo:
+            self.repo_desc.setText("%d modelos de %d laboratorios · %d caben en tu equipo." % (len(self.rated), len({e["lab"] for e in self.rated}), n_ok))
+
+    def _cat_selected(self):
+        rows = self.cat_table.selectionModel().selectedRows()
+        if rows:
+            repo = self.cat_table.item(rows[0].row(), 0).data(Qt.UserRole)
+            if repo and repo != self.cur_repo:
+                self.load_repo(repo)
 
     # --- Hugging Face
     def _repo_text(self):
-        i = self.repo.currentIndex()
-        if i >= 0 and self.repo.itemText(i) == self.repo.currentText():
-            return self.repo.itemData(i)
-        return self.repo.currentText().split()[0].strip() if self.repo.currentText().strip() else ""
+        return self.cur_repo
 
-    def load_repo(self):
-        repo = self._repo_text()
+    def load_repo(self, repo=None, keep_choice=False):
+        repo = (repo or self.cur_repo or "").strip()
         if not repo:
             return
-        self.repo_desc.setText("Consultando %s…" % repo)
+        if repo.startswith("https://huggingface.co/"):
+            repo = "/".join(repo.split("/")[3:5])
+        if not keep_choice:                       # otro modelo: se vuelve al GGUF preparado
+            self.base_repo = None
+            self.chk_orig.hide()
+            self.chk_orig.blockSignals(True)
+            self.chk_orig.setChecked(False)
+            self.chk_orig.blockSignals(False)
+        self.cur_repo = repo
+        self.info = None
+        self.repo_desc.setText("Consultando las variantes de %s…" % repo)
         self.table.setRowCount(0)
-        cat = next((c for c in P.CATALOG if c["repo"] == repo), None)
-        run_bg(lambda: P.hf_files(repo), lambda r: self._got_repo(r, cat))
+        cat = next((e for e in (getattr(self, "rated", None) or []) if e["repo"] == repo), None)
+        run_bg(lambda: P.hf_files(repo), lambda r: repo == self.cur_repo and self._got_repo(r, cat))
 
     def _got_repo(self, r, cat):
         if isinstance(r, Exception):
             self.repo_desc.setText("No pude leer el repositorio (¿sin internet o nombre incorrecto?): %s" % r)
             self.info = None
             return
+        orig = r.get("original")
+        if not r["quants"] and orig:              # formato original: se descarga y se convierte a GGUF en este equipo
+            ci = CV.describe_config(orig.get("config") or {}, orig["size"])
+            if ci.get("why_not"):
+                self.repo_desc.setText("✗ " + ci["why_not"])
+                self.info = None
+                return
+            r["orig_info"] = ci
+            r["quants"], _ = self._targets(ci["params"])
+            r["mmproj"] = []
+            self.info = r
+            self.repo_desc.setText("Formato original de Hugging Face (%s, %d archivos) · %s · ~%.1f mil millones de parámetros%s. "
+                                   "Jayth lo descarga y lo convierte a GGUF en tu equipo con las herramientas oficiales de llama.cpp." % (
+                                       HW.human(orig["size"]), len(orig["files"]), ci["arch"], ci["params"] / 1e9, " · con visión" if ci["vision"] else ""))
+            self.chk_mm.setEnabled(ci["vision"])
+            self.chk_mm.setChecked(ci["vision"])
+            self.chk_mm.setText("Incluir visión (se convierte también el proyector de imágenes)" if ci["vision"] else "Este modelo no tiene visión (solo texto)")
+            self.chk_del_orig.show()
+            self._fill_table()
+            return
+        self.chk_del_orig.hide()
         if not r["quants"]:
-            self.repo_desc.setText("Ese repositorio no contiene archivos GGUF.")
+            self.repo_desc.setText("Ese repositorio no contiene archivos GGUF ni el modelo en formato original.")
             self.info = None
             return
         self.info = r
-        self.repo_desc.setText((cat["desc"] + "  " if cat else "") + "%d variantes disponibles." % len(r["quants"]))
+        if self.base_repo is None and not self.chk_orig.isChecked():
+            run_bg(lambda repo=r["repo"]: P.base_model(repo), lambda b, repo=r["repo"]: self._got_base(repo, b))
+        desc = ""
+        if cat:
+            desc = "%s · %s · %.1f mil millones de parámetros%s. " % (cat["name"], cat["lab"], cat["params"] / 1e9,
+                                                                      (" (MoE, ~%.1f activos)" % (cat["active"] / 1e9)) if cat["active"] < cat["params"] * 0.6 else "")
+            if cat is getattr(self, "rec_model", None):
+                desc += "Recomendado para tu equipo: el más capaz que cabe y va fluido. "
+        self.repo_desc.setText(desc + "%d variantes disponibles." % len(r["quants"]))
         self.chk_mm.setEnabled(bool(r["mmproj"]))
         self.chk_mm.setChecked(bool(r["mmproj"]))
         if not r["mmproj"]:
@@ -383,7 +588,7 @@ class SetupWizard(QDialog):
         self.table.setRowCount(len(qs))
         sel = 0
         for i, q in enumerate(qs):
-            name = q["label"] + ("   ★ recomendada" if rec is q else "")
+            name = q["label"] + (" · se crea al convertir" if q.get("convert") else "") + ("   ★ recomendada" if rec is q else "")
             it = QTableWidgetItem(name)
             it.setData(Qt.UserRole, i)
             self.table.setItem(i, 0, it)
@@ -412,6 +617,101 @@ class SetupWizard(QDialog):
         need = (q["size"] if q else 0) + (self.info["mmproj"][0]["size"] if self.info and self.info["mmproj"] and self.chk_mm.isChecked() else 0)
         warn = "  ⚠ no hay espacio suficiente" if q and need > free else ""
         self.disk_lbl.setText("Necesita %s · libre en esa unidad: %s%s" % (HW.human(need), HW.human(free), warn))
+
+    # --- modelo que ya tengo: GGUF, carpeta original de Hugging Face, Ollama o LM Studio
+    def _pick_file(self):
+        p, _ = QFileDialog.getOpenFileName(self, "Elegir modelo", os.path.dirname(self.f_model.text()) or os.path.expanduser("~"),
+                                           "Modelos (*.gguf *.safetensors config.json);;Todos (*.*)")
+        if p:
+            self.f_model.setText(os.path.normpath(p))
+
+    def _pick_folder(self):
+        p = QFileDialog.getExistingDirectory(self, "Elegir la carpeta del modelo", self.f_model.text() or os.path.expanduser("~"))
+        if p:
+            self.f_model.setText(os.path.normpath(p))
+
+    def _got_found(self, items):
+        self.found.clear()
+        if isinstance(items, Exception) or not items:
+            self.found.addItem("No hay modelos de Ollama ni de LM Studio en este equipo", None)
+            self.found.setEnabled(False)
+            return
+        self.found.addItem("Elige uno (%d encontrados)…" % len(items), None)
+        for it in items:
+            self.found.addItem("%s · %s (%s)" % (it["source"], it["name"], HW.human(it["size"])), it)
+
+    def _use_found(self, i):
+        it = self.found.itemData(i)
+        if it:
+            self.f_model.setText(it["path"])
+            self.f_mm.setText(it.get("mmproj") or "")
+            self.local["name"] = it["name"]
+
+    def _detect_local(self):
+        path = self.f_model.text().strip()
+        self.local = {} if not path else CV.detect(path)
+        fmt = self.local.get("format")
+        self.f_quant_row.setVisible(fmt == "hf" and not self.local.get("why_not"))
+        self.f_mm_row.setVisible(fmt != "hf")
+        if not path:
+            return self.f_info.setText("")
+        if fmt == "missing":
+            return self.f_info.setText("No existe.")
+        if fmt == "gguf":
+            if self.local.get("mmproj") and not self.f_mm.text():
+                self.f_mm.setText(self.local["mmproj"])
+            return self.f_info.setText("✓ GGUF listo para usar · %s" % HW.human(self.local["size"]))
+        if fmt == "other" or self.local.get("why_not"):
+            return self.f_info.setText("✗ " + self.local.get("why_not", "Formato no compatible."))
+        info = self.local
+        self.f_info.setText("Formato original de Hugging Face (%s, %s) · %s · ~%.1f mil millones de parámetros%s." % (
+            info["weights"], HW.human(info["size"]), info["arch"], info["params"] / 1e9, " · con visión" if info["vision"] else ""))
+        self._fill_targets(self.f_quant, info["params"])
+        self._local_space()
+
+    def _targets(self, params):
+        """Variantes a las que se puede convertir un original, con su tamaño estimado y si cabe en este equipo."""
+        qs = [{"label": q, "file": q, "size": CV.target_size(params, q), "desc": d, "convert": True} for q, b, d in CV.QUANT_TARGETS]
+        rec = HW.recommend_quant(qs, self.hw) if self.hw else qs[0]
+        return qs, rec
+
+    def _fill_targets(self, combo, params):
+        qs, rec = self._targets(params)
+        combo.blockSignals(True)
+        combo.clear()
+        for q in sorted(qs, key=lambda q: q["size"]):
+            fit = HW.classify(q["size"], self.hw) if self.hw else "ok"
+            combo.addItem("%s · ~%s · %s · %s%s" % (q["label"], HW.human(q["size"]), FIT_TXT[fit], q["desc"], "   ★ recomendada" if q is rec else ""), q)
+        combo.setCurrentIndex(max(0, next((i for i in range(combo.count()) if combo.itemData(i) is rec), 0)))
+        combo.blockSignals(False)
+
+    def _local_space(self):
+        q = self.f_quant.currentData()
+        if not q or self.local.get("format") != "hf":
+            return
+        need, final = CV.plan_space(self.local, q["label"])
+        dest = self.cfg["models_dir"] or paths.MODELS_DEFAULT
+        free = HW.disk_free(dest)
+        self.f_info.setText(self.f_info.text().split("\n")[0] + "\nResultado ~%s en %s · durante la conversión hacen falta ~%s libres (hay %s)%s." % (
+            HW.human(final), dest, HW.human(need), HW.human(free), "  ⚠ no hay espacio suficiente" if need > free else ""))
+
+    # --- formato original en vez del GGUF ya preparado
+    def _toggle_original(self, on):
+        if on and self.base_repo:
+            self.gguf_repo = self.cur_repo
+            self.load_repo(self.base_repo, keep_choice=True)
+        elif not on and getattr(self, "gguf_repo", None):
+            self.load_repo(self.gguf_repo, keep_choice=True)
+
+    def _got_base(self, repo, base):
+        if repo != self.cur_repo or isinstance(base, Exception) or not base:
+            return
+        self.base_repo = base
+        self.chk_orig.blockSignals(True)
+        self.chk_orig.setChecked(False)
+        self.chk_orig.blockSignals(False)
+        self.chk_orig.setText("Prefiero el formato original (%s) y convertirlo en mi equipo (descarga más grande)" % base)
+        self.chk_orig.show()
 
     # --- externo
     def test_ext(self):
@@ -444,12 +744,20 @@ class SetupWizard(QDialog):
             self.chk_start.hide()
             return self.go(self.p_done)
         if self.r_file.isChecked():
-            if not os.path.isfile(self.f_model.text()):
-                return QMessageBox.warning(self, "Archivo no encontrado", "Elige un archivo .gguf existente.")
-            if self.f_mm.text() and not os.path.isfile(self.f_mm.text()):
+            fmt = (self.local or {}).get("format")
+            if fmt not in ("gguf", "hf"):
+                return QMessageBox.warning(self, "Modelo no válido", "Elige un archivo .gguf o la carpeta de un modelo original de Hugging Face.")
+            if self.local.get("why_not"):
+                return QMessageBox.warning(self, "Formato no compatible", self.local["why_not"])
+            if fmt == "hf" and self.f_quant.currentData():
+                need, _ = CV.plan_space(self.local, self.f_quant.currentData()["label"])
+                if need > HW.disk_free(self.cfg["models_dir"] or paths.MODELS_DEFAULT):
+                    return QMessageBox.warning(self, "Falta espacio", "Para convertir hacen falta ~%s libres en %s." % (
+                        HW.human(need), self.cfg["models_dir"] or paths.MODELS_DEFAULT))
+            if fmt == "gguf" and self.f_mm.text() and not os.path.isfile(self.f_mm.text()):
                 return QMessageBox.warning(self, "Archivo no encontrado", "El proyector de visión indicado no existe.")
         elif self._selected_quant() is None:
-            return QMessageBox.warning(self, "Elige una variante", "Pulsa «Ver archivos» y elige una cuantización de la lista.")
+            return QMessageBox.warning(self, "Elige una variante", "Elige un modelo de la lista y espera a que aparezcan sus variantes.")
         self.go(self.p_engine)
 
     def _llama_ok(self):
@@ -477,7 +785,36 @@ class SetupWizard(QDialog):
             job.add("Motor: ya instalado", lambda pr, st, res: res.update(llama_exe=self.cfg["llama_exe"], llama_tag=self.cfg["llama_tag"]))
         else:
             job.add("Motor llama.cpp (%s)" % dict(BACKENDS)[backend], lambda pr, st, res: self._job_llama(backend, pr, st, res))
-        if self.r_hf.isChecked():
+        threads = self.threads.value()
+        if self.r_hf.isChecked() and self._selected_quant() and self._selected_quant().get("convert"):
+            # formato original: descargar sus archivos, preparar el convertidor y crear el GGUF en este equipo
+            q, info = self._selected_quant(), self.info
+            models = self.dest.text() or paths.MODELS_DEFAULT
+            src = os.path.join(models, info["repo"].replace("/", "__") + "__original")
+            out = os.path.join(models, info["repo"].replace("/", "__") + "__gguf")
+            files = info["original"]["files"]
+            big = [f for f in files if f["size"] > 50_000_000]
+            small = [f for f in files if f not in big]
+            job.add("Archivos de configuración del original", lambda pr, st, res: [
+                P.download(P.hf_url(info["repo"], f["file"]), os.path.join(src, f["file"]), f["size"], "", pr, st) for f in small])
+            for k, f in enumerate(big):
+                job.add("Original · parte %d de %d" % (k + 1, len(big)) if len(big) > 1 else "Modelo original",
+                        lambda pr, st, res, f=f: P.download(P.hf_url(info["repo"], f["file"]), os.path.join(src, f["file"]), f["size"], f["sha256"], pr, st),
+                        size=f["size"])
+            self._conversion_steps(job, src, out, q["label"], self.chk_mm.isChecked(), threads, delete_src=self.chk_del_orig.isChecked(),
+                                   name=P.pretty_name(info["repo"]))
+            self.pending_model = {"id": re.sub(r"[^\w.-]+", "_", info["repo"] + "_" + q["label"]), "name": P.pretty_name(info["repo"]),
+                                  "quant": q["label"], "path": "", "mmproj": "", "repo": info["repo"], "file": "", "size": int(q["size"]),
+                                  "added": time.time(), "converted_from": "original"}
+        elif self.r_file.isChecked() and (self.local or {}).get("format") == "hf":
+            q = self.f_quant.currentData()
+            info = self.local
+            out = os.path.join(self.dest.text() or paths.MODELS_DEFAULT, re.sub(r"[^\w.-]+", "_", info["name"]) + "__gguf")
+            self._conversion_steps(job, info["path"], out, q["label"], info.get("vision"), threads, delete_src=False, name=info["name"])
+            self.pending_model = {"id": re.sub(r"[^\w.-]+", "_", "local_" + info["name"] + "_" + q["label"]), "name": info["name"],
+                                  "quant": q["label"], "path": "", "mmproj": "", "repo": "", "file": "", "size": int(q["size"]),
+                                  "added": time.time(), "converted_from": info["path"]}
+        elif self.r_hf.isChecked():
             q, info = self._selected_quant(), self.info
             folder = os.path.join(self.dest.text() or paths.MODELS_DEFAULT, info["repo"].replace("/", "__"))
             for k, part in enumerate(q["parts"]):
@@ -493,13 +830,32 @@ class SetupWizard(QDialog):
                                   "mmproj": os.path.join(folder, os.path.basename(mm["file"])) if mm else "",
                                   "repo": info["repo"], "file": q["file"], "size": q["size"], "added": time.time()}
         else:
-            p = os.path.normpath(self.f_model.text())
-            self.pending_model = {"id": re.sub(r"[^\w.-]+", "_", "local_" + os.path.basename(p)), "name": P.pretty_name(os.path.basename(p)),
+            p = os.path.normpath((self.local or {}).get("path") or self.f_model.text())
+            self.pending_model = {"id": re.sub(r"[^\w.-]+", "_", "local_" + os.path.basename(p)),
+                                  "name": (self.local or {}).get("name") or P.pretty_name(os.path.basename(p)),
                                   "quant": P.quant_label(os.path.basename(p)), "path": p, "mmproj": os.path.normpath(self.f_mm.text()) if self.f_mm.text() else "",
                                   "repo": "", "file": os.path.basename(p), "size": os.path.getsize(p), "added": time.time()}
         self.pending_cfg = {"backend": "cpu" if self.chk_own.isChecked() and backend == "cpu" else backend, "threads": self.threads.value(),
                             "n_ctx": self.ctx.currentData(), "models_dir": self.dest.text() or paths.MODELS_DEFAULT}
         self._start_job(job)
+
+    def _conversion_steps(self, job, src, out, quant, vision, threads, delete_src=False, name=""):
+        """Pasos para pasar un original de Hugging Face a GGUF: herramientas (una vez), conversion y reduccion, vision."""
+        def tools(pr, st, res):
+            exe = res.get("llama_exe") or self.cfg["llama_exe"]
+            if CV.tools_ready(CV.llama_build(exe)):
+                pr(1, 1, "ya preparadas")
+                return
+            CV.ensure_tools(exe, pr, st)
+
+        def conv(pr, st, res):
+            exe = res.get("llama_exe") or self.cfg["llama_exe"]
+            model, mm = CV.convert_model(src, out, quant, exe, vision=vision, threads=threads, progress=pr, stop=st, name=name)
+            res.update(model_path=model, mmproj_path=mm)
+            if delete_src:
+                shutil.rmtree(src, ignore_errors=True)
+        job.add("Herramientas de conversión (solo la primera vez)", tools)
+        job.add("Convertir a GGUF y crear la variante %s%s" % (quant, " + visión" if vision else ""), conv)
 
     def _job_llama(self, backend, pr, st, res):
         rel = P.llama_release(backend)
@@ -604,6 +960,9 @@ class SetupWizard(QDialog):
         self._install()
 
     def _finish(self, res):
+        if res.get("model_path"):                 # modelo convertido desde el formato original
+            self.pending_model.update(path=res["model_path"], mmproj=res.get("mmproj_path") or "", file=os.path.basename(res["model_path"]),
+                                      size=os.path.getsize(res["model_path"]))
         core.SET.update(dict(self.pending_cfg, llama_exe=res["llama_exe"], llama_tag=res.get("llama_tag", ""), llm_mode="local", setup_done=True))
         core.SET.add_model(self.pending_model, activate=True)
         self.done_lbl.setText("Modelo «%s» instalado y activo.\n\nArchivo: %s%s\nMotor: %s (%s)" % (

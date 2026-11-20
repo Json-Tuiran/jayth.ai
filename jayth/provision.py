@@ -6,13 +6,6 @@ from . import osys
 UA = {"User-Agent": "Jayth (+python-urllib)"}
 CHUNK = 1 << 20
 
-# Modelos sugeridos en el asistente. Cualquier otro repositorio GGUF de Hugging Face tambien sirve.
-CATALOG = [
-    {"name": "Qwen3.8-27B", "repo": "unsloth/Qwen3.8-27B-GGUF",
-     "desc": "Multimodal (texto e imagen), muy capaz en código y tareas de agente. 27B parámetros."},
-]
-
-
 class Cancelled(Exception):
     pass
 
@@ -21,6 +14,138 @@ def get_json(url, timeout=30):
     req = urllib.request.Request(url, headers=dict(UA, Accept="application/json"))
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
+
+
+# ---------------------------------------------------------------- catalogo de modelos abiertos (todos los laboratorios)
+# Se construye solo a partir de Hugging Face (repositorios GGUF publicados) y se guarda en cache para usarlo sin internet.
+# Cualquier otro repositorio GGUF tambien sirve escribiendolo a mano.
+CATALOG_SOURCES = ("unsloth", "ggml-org")
+LABS = [(r"^(qwen|qwq)", "Alibaba (Qwen)"), (r"^(gemma|medgemma|codegemma|shieldgemma|t5gemma)", "Google"),
+        (r"nemotron|^nvidia", "NVIDIA"), (r"(^|-)llama|^codellama", "Meta"),
+        (r"^(mistral|magistral|devstral|ministral|mixtral|codestral|pixtral|voxtral)", "Mistral AI"), (r"^deepseek", "DeepSeek"),
+        (r"^phi", "Microsoft"), (r"^gpt-oss", "OpenAI"), (r"^granite", "IBM"), (r"^(glm|chatglm|codegeex)", "Zhipu AI (Z.ai)"),
+        (r"^(kimi|moonlight)", "Moonshot AI"), (r"^minimax", "MiniMax"), (r"^smollm", "Hugging Face"), (r"^(olmo|tulu|molmo)", "Ai2"),
+        (r"^ernie", "Baidu"), (r"^hunyuan", "Tencent"), (r"^seed", "ByteDance"), (r"^lfm", "Liquid AI"), (r"^falcon", "TII"),
+        (r"^exaone", "LG AI Research"), (r"^(command|aya|c4ai|north)", "Cohere"), (r"^apriel", "ServiceNow"), (r"^jamba", "AI21 Labs"),
+        (r"^intern", "Shanghai AI Lab"), (r"^yi-", "01.AI"), (r"^(ling|ring)-", "inclusionAI"), (r"^step", "StepFun"),
+        (r"^(arcee|afm|trinity)", "Arcee AI"), (r"^(baichuan)", "Baichuan"), (r"^(openchat|openhermes|hermes)", "Nous Research"),
+        (r"^mimo", "Xiaomi"), (r"^longcat", "Meituan"), (r"^dots", "rednote"), (r"^minicpm", "OpenBMB"), (r"^hy-", "Tencent"),
+        (r"^smol", "Hugging Face"), (r"^moondream", "Moondream"), (r"gemma", "Google"), (r"^autoglm", "Zhipu AI (Z.ai)")]
+# parametros activos de MoE conocidos cuyo nombre no los indica (para estimar bien la velocidad)
+KNOWN_ACTIVE = [(r"(?i)deepseek-(v3|r1|v4)", 37e9), (r"(?i)kimi-k", 32e9), (r"(?i)^glm-4\.[5-9](?!.*(air|flash))", 32e9),
+                (r"(?i)^glm-5", 40e9), (r"(?i)glm-4\.\d-air", 12e9), (r"(?i)minimax-m", 10e9), (r"(?i)llama-4-(maverick|scout)", 17e9),
+                (r"(?i)longcat-flash", 27e9), (r"(?i)mimo-v2[\d.]*-flash", 15e9), (r"(?i)step-?3", 11e9), (r"(?i)mistral-large-3", 41e9),
+                (r"(?i)qwen3-coder-next|qwen3-next", 3e9), (r"(?i)glm-4\.7-flash", 3e9)]
+_JUNK_REPO = re.compile(r"(?i)(test|tiny|stories\d|models-moved|spec-for|^vllm-|ocr|diffusion|for-testing|router-download)")
+_NOT_CHAT_PIPE = {"text-to-image", "image-to-image", "image-to-video", "text-to-video", "image-text-to-video", "text-to-speech",
+                  "text-to-audio", "automatic-speech-recognition", "audio-to-audio", "feature-extraction", "sentence-similarity",
+                  "image-classification", "object-detection", "depth-estimation", "image-segmentation"}
+_NOT_CHAT_ARCH = re.compile(r"^(flux|lumina|wan|ltx|qwen_image|moss_image|sd|sdxl|hunyuan_video|cogvideo|bert|nomic|jina|clip|whisper)", re.I)
+_NOT_CHAT_NAME = re.compile(r"(?i)(embed|rerank|[-_]tts|whisper|-image-|image-?\d|-video|z-image|flux|ltx-|wan\d|-MTP-|-MTP$|guard|safety)")
+OFFLINE_CATALOG = [   # si no hay internet ni cache: unos pocos conocidos de varios laboratorios
+    ("unsloth/Qwen3.5-4B-GGUF", 4.2e9, None, True), ("unsloth/Qwen3.5-9B-GGUF", 9.0e9, None, True),
+    ("unsloth/gemma-4-E4B-it-GGUF", 7.5e9, 4e9, True), ("unsloth/gemma-4-12b-it-GGUF", 11.9e9, None, True),
+    ("unsloth/gpt-oss-20b-GGUF", 20.9e9, 3.6e9, False), ("unsloth/Qwen3.6-35B-A3B-GGUF", 34.7e9, 3e9, True),
+    ("unsloth/gemma-4-26B-A4B-it-GGUF", 25.2e9, 4e9, True), ("unsloth/Qwen3.8-27B-GGUF", 27.3e9, None, True),
+    ("unsloth/Llama-3.2-3B-Instruct-GGUF", 3.2e9, None, False), ("unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", 30.5e9, 3.3e9, False),
+]
+
+
+def lab_of(name):
+    low = name.lower().split("/")[-1]
+    for pat, lab in LABS:
+        if re.search(pat, low):
+            return lab
+    return "Otros"
+
+
+def active_params(name, total):
+    """Parametros activos por palabra: en los MoE ('35B-A3B') o en los 'E4B' de Gemma son muchos menos que el total."""
+    m = re.search(r"(?i)(?:^|[-_ ])[AE](\d+(?:\.\d+)?)B(?:$|[-_ ])", name.split("/")[-1])
+    if m:
+        return min(total, float(m.group(1)) * 1e9)
+    if re.search(r"(?i)gpt-oss-20b", name):
+        return 3.6e9
+    if re.search(r"(?i)gpt-oss-120b", name):
+        return 5.1e9
+    base = name.split("/")[-1]
+    for pat, act in KNOWN_ACTIVE:
+        if re.search(pat, base):
+            return min(total, act)
+    return total
+
+
+def _entry(repo, total, active=None, vision=False, ctx=0, downloads=0, created="", pipeline=""):
+    name = pretty_name(repo)
+    act = active or active_params(repo, total)
+    tags = []
+    if vision:
+        tags.append("visión")
+    if re.search(r"(?i)coder|code|devstral|codestral", repo):
+        tags.append("código")
+    if re.search(r"(?i)thinking|reason|r1|magistral|qwq", repo):
+        tags.append("razonamiento")
+    if act < total * 0.6:
+        tags.append("MoE")
+    return {"repo": repo, "name": name, "lab": lab_of(repo), "params": total, "active": act, "vision": bool(vision),
+            "ctx": ctx, "downloads": downloads, "created": created, "tags": tags}
+
+
+def discover_models(limit=150):
+    """Modelos de chat GGUF publicados en Hugging Face (los mas descargados y los mas nuevos), sin generadores de
+    imagen/video ni embeddings. Devuelve [{repo, name, lab, params, active, vision, ctx, downloads, created, tags}]."""
+    seen, out = set(), []
+    fields = "&expand[]=gguf&expand[]=downloads&expand[]=createdAt&expand[]=pipeline_tag"
+    for author in CATALOG_SOURCES:
+        for sort in ("downloads", "createdAt"):
+            url = "https://huggingface.co/api/models?author=%s&filter=gguf&sort=%s&direction=-1&limit=%d%s" % (author, sort, limit, fields)
+            try:
+                items = get_json(url, timeout=20)
+            except Exception:
+                continue
+            for it in items:
+                rid = it.get("id") or ""
+                g = it.get("gguf") or {}
+                total = g.get("total") or 0
+                pipe = it.get("pipeline_tag") or ""
+                arch = g.get("architecture") or ""
+                if (not total or total < 2.5e8 or rid.lower() in seen or pipe in _NOT_CHAT_PIPE or _NOT_CHAT_ARCH.search(arch)
+                        or _NOT_CHAT_NAME.search(rid) or _JUNK_REPO.search(rid.split("/")[-1])):
+                    continue
+                key = pretty_name(rid).lower()
+                if key in seen:                # el mismo modelo publicado por dos fuentes: se queda el primero (unsloth)
+                    continue
+                seen.update({rid.lower(), key})
+                out.append(_entry(rid, float(total), vision=pipe in ("image-text-to-text", "any-to-any"), ctx=g.get("context_length") or 0,
+                                  downloads=it.get("downloads") or 0, created=str(it.get("createdAt") or "")[:10], pipeline=pipe))
+    return out
+
+
+def catalog(cache_path, max_age=24 * 3600, refresh=False):
+    """Catalogo con cache en disco: se renueva cada dia; sin internet usa la cache o una lista minima."""
+    try:
+        if not refresh and os.path.isfile(cache_path) and time.time() - os.path.getmtime(cache_path) < max_age:
+            with open(cache_path, encoding="utf-8") as f:
+                data = json.load(f)
+            if data:
+                return data
+    except (OSError, ValueError):
+        pass
+    try:
+        data = discover_models()
+        if data:
+            tmp = cache_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            os.replace(tmp, cache_path)
+            return data
+    except Exception:
+        pass
+    try:
+        with open(cache_path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return [_entry(r, t, a, v) for r, t, a, v in OFFLINE_CATALOG]
 
 
 # ---------------------------------------------------------------- Hugging Face
@@ -70,10 +195,17 @@ def hf_files(repo):
     if repo.startswith("https://huggingface.co/"):
         repo = "/".join(repo.split("/")[3:5])
     tree = get_json("https://huggingface.co/api/models/%s/tree/main?recursive=true" % repo)
-    groups, mmproj = {}, []
+    groups, mmproj, orig = {}, [], []
     for t in tree:
         p = t.get("path", "")
-        if t.get("type") != "file" or not p.lower().endswith(".gguf") or "imatrix" in p.lower():
+        if t.get("type") != "file":
+            continue
+        low = p.lower()
+        if "/" not in p and (low.endswith((".safetensors", ".json", ".txt", ".model", ".jinja", ".tiktoken", ".py")) or re.match(r"pytorch_model.*\.bin$", low)) \
+                and not low.endswith(".gguf"):
+            lfs = t.get("lfs") or {}
+            orig.append({"file": p, "size": int(lfs.get("size") or t.get("size") or 0), "sha256": lfs.get("oid") or ""})
+        if not low.endswith(".gguf") or "imatrix" in low:
             continue
         lfs = t.get("lfs") or {}
         f = {"file": p, "size": int(lfs.get("size") or t.get("size") or 0), "sha256": lfs.get("oid") or ""}
@@ -97,7 +229,29 @@ def hf_files(repo):
         quants.append(g)
     quants.sort(key=lambda q: q["size"])
     mmproj.sort(key=lambda f: (0 if "f16" in f["file"].lower() and "bf16" not in f["file"].lower() else 1, f["size"]))
-    return {"repo": repo, "quants": quants, "mmproj": mmproj}
+    # formato original (safetensors o PyTorch): se puede descargar y convertir a GGUF en el propio equipo
+    original = None
+    weights = [f for f in orig if f["file"].lower().endswith(".safetensors")] or [f for f in orig if f["file"].lower().endswith(".bin")]
+    if weights and any(f["file"] == "config.json" for f in orig):
+        files = weights + [f for f in orig if not f["file"].lower().endswith((".safetensors", ".bin"))]
+        original = {"files": files, "size": sum(f["size"] for f in weights), "config": {}}
+        try:
+            original["config"] = get_json(hf_url(repo, "config.json"), timeout=20)
+        except Exception:
+            pass
+    return {"repo": repo, "quants": quants, "mmproj": mmproj, "original": original}
+
+
+def base_model(repo):
+    """Repositorio original (formato de Hugging Face) del que sale un repo GGUF, segun su ficha (base_model)."""
+    try:
+        d = get_json("https://huggingface.co/api/models/%s" % repo, timeout=15)
+        bm = (d.get("cardData") or {}).get("base_model")
+        if isinstance(bm, list):
+            bm = bm[0] if bm else None
+        return bm if isinstance(bm, str) and "/" in bm else None
+    except Exception:
+        return None
 
 
 def hf_url(repo, file):

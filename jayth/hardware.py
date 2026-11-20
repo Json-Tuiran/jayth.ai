@@ -218,16 +218,89 @@ def classify(size, hw, vision=True):
     return "no"
 
 
+def bits_per_weight(label):
+    """Bits por peso aproximados de una cuantizacion (para comparar variantes)."""
+    s = (label or "").upper()
+    for pat, b in ((r"F32", 32), (r"BF16|F16|FP16", 16), (r"Q8", 8.5), (r"Q6", 6.6), (r"Q5", 5.5), (r"MXFP4", 4.3), (r"IQ4|Q4", 4.8),
+                   (r"Q3", 3.9), (r"IQ3", 3.4), (r"Q2", 3.0), (r"IQ2", 2.5), (r"IQ1|Q1", 1.8)):
+        if re.search(pat, s):
+            return b
+    return 6.0
+
+
+def fast_memory(hw, size):
+    """True si el modelo entero cabe en memoria rapida (VRAM de NVIDIA o memoria unificada de Apple)."""
+    return bool(hw.get("unified")) or (hw.get("vram", 0) and size <= hw["vram"] - 1.0 * GB)
+
+
 def recommend_quant(quants, hw, vision=True):
-    """De una lista de {file,size} elige la mas grande que cabe con margen (evitando las de 1-2 bits si hay otra)."""
+    """Variante recomendada: la de mas calidad que cabe con margen, pero nunca 16/32 bits (no mejoran a Q8 y son
+    mucho mas lentas) y, si el modelo corre en CPU, de la familia Q4 (la velocidad depende del tamaño)."""
     quants = [q for q in quants if not q.get("aux")] or quants
-    fit = [q for q in quants if classify(q["size"], hw, vision) == "ok"]
-    good = [q for q in fit if not re.search(r"IQ1|IQ2|Q2_", q["file"], re.I)]
+    if not quants:
+        return None
+    lab = lambda q: q.get("label") or q.get("file") or ""
+    base = [q for q in quants if bits_per_weight(lab(q)) < 16] or quants
+    fit = [q for q in base if classify(q["size"], hw, vision) == "ok"]
+    good = [q for q in fit if bits_per_weight(lab(q)) >= 3.4]          # evitar 1-2 bits si hay otra
     pool = good or fit
     if not pool:
-        return min(quants, key=lambda q: q["size"]) if quants else None
-    pool = [q for q in pool if q["size"] < 30 * GB] or pool    # mas alla de Q8 no aporta
-    return max(pool, key=lambda q: q["size"])
+        return min(quants, key=lambda q: q["size"])
+    gpu = fast_memory(hw, max(q["size"] for q in pool))
+    cap = 8.5 if gpu else 5.0
+    capped = [q for q in pool if bits_per_weight(lab(q)) <= cap] or pool
+    pref = [q for q in capped if re.search(r"(?i)(UD-)?Q4_K_(M|XL)$", lab(q).split()[0])]
+    if not gpu and pref:
+        return max(pref, key=lambda q: q["size"])
+    return max(capped, key=lambda q: q["size"])
+
+
+# ---------------------------------------------------------------- modelos del catalogo en este equipo
+Q4_BYTES = 0.61            # bytes por parametro de una Q4_K_M (~4.85 bits)
+
+
+def model_size(params):
+    """Tamaño aproximado de la descarga recomendada (Q4) de un modelo de 'params' parametros."""
+    return params * Q4_BYTES + 0.25 * GB
+
+
+def est_speed(entry, hw):
+    """Tokens por segundo aproximados al generar: la memoria se lee entera por cada palabra (solo los expertos activos
+    en los MoE). CPU de portatil ~14 GB/s utiles; GPU NVIDIA ~250 GB/s; memoria unificada de Apple ~90 GB/s."""
+    size = model_size(entry["params"])
+    bw = 250e9 if (hw.get("vram") and size <= hw["vram"] - 1.0 * GB) else (90e9 if hw.get("unified") else 14e9)
+    per_token = entry.get("active", entry["params"]) * Q4_BYTES
+    return 0.6 * bw / max(per_token, 1)
+
+
+def capability(entry):
+    """Capacidad aproximada para ordenar: en los MoE cuenta la media geometrica entre activos y totales."""
+    import math
+    return math.sqrt(entry["params"] * entry.get("active", entry["params"]))
+
+
+def rate_models(entries, hw, vision=False):
+    """Añade a cada modelo del catalogo: size (descarga Q4), fit (ok/tight/no) y speed (tok/s aprox.)."""
+    out = []
+    for e in entries:
+        e = dict(e)
+        e["size"] = model_size(e["params"])
+        e["fit"] = classify(e["size"], hw, vision and e.get("vision"))
+        e["speed"] = est_speed(e, hw)
+        out.append(e)
+    return out
+
+
+def recommend_model(rated, min_speed=3.0):
+    """El modelo mas capaz que cabe con margen y va a una velocidad comoda (>= ~3 tok/s, necesaria para un agente);
+    si ninguno llega, el mas rapido de los que caben."""
+    ok = [e for e in rated if e["fit"] == "ok"]
+    if not ok:
+        return None
+    fast = [e for e in ok if e["speed"] >= min_speed]
+    if fast:
+        return max(fast, key=lambda e: (capability(e), e.get("downloads", 0)))
+    return max(ok, key=lambda e: e["speed"])
 
 
 def human(n):

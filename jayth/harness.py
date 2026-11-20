@@ -276,34 +276,64 @@ def read_document(path, limit=60000):
 
 
 # ---------------------------------------------------------------- conectores MCP (Model Context Protocol, transporte stdio)
+MCP_PROTOCOL = "2025-06-18"
+
+
+class MCPError(RuntimeError):
+    pass
+
+
 class MCPServer:
-    """Cliente minimo de MCP: arranca el servidor, lista sus herramientas y las llama (JSON-RPC por stdin/stdout)."""
+    """Cliente de MCP por stdio: arranca el programa del conector, lista sus herramientas y las llama (JSON-RPC por lineas).
+    Si el conector se cae, se vuelve a arrancar una vez al llamarlo; sus mensajes de error (stderr) se guardan para
+    explicar por que fallo."""
 
     def __init__(self, name, command, args=(), env=None):
         self.name, self.command, self.args, self.env = name, command, list(args or []), dict(env or {})
         self.proc, self.tools, self.error = None, [], ""
         self._id, self._waiting, self._lock = 0, {}, threading.Lock()
+        self._stderr = []
 
-    def start(self, timeout=25):
+    def key(self):
+        return ("stdio", self.command, tuple(self.args), tuple(sorted(self.env.items())))
+
+    def alive(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def start(self, timeout=40):
         env = dict(os.environ, **self.env)
         cmd = [self.command] + self.args
         if osys.WIN and not os.path.splitext(self.command)[1]:
             cmd = ["cmd", "/c"] + cmd               # npx, uvx… son .cmd en Windows
         elif not osys.WIN and not shutil.which(self.command) and not os.path.isabs(self.command):
             cmd = osys.shell_argv(" ".join(shlex.quote(c) for c in cmd))   # npx/uvx instalados con nvm/brew: PATH de la shell de login
-        self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, **osys.popen_kwargs())
+        try:
+            self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, **osys.popen_kwargs())
+        except OSError as e:
+            raise MCPError("No se pudo ejecutar «%s»: %s. ¿Está instalado?" % (self.command, e.strerror or e))
+        self._stderr = []
         threading.Thread(target=self._reader, daemon=True).start()
-        self.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "Jayth", "version": "0.1"}}, timeout)
+        threading.Thread(target=self._err_reader, daemon=True).start()
+        self.request("initialize", {"protocolVersion": MCP_PROTOCOL, "capabilities": {}, "clientInfo": {"name": "Jayth", "version": "0.3"}}, timeout)
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        self.tools = self.request("tools/list", {}, timeout).get("tools", [])
+        self.tools = list_all_tools(self)
         return self.tools
 
     def _send(self, obj):
-        self.proc.stdin.write((json.dumps(obj) + "\n").encode("utf-8"))
-        self.proc.stdin.flush()
+        try:
+            self.proc.stdin.write((json.dumps(obj) + "\n").encode("utf-8"))
+            self.proc.stdin.flush()
+        except (OSError, ValueError):
+            raise MCPError(self._died())
+
+    def _died(self):
+        tail = " | ".join(l for l in self._stderr[-4:] if l)[:400]
+        return "El conector %s se cerró%s%s" % (self.name, (" (código %s)" % self.proc.returncode) if self.proc and self.proc.poll() is not None else "",
+                                                 (": " + tail) if tail else ".")
 
     def _reader(self):
-        for line in iter(self.proc.stdout.readline, b""):
+        proc = self.proc
+        for line in iter(proc.stdout.readline, b""):
             try:
                 msg = json.loads(line)
             except ValueError:
@@ -312,6 +342,14 @@ class MCPServer:
             if w is not None:
                 w["msg"] = msg
                 w["ev"].set()
+        for w in list(self._waiting.values()):     # el proceso termino: despierta a quien esperaba
+            w["ev"].set()
+
+    def _err_reader(self):
+        proc = self.proc
+        for line in iter(proc.stderr.readline, b""):
+            self._stderr.append(line.decode("utf-8", "replace").strip())
+            del self._stderr[:-30]
 
     def request(self, method, params, timeout=120):
         with self._lock:
@@ -319,31 +357,178 @@ class MCPServer:
             rid = self._id
         w = {"ev": threading.Event(), "msg": None}
         self._waiting[rid] = w
-        self._send({"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
-        if not w["ev"].wait(timeout):
+        try:
+            self._send({"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
+            end = time.time() + timeout
+            while not w["ev"].wait(0.25):
+                if not self.alive():
+                    raise MCPError(self._died())
+                if time.time() > end:
+                    raise MCPError("El conector %s no respondió a %s en %d s." % (self.name, method, timeout))
+        finally:
             self._waiting.pop(rid, None)
-            raise TimeoutError("El conector %s no respondió a %s" % (self.name, method))
-        self._waiting.pop(rid, None)
+        if w["msg"] is None:
+            raise MCPError(self._died())
         if "error" in w["msg"]:
-            raise RuntimeError(w["msg"]["error"].get("message", "error"))
+            raise MCPError(w["msg"]["error"].get("message", "error"))
         return w["msg"].get("result", {})
 
     def call(self, tool, arguments):
-        res = self.request("tools/call", {"name": tool, "arguments": arguments})
-        parts = []
-        for c in res.get("content", []):
-            if c.get("type") == "text":
-                parts.append(c.get("text", ""))
-            else:
-                parts.append("[%s]" % c.get("type"))
-        text = "\n".join(parts) or json.dumps(res.get("structuredContent", {}), ensure_ascii=False)
-        if res.get("isError"):
-            raise RuntimeError(text)
-        return text
+        if not self.alive():                       # se cayo: un reintento arrancandolo de nuevo
+            self.stop()
+            self.start()
+        return tool_result(self.request("tools/call", {"name": tool, "arguments": arguments}, timeout=300))
 
     def stop(self):
         if self.proc and self.proc.poll() is None:
             osys.kill_tree(self.proc.pid)
+
+
+class MCPHttpServer:
+    """Cliente de MCP remoto por HTTP («streamable HTTP»): POST con JSON-RPC; la respuesta llega como JSON o como
+    flujo SSE. Admite cabeceras propias (p. ej. Authorization: Bearer …) y la sesion Mcp-Session-Id."""
+
+    def __init__(self, name, url, headers=None):
+        self.name, self.url, self.headers = name, url, dict(headers or {})
+        self.tools, self.error, self.session = [], "", None
+        self._id, self._lock = 0, threading.Lock()
+
+    def key(self):
+        return ("http", self.url, tuple(sorted(self.headers.items())))
+
+    def alive(self):
+        return True
+
+    def _post(self, obj, timeout):
+        import urllib.request, urllib.error
+        h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream", "MCP-Protocol-Version": MCP_PROTOCOL}
+        h.update(self.headers)
+        if self.session:
+            h["Mcp-Session-Id"] = self.session
+        req = urllib.request.Request(self.url, data=json.dumps(obj).encode("utf-8"), headers=h, method="POST")
+        try:
+            r = urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            body = e.read(500).decode("utf-8", "replace")
+            if e.code in (401, 403):
+                raise MCPError("El conector %s rechazó la conexión (HTTP %d): revisa la clave o el token en sus cabeceras." % (self.name, e.code))
+            raise MCPError("El conector %s respondió HTTP %d: %s" % (self.name, e.code, body[:200]))
+        except Exception as e:
+            raise MCPError("No se pudo conectar con %s (%s): %s" % (self.name, self.url, getattr(e, "reason", e)))
+        self.session = r.headers.get("Mcp-Session-Id") or self.session
+        if obj.get("id") is None:
+            return None
+        ctype = r.headers.get("Content-Type", "")
+        if "text/event-stream" in ctype:           # flujo SSE: se lee hasta el mensaje con nuestro id
+            for line in r:
+                line = line.decode("utf-8", "replace").strip()
+                if line.startswith("data:"):
+                    try:
+                        msg = json.loads(line[5:].strip())
+                    except ValueError:
+                        continue
+                    if msg.get("id") == obj["id"]:
+                        return msg
+            raise MCPError("El conector %s cerró la respuesta sin contestar." % self.name)
+        raw = r.read()
+        return json.loads(raw.decode("utf-8")) if raw.strip() else {}
+
+    def request(self, method, params, timeout=120):
+        with self._lock:
+            self._id += 1
+            rid = self._id
+        msg = self._post({"jsonrpc": "2.0", "id": rid, "method": method, "params": params}, timeout)
+        if "error" in (msg or {}):
+            raise MCPError(msg["error"].get("message", "error"))
+        return (msg or {}).get("result", {})
+
+    def start(self, timeout=40):
+        self.session = None
+        self.request("initialize", {"protocolVersion": MCP_PROTOCOL, "capabilities": {}, "clientInfo": {"name": "Jayth", "version": "0.3"}}, timeout)
+        self._post({"jsonrpc": "2.0", "method": "notifications/initialized"}, timeout)
+        self.tools = list_all_tools(self)
+        return self.tools
+
+    def call(self, tool, arguments):
+        try:
+            return tool_result(self.request("tools/call", {"name": tool, "arguments": arguments}, timeout=300))
+        except MCPError as e:
+            if "404" in str(e) and self.session:   # la sesion caduco en el servidor: se abre otra y se reintenta
+                self.start()
+                return tool_result(self.request("tools/call", {"name": tool, "arguments": arguments}, timeout=300))
+            raise
+
+    def stop(self):
+        if self.session:
+            try:
+                import urllib.request
+                h = dict(self.headers, **{"Mcp-Session-Id": self.session})
+                urllib.request.urlopen(urllib.request.Request(self.url, headers=h, method="DELETE"), timeout=3)
+            except Exception:
+                pass
+        self.session = None
+
+
+def list_all_tools(srv, limit=500):
+    """tools/list con paginacion (nextCursor)."""
+    tools, cursor = [], None
+    for _ in range(20):
+        res = srv.request("tools/list", {"cursor": cursor} if cursor else {}, 40)
+        tools += res.get("tools", [])
+        cursor = res.get("nextCursor")
+        if not cursor or len(tools) >= limit:
+            break
+    return tools
+
+
+def tool_result(res):
+    """Resultado de tools/call para el modelo: texto, y la primera imagen como imagen (si el modelo tiene vision la ve)."""
+    import base64
+    parts, image = [], None
+    for c in res.get("content", []):
+        t = c.get("type")
+        if t == "text":
+            parts.append(c.get("text", ""))
+        elif t == "image" and c.get("data"):
+            if image is None:
+                try:
+                    image = base64.b64decode(c["data"])
+                except ValueError:
+                    pass
+            parts.append("[imagen %s]" % c.get("mimeType", ""))
+        elif t == "resource":
+            r = c.get("resource") or {}
+            parts.append(r.get("text") or "[recurso %s]" % r.get("uri", ""))
+        elif t == "resource_link":
+            parts.append("[enlace a recurso: %s %s]" % (c.get("name", ""), c.get("uri", "")))
+        else:
+            parts.append("[%s]" % t)
+    text = "\n".join(p for p in parts if p)
+    if not text and res.get("structuredContent") is not None:
+        text = json.dumps(res["structuredContent"], ensure_ascii=False)
+    if res.get("isError"):
+        raise MCPError(text or "El conector devolvió un error sin detalles.")
+    if text.lstrip()[:1] in ("{", "["):
+        try:
+            j = json.loads(text)
+        except ValueError:
+            j = None
+        # algunos conectores (p. ej. el de Blender) informan del fallo dentro de un JSON {"status": "error", "message": …}
+        if isinstance(j, dict) and str(j.get("status", "")).lower() == "error":
+            raise MCPError(str(j.get("message") or j.get("error") or text))
+        if j is not None and len(text) > 300:
+            # JSON compacto: mismo contenido sin sangrias ni saltos (ahorra mucho contexto a los modelos locales)
+            text = json.dumps(j, ensure_ascii=False, separators=(",", ":"))
+    if image is not None:
+        return {"text": text or "(imagen)", "image": image}
+    return text or "(sin contenido)"
+
+
+def make_server(s):
+    """Conector a partir de sus ajustes: local (command/args/env) o remoto (url/headers)."""
+    if s.get("url"):
+        return MCPHttpServer(s["name"], s["url"].strip(), s.get("headers"))
+    return MCPServer(s["name"], s["command"], s.get("args"), s.get("env"))
 
 
 MCP = {}            # nombre -> MCPServer en marcha
@@ -356,7 +541,7 @@ def _safe(s):
 
 def mcp_sync(servers):
     """Arranca/para los conectores segun los ajustes. Devuelve {nombre: error o ''}."""
-    want = {s["name"]: s for s in servers if s.get("enabled", True) and s.get("command")}
+    want = {s["name"]: s for s in servers if s.get("enabled", True) and (s.get("command") or s.get("url"))}
     status = {}
     with _MCP_LOCK:
         for n in list(MCP):
@@ -364,12 +549,13 @@ def mcp_sync(servers):
                 MCP.pop(n).stop()
         for n, s in want.items():
             cur = MCP.get(n)
-            if cur and cur.proc and cur.proc.poll() is None and (cur.command, cur.args) == (s["command"], list(s.get("args") or [])):
+            srv = make_server(s)
+            if cur and cur.alive() and cur.key() == srv.key():
                 status[n] = ""
                 continue
             if cur:
                 cur.stop()
-            srv = MCPServer(n, s["command"], s.get("args"), s.get("env"))
+                MCP.pop(n, None)
             try:
                 srv.start()
                 MCP[n] = srv
@@ -377,30 +563,54 @@ def mcp_sync(servers):
             except Exception as e:
                 srv.stop()
                 status[n] = str(e) or type(e).__name__
+    MCP_STATUS.clear()
+    MCP_STATUS.update(status)
     return status
+
+
+MCP_STATUS = {}     # nombre -> '' (conectado) o el error del ultimo intento
+
+
+_NAMES = {}         # nombre para el modelo -> (nombre del conector, nombre real de la herramienta)
+
+
+def _fn_names():
+    """Nombres unicos 'mcp__conector__herramienta' de hasta 64 caracteres (limite de la API). Si al recortar dos
+    herramientas quedaran iguales (p. ej. x_summary y x_summary_for_cli), se distinguen con un sufijo estable."""
+    import hashlib
+    out, used = {}, set()
+    for n, srv in MCP.items():
+        sv = re.sub(r"[^A-Za-z0-9_-]+", "_", n)[:16]
+        room = 64 - len("mcp____") - len(sv)
+        for t in srv.tools:
+            tn = re.sub(r"[^A-Za-z0-9_-]+", "_", t["name"])
+            fn = "mcp__%s__%s" % (sv, tn[:room])
+            if fn in used:
+                h = hashlib.sha1(t["name"].encode("utf-8")).hexdigest()[:6]
+                fn = "mcp__%s__%s_%s" % (sv, tn[:room - 7], h)
+            used.add(fn)
+            out[fn] = (n, t)
+    return out
 
 
 def mcp_schemas():
     out = []
-    for n, srv in MCP.items():
-        for t in srv.tools:
-            out.append({"type": "function", "function": {"name": "mcp__%s__%s" % (_safe(n), _safe(t["name"])),
-                                                         "description": ("[%s] " % n) + (t.get("description") or "")[:400],
-                                                         "parameters": t.get("inputSchema") or {"type": "object", "properties": {}}}})
+    _NAMES.clear()
+    for fn, (n, t) in _fn_names().items():
+        _NAMES[fn] = (n, t["name"])
+        out.append({"type": "function", "function": {"name": fn, "description": ("[%s] " % n) + (t.get("description") or "")[:600],
+                                                     "parameters": t.get("inputSchema") or {"type": "object", "properties": {}}}})
     return out
 
 
 def mcp_resolve(fn_name):
-    """'mcp__servidor__herramienta' -> (MCPServer, nombre real de la herramienta)."""
-    m = re.match(r"mcp__(.+?)__(.+)$", fn_name)
-    if not m:
+    """'mcp__conector__herramienta' -> (servidor, nombre real de la herramienta)."""
+    hit = _NAMES.get(fn_name)
+    if hit is None:
+        hit = next(((n, t["name"]) for fn, (n, t) in _fn_names().items() if fn == fn_name), None)
+    if hit is None or hit[0] not in MCP:
         return None, None
-    for n, srv in MCP.items():
-        if _safe(n) == m.group(1):
-            for t in srv.tools:
-                if _safe(t["name"]) == m.group(2):
-                    return srv, t["name"]
-    return None, None
+    return MCP[hit[0]], hit[1]
 
 
 def mcp_stop_all():

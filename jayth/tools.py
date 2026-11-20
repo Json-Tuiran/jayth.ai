@@ -1,7 +1,7 @@
 """Herramientas que el agente puede usar. Biblioteca estandar de Python; el control del PC usa la API de Windows
 directamente y, en macOS y Linux, mss + pynput (ver control_posix)."""
 import os, re, sys, json, time, html, struct, zlib, ctypes, subprocess, threading, fnmatch, base64
-import urllib.request, urllib.parse
+import urllib.request, urllib.parse, urllib.error
 from . import osys
 if osys.WIN:
     from ctypes import wintypes
@@ -22,9 +22,21 @@ class Abort(Exception):
 
 MAX_OUT = 10000
 TOOLS = {}
+
+# Nombres comprensibles para la interfaz (el modelo usa los internos)
+TOOL_LABELS = {
+    "read_file": "Leer archivos", "write_file": "Crear archivos", "edit_file": "Editar archivos", "multi_edit": "Editar varias partes",
+    "move_path": "Mover o renombrar", "delete_path": "Enviar a la papelera", "list_dir": "Ver carpetas", "search_files": "Buscar en archivos",
+    "run_command": "Ejecutar comandos", "open_target": "Abrir programas y archivos", "wait": "Esperar", "web_fetch": "Leer páginas web",
+    "web_search": "Buscar en internet", "download_file": "Descargar archivos", "screenshot": "Capturas de pantalla", "click": "Hacer clic",
+    "move_mouse": "Mover el ratón", "scroll": "Desplazar (rueda)", "type_text": "Escribir con el teclado", "press_keys": "Pulsar teclas",
+    "list_windows": "Ver ventanas abiertas", "focus_window": "Activar una ventana", "command_output": "Ver salida de procesos",
+    "stop_command": "Detener procesos", "read_document": "Leer documentos", "view_image": "Ver imágenes", "update_plan": "Plan de tareas",
+    "ask_user": "Preguntarte", "remember": "Recordar preferencias", "create_document": "Crear documentos (Word, Excel, PowerPoint, PDF)",
+}
 CATEGORIES = {"read": "Lectura", "write": "Escritura", "exec": "Ejecución", "net": "Red", "control": "Control del PC",
               "agent": "Agente", "mcp": "Conector"}
-WRITE_TOOLS = {"write_file", "edit_file", "multi_edit", "move_path", "delete_path"}   # crean punto de restauracion
+WRITE_TOOLS = {"write_file", "edit_file", "multi_edit", "move_path", "delete_path", "create_document"}   # crean punto de restauracion
 
 
 def clip(s, n=MAX_OUT):
@@ -82,7 +94,8 @@ def schemas(allowed_categories=None):
 
 
 # ---------------------------------------------------------------- seguridad
-DANGEROUS_CMD = [r"\bRemove-Item\b", r"(^|[\s;|&(])(del|erase|rmdir|rd|rm|ri)\s", r"\bformat(-volume)?\b", r"\bdiskpart\b",
+# (formatear un disco: «format C:» o Format-Volume; Format-Table/Format-List solo muestran datos y no deben pedir permiso)
+DANGEROUS_CMD = [r"\bRemove-Item\b", r"(^|[\s;|&(])(del|erase|rmdir|rd|rm|ri)\s", r"(^|[\s;|&(])format(\.com)?\s+[a-z]:", r"\bFormat-Volume\b", r"\bdiskpart\b",
                  r"\bshutdown\b", r"\b(Stop|Restart)-Computer\b", r"\breg(\.exe)?\s+(delete|add|import)\b",
                  r"\bSet-ItemProperty\b.*HK(LM|CU)", r"\bnet\s+user\b", r"\bInvoke-Expression\b|(^|[\s;|&(])iex(\s|$)",
                  r"\bbcdedit\b", r"\bcipher\b.*/w", r"\b(takeown|icacls)\b", r"\bSet-ExecutionPolicy\b",
@@ -119,12 +132,35 @@ def is_dangerous(name, args, ctx):
 
 
 # ---------------------------------------------------------------- archivos
+_SKIP = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".next", "target"}
+
+
+def missing(p, ctx=None):
+    """Error de archivo inexistente con sugerencias: los modelos pequeños suelen olvidar la subcarpeta
+    («notas.md» en vez de «informe/notas.md»); buscar ese nombre en la carpeta de trabajo les ahorra pasos."""
+    msg = "No existe el archivo: " + p
+    root = ctx.workspace if ctx is not None else os.path.dirname(p)
+    name = os.path.basename(p).lower()
+    found, t0 = [], time.time()
+    if name and root and os.path.isdir(root):
+        for r, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in _SKIP and not d.startswith(".")]
+            for f in files:
+                if f.lower() == name:
+                    found.append(os.path.relpath(os.path.join(r, f), root))
+            if len(found) >= 3 or time.time() - t0 > 1.5 or r.count(os.sep) - root.count(os.sep) > 6:
+                break
+    if found:
+        msg += ". ¿Quizás te refieres a: %s?" % ", ".join(found)
+    return ToolError(msg)
+
+
 @tool("read_file", "read", "Lee un archivo de texto y devuelve las líneas numeradas.",
       {"path": S("Ruta del archivo"), "offset": I("Línea inicial (por defecto 1)"), "limit": I("Máximo de líneas (por defecto 400)")}, ["path"])
 def read_file(a, ctx):
     p = ctx.path(a["path"])
     if not os.path.isfile(p):
-        raise ToolError("No existe el archivo: " + p)
+        raise missing(p, ctx)
     with open(p, "rb") as f:
         raw = f.read(5_000_000)
     if b"\0" in raw[:4096]:
@@ -172,9 +208,9 @@ def _apply_edit(text, old, new, replace_all=False):
     return (text.replace(old, new) if replace_all else text.replace(old, new, 1)), (n if replace_all else 1)
 
 
-def _read_text(p):
+def _read_text(p, ctx=None):
     if not os.path.isfile(p):
-        raise ToolError("No existe el archivo: " + p)
+        raise missing(p, ctx)
     with open(p, "r", encoding="utf-8", errors="replace", newline="") as f:
         return f.read()
 
@@ -189,7 +225,7 @@ def _write_text(p, text):
       ["path", "old", "new"])
 def edit_file(a, ctx):
     p = ctx.path(a["path"])
-    text, n = _apply_edit(_read_text(p), str(a["old"]), str(a["new"]), bool(a.get("replace_all")))
+    text, n = _apply_edit(_read_text(p, ctx), str(a["old"]), str(a["new"]), bool(a.get("replace_all")))
     _write_text(p, text)
     return "Editado %s (%d reemplazo%s)" % (p, n, "s" if n > 1 else "")
 
@@ -201,7 +237,7 @@ def edit_file(a, ctx):
       ["path", "edits"])
 def multi_edit(a, ctx):
     p = ctx.path(a["path"])
-    text = _read_text(p)
+    text = _read_text(p, ctx)
     edits = a.get("edits") or []
     if isinstance(edits, str):
         edits = json.loads(edits)
@@ -213,7 +249,8 @@ def multi_edit(a, ctx):
             raise ToolError("Edición %d de %d: %s (no se aplicó ningún cambio)" % (i, len(edits), err))
         total += n
     _write_text(p, text)
-    return "Editado %s (%d ediciones, %d reemplazos)" % (p, len(edits), total)
+    return "Editado %s (%d %s, %d %s)" % (p, len(edits), "edición" if len(edits) == 1 else "ediciones",
+                                          total, "reemplazo" if total == 1 else "reemplazos")
 
 
 @tool("move_path", "write", "Mueve o renombra un archivo o carpeta.", {"source": S("Ruta actual"), "dest": S("Ruta nueva")}, ["source", "dest"])
@@ -282,38 +319,77 @@ def _human(n):
         n /= 1024
 
 
-@tool("search_files", "read", "Busca texto (regex) dentro de archivos, o lista archivos por patrón glob si no das 'pattern'.",
+DOC_EXTS = (".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pdf")
+
+
+def _lines_of(fp):
+    """Lineas de texto de un archivo para buscar: documentos por su texto real; binarios, ninguna."""
+    ext = os.path.splitext(fp)[1].lower()
+    if ext in DOC_EXTS:
+        if os.path.getsize(fp) > 30_000_000:
+            return []
+        from . import harness
+        return harness.read_document(fp, 400000).splitlines()
+    if os.path.getsize(fp) > 2_000_000:
+        return []
+    with open(fp, "rb") as f:
+        raw = f.read()
+    if b"\0" in raw[:8192]:
+        return []                                   # binario (imagen, ejecutable…)
+    for enc in ("utf-8", "cp1252"):
+        try:
+            return raw.decode(enc).splitlines()
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", "replace").splitlines()
+
+
+@tool("search_files", "read", "Busca texto (regex, sin distinguir mayúsculas) dentro de archivos, también dentro de documentos "
+      "Word, Excel, PowerPoint y PDF; o lista archivos por patrón glob si no das 'pattern'.",
       {"pattern": S("Expresión regular a buscar (opcional)"), "path": S("Carpeta base"), "glob": S("Filtro de nombre, ej. *.py"), "max_results": I("Máximo de resultados (50)")})
 def search_files(a, ctx):
     base = ctx.path(a.get("path") or ".")
-    pat = re.compile(a["pattern"], re.I) if a.get("pattern") else None
+    if not os.path.isdir(base):
+        raise missing(base, ctx)
+    pat = None
+    if a.get("pattern"):
+        try:
+            pat = re.compile(a["pattern"], re.I)
+        except re.error:                            # p. ej. «precio (con IVA»: se busca tal cual
+            pat = re.compile(re.escape(a["pattern"]), re.I)
     gl = a.get("glob") or "*"
     mx = int(a.get("max_results") or 50)
-    skip = {".git", "node_modules", "__pycache__", ".venv", "venv"}
-    res = []
+    skip = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", "dist", "build"}
+    ws = os.path.abspath(ctx.workspace)
+
+    def short(fp):                                  # rutas cortas (relativas a la carpeta de trabajo) ahorran contexto
+        r = os.path.relpath(fp, ws) if os.path.abspath(fp).lower().startswith(ws.lower() + os.sep) else fp
+        return r
+    res, seen = [], 0
     for root, dirs, files in os.walk(base):
-        dirs[:] = [d for d in dirs if d not in skip]
-        for fn in files:
-            if not fnmatch.fnmatch(fn, gl):
+        dirs[:] = sorted(d for d in dirs if d not in skip)
+        for fn in sorted(files):
+            if not fnmatch.fnmatch(fn.lower(), gl.lower()):
                 continue
             fp = os.path.join(root, fn)
             if pat is None:
-                res.append(fp)
+                res.append(short(fp))
             else:
+                seen += 1
                 try:
-                    if os.path.getsize(fp) > 2_000_000:
-                        continue
-                    with open(fp, "r", encoding="utf-8", errors="strict") as f:
-                        for i, line in enumerate(f, 1):
-                            if pat.search(line):
-                                res.append("%s:%d: %s" % (fp, i, line.strip()[:200]))
-                                if len(res) >= mx:
-                                    break
+                    lines = _lines_of(fp)
                 except Exception:
                     continue
+                for i, line in enumerate(lines, 1):
+                    if pat.search(line):
+                        res.append("%s:%d: %s" % (short(fp), i, line.strip()[:200]))
+                        if len(res) >= mx:
+                            break
             if len(res) >= mx:
-                return "\n".join(res) + "\n...[máximo alcanzado]"
-    return "\n".join(res) or "Sin resultados."
+                return "\n".join(res) + "\n...[máximo alcanzado: afina la búsqueda con path o glob]"
+    if not res:
+        return "Sin resultados%s." % (" (revisados %d archivos)" % seen if pat else "")
+    return "\n".join(res)
 
 
 # ---------------------------------------------------------------- ejecucion
@@ -367,6 +443,9 @@ def run_command(a, ctx):
         _kill_tree(p.pid)
     th.join(2)
     out = b"".join(chunks).decode("utf-8", errors="replace").strip()
+    # sin espacios de relleno al final de cada linea ni filas vacias repetidas (las tablas de PowerShell rellenan mucho):
+    # menos tokens = el modelo local lee la salida antes
+    out = re.sub(r"\n{3,}", "\n\n", "\n".join(l.rstrip() for l in out.splitlines()))
     out = clip(out, ctx.max_out)
     if why:
         return (out + "\n" if out else "") + "[Proceso terminado: %s]" % why
@@ -405,13 +484,29 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
       "Accept-Language": "es,en;q=0.8"}
 
 
-def html_to_text(h):
-    h = re.sub(r"(?is)<(script|style|noscript|svg|head)[^>]*>.*?</\1>", " ", h)
-    h = re.sub(r"(?i)<br\s*/?>|</(p|div|li|tr|h[1-6]|section|article|ul|ol|table)>", "\n", h)
+def html_to_text(h, main=False):
+    """Texto legible de una pagina. main=True: solo el contenido principal (<main>/<article>), sin menus, barras
+    laterales ni pies, para que un modelo local no gaste su contexto en navegacion."""
+    h = re.sub(r"(?is)<(script|style|noscript|svg|head|template)[^>]*>.*?</\1>", " ", h)
+    if main:
+        for tag in ("main", "article"):
+            m = re.search(r"(?is)<%s\b[^>]*>(.*)</%s>" % (tag, tag), h)
+            if m and len(m.group(1)) > 500:
+                h = m.group(1)
+                break
+        else:
+            m = re.search(r"(?is)<(div|section)\b[^>]*role=[\"']main[\"'][^>]*>(.*)", h)
+            if m:
+                h = m.group(2)
+        h = re.sub(r"(?is)<(nav|aside|footer|header|form|button|select)\b[^>]*>.*?</\1>", " ", h)
+        h = re.sub(r"(?is)<(div|ul|section)\b[^>]*(class|id)=[\"'][^\"']*(toc|sidebar|sphinxsidebar|navbar|menu|breadcrumb|cookie|related)[^\"']*[\"'][^>]*>.*?</\1>", " ", h)
+    h = re.sub(r"(?i)<br\s*/?>|</(p|div|li|tr|h[1-6]|section|article|ul|ol|table|pre|blockquote)>", "\n", h)
+    h = re.sub(r"(?i)<(h[1-6])[^>]*>", "\n\n## ", h) if main else h
     h = re.sub(r"(?s)<[^>]+>", " ", h)
     h = html.unescape(h)
     h = re.sub(r"[ \t\r\f\v]+", " ", h)
-    h = re.sub(r"\n\s*\n+", "\n\n", h)
+    h = re.sub(r" *\n *", "\n", h)
+    h = re.sub(r"\n{3,}", "\n\n", h)
     return h.strip()
 
 
@@ -419,27 +514,56 @@ def _http_get(url, timeout=20, data=None, max_bytes=2_500_000):
     req = urllib.request.Request(url, data=data, headers=UA)
     try:
         r = urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as e:     # el servidor respondio, pero con error: eso le sirve al modelo
+        body = ""
+        try:
+            body = html_to_text(e.read(4000).decode("utf-8", "replace"))[:600]
+        except Exception:
+            pass
+        raise ToolError("El servidor respondió HTTP %d (%s) en %s%s" % (e.code, e.reason, url, ("\n" + body) if body else ""))
     except Exception as e:
-        raise ToolError("No se pudo acceder (¿sin conexión?): %s" % e)
+        reason = getattr(e, "reason", e)
+        if _is_local(url):
+            raise ToolError("No responde %s: %s. ¿Está en marcha el servidor? (revisa command_output si lo lanzaste en segundo plano)" % (url, reason))
+        raise ToolError("No se pudo acceder a %s (¿sin conexión o dirección incorrecta?): %s" % (url, reason))
     raw = r.read(max_bytes)
     ctype = r.headers.get("Content-Type", "")
     m = re.search(r"charset=([\w-]+)", ctype)
     return raw, ctype, (m.group(1) if m else "utf-8"), r.geturl()
 
 
-@tool("web_fetch", "net", "Descarga una página web y devuelve su texto (requiere internet).",
-      {"url": S("URL completa"), "max_chars": I("Máximo de caracteres (por defecto 6000)")}, ["url"])
+def _is_local(url):
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    return host in ("localhost", "::1", "0.0.0.0") or host.startswith("127.") or host.endswith((".localhost", ".test", ".local"))
+
+
+@tool("web_fetch", "net", "Descarga una página web y devuelve su texto principal (sin menús). Si sale cortada, vuelve a llamarla "
+      "con start para seguir leyendo. Con raw=true devuelve el código HTML tal cual (útil para revisar tu propia web). "
+      "Funciona también con servidores locales (http://127.0.0.1:puerto).",
+      {"url": S("URL completa"), "max_chars": I("Máximo de caracteres (por defecto 6000)"),
+       "start": I("Desde qué carácter seguir leyendo (para páginas largas)"), "raw": B("Devolver el HTML sin procesar")}, ["url"])
 def web_fetch(a, ctx):
-    raw, ctype, cs, final = _http_get(a["url"])
-    if not re.search(r"text|json|xml|html", ctype, re.I):
+    url = str(a["url"]).strip()
+    if not re.match(r"(?i)https?://", url):
+        url = ("http://" if re.match(r"(?i)(localhost|127\.|0\.0\.0\.0)", url) else "https://") + url
+    raw, ctype, cs, final = _http_get(url)
+    if not re.search(r"text|json|xml|html|javascript", ctype, re.I):
         return "Contenido no textual (%s, %d bytes). Usa download_file para guardarlo." % (ctype, len(raw))
     try:
         txt = raw.decode(cs, errors="replace")
     except LookupError:
         txt = raw.decode("utf-8", errors="replace")
-    if "html" in ctype.lower() or txt.lstrip()[:15].lower().startswith(("<!doctype", "<html")):
-        txt = html_to_text(txt)
-    return clip(txt, int(a.get("max_chars") or 6000))
+    is_html = "html" in ctype.lower() or txt.lstrip()[:15].lower().startswith(("<!doctype", "<html"))
+    if is_html and not a.get("raw"):
+        # webs de internet: solo el contenido principal; tu propia web en local: todo (botones, formularios…)
+        txt = html_to_text(txt, main=not _is_local(final))
+    mx = max(500, int(a.get("max_chars") or 6000))
+    start = max(0, int(a.get("start") or 0))
+    part = txt[start:start + mx]
+    rest = len(txt) - (start + mx)
+    head = "[%s · %d caracteres%s]\n" % (final, len(txt), (" · desde el %d" % start) if start else "")
+    tail = ("\n...[quedan %d caracteres: llama de nuevo con start=%d para seguir]" % (rest, start + mx)) if rest > 0 else ""
+    return head + part + tail
 
 
 def _search_brave(q, mx, key):
@@ -498,9 +622,10 @@ def web_search(a, ctx):
     if "anomaly" in page and "result__a" not in page:
         # DuckDuckGo pide un captcha a clientes automaticos: no se salta. Alternativa legitima: API de Wikipedia.
         wiki = _search_wikipedia(a["query"], mx)
-        note = ("[Aviso: DuckDuckGo bloquea la búsqueda automática, así que estos resultados son solo de Wikipedia. "
-                "Para buscar en toda la web, el usuario puede añadir una clave de Brave Search en Ajustes; "
-                "o usa web_fetch con una URL concreta.]\n")
+        note = ("[Aviso: sin una clave de búsqueda solo se puede buscar en Wikipedia (DuckDuckGo bloquea las búsquedas "
+                "automáticas). Si estos resultados no sirven, abre con web_fetch la página oficial que conozcas (documentación, "
+                "web del proyecto, GitHub…) y dile al usuario que con una clave gratuita de Brave Search en Ajustes > Herramientas "
+                "podrás buscar en toda la web.]\n")
         return note + (wiki or "Sin resultados en Wikipedia.")
     out = []
     for blk in page.split('class="result__a"')[1:]:
@@ -881,11 +1006,44 @@ def read_document(a, ctx):
     from . import harness
     p = ctx.path(a["path"])
     if not os.path.isfile(p):
-        raise ToolError("No existe el archivo: " + p)
+        raise missing(p, ctx)
     try:
         return clip(harness.read_document(p), ctx.max_out) or "(documento sin texto)"
     except RuntimeError as e:
         raise ToolError(str(e))
+
+
+@tool("create_document", "write",
+      "Crea un documento de oficina a partir de Markdown: Word (.docx), Excel (.xlsx), PowerPoint (.pptx) o PDF (.pdf); "
+      "el formato lo decide la extensión de 'path'. Markdown admitido: # títulos, párrafos con **negrita** y *cursiva*, "
+      "- viñetas, 1. listas, | tablas |, > citas, ```código```, ![pie](imagen.png) y <!-- salto de página -->. "
+      "Excel: cada tabla es una hoja (un ## antes de la tabla le pone nombre); números, 12 %, 45.000 € y fórmulas como =SUMA(B2:B9) "
+      "se guardan como tales. PowerPoint: cada # empieza una diapositiva con viñetas (y opcionalmente una tabla o una imagen).",
+      {"path": S("Ruta del archivo a crear, con extensión .docx, .xlsx, .pptx o .pdf"),
+       "content": S("Contenido en Markdown"), "title": S("Título del documento (opcional, para sus propiedades)")}, ["path", "content"])
+def create_document(a, ctx):
+    from . import office
+    p = ctx.path(a["path"])
+    ext = os.path.splitext(p)[1].lower()
+    if ext not in office.WRITERS:
+        raise ToolError("Extensión no admitida: «%s». Usa .docx, .xlsx, .pptx o .pdf (para texto o Markdown usa write_file)." % (ext or "sin extensión"))
+    existed = os.path.exists(p)
+    try:
+        info = office.create(p, str(a.get("content") or ""), str(a.get("title") or ""))
+    except PermissionError:
+        raise ToolError("No se puede escribir %s: ¿está abierto en Word, Excel o PowerPoint? Ciérralo o usa otro nombre." % p)
+    except ValueError as e:
+        raise ToolError(str(e))
+    kind = {".docx": "Word", ".xlsx": "Excel", ".pptx": "PowerPoint", ".pdf": "PDF"}[ext]
+    detail = ""
+    if info.get("hojas"):
+        detail = "; hojas: " + ", ".join("%s (%d filas)" % h for h in info["hojas"])
+    elif info.get("diapositivas"):
+        detail = "; %d diapositivas" % info["diapositivas"]
+    elif info.get("paginas"):
+        detail = "; %d páginas" % info["paginas"]
+    return "%s documento %s %s (%s%s). Puedes comprobarlo con read_document o abrirlo al usuario con open_target." % (
+        "Reemplazado" if existed else "Creado", kind, p, _human(os.path.getsize(p)), detail)
 
 
 @tool("view_image", "read", "Abre una imagen del disco (png, jpg, webp…) para verla (requiere un modelo con visión).",

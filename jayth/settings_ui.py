@@ -7,6 +7,31 @@ from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QForm
 from . import APP_NAME, __version__, core, paths, osys, hardware as HW, agent as A, tools as T
 from .theme import C, icon, pix
 from .wizard import SetupWizard, ModelsDialog, btn, lbl, browse_row, run_bg
+import shutil
+from html import escape as html_escape
+
+
+def short_paths(text):
+    """C:\\Users\\…\\carpeta\\archivo.py -> …\\archivo.py (los errores se leen mejor; la ruta completa va en el tooltip)."""
+    return re.sub(r"[A-Za-z]:\\[^\s'\"]+", lambda m: "…\\" + m.group(0).replace("\\\\", "\\").rstrip("\\").split("\\")[-1], text or "")
+
+# Conectores MCP conocidos: rellenan el formulario (el usuario revisa y pulsa «Añadir y probar»)
+MCP_TEMPLATES = [
+    {"label": "Archivos de una carpeta", "name": "Archivos", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "{carpeta}"],
+     "note": "Da acceso a la carpeta indicada (puedes cambiarla en los argumentos). Necesita Node.js."},
+    {"label": "Memoria (grafo de conocimiento)", "name": "Memoria", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-memory"],
+     "note": "El agente guarda y consulta datos entre conversaciones. Necesita Node.js."},
+    {"label": "Navegador web (Playwright)", "name": "Navegador", "command": "npx", "args": ["-y", "@playwright/mcp@latest"],
+     "note": "El agente abre y maneja un navegador real. Necesita Node.js."},
+    {"label": "Pensamiento paso a paso", "name": "Pensamiento", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+     "note": "Ayuda a los modelos pequeños a razonar problemas largos. Necesita Node.js."},
+    {"label": "Git (historial de un repositorio)", "name": "Git", "command": "uvx", "args": ["mcp-server-git", "--repository", "{carpeta}"],
+     "note": "Consulta el historial y los cambios de un repositorio. Necesita uv."},
+    {"label": "Leer páginas web (Fetch)", "name": "Fetch", "command": "uvx", "args": ["mcp-server-fetch"],
+     "note": "Descarga páginas web convertidas a texto. Necesita uv."},
+    {"label": "GitHub (remoto)", "name": "GitHub", "url": "https://api.githubcopilot.com/mcp/",
+     "note": "Pega abajo un token personal de GitHub (github.com/settings/tokens)."},
+]
 
 REPO = "Json-Tuiran/jayth.ai"
 NO_WINDOW = osys.NO_WINDOW
@@ -431,9 +456,9 @@ class SettingsDialog(QDialog):
             h.setStyleSheet("font-weight:600")
             box.addWidget(h)
             for n in names:
-                cb = QCheckBox(n)
+                cb = QCheckBox(T.TOOL_LABELS.get(n, n))      # nombre comprensible; el interno, en el tooltip
                 cb.setChecked(n not in off)
-                cb.setToolTip(T.TOOLS[n]["description"])
+                cb.setToolTip("%s\n(%s)" % (T.TOOLS[n]["description"], n))
                 cb.toggled.connect(lambda on, n=n: self._toggle_tool(n, on))
                 box.addWidget(cb)
             box.addStretch(1)
@@ -446,29 +471,80 @@ class SettingsDialog(QDialog):
         self.field(v, "brave_key", "Clave de Brave Search", "secret", help="Gratis en api.search.brave.com para uso personal.")
         self.field(v, "searxng_url", "URL de SearXNG", "text", placeholder="http://127.0.0.1:8888")
         self._section(v, "Conectores MCP")
-        v.addWidget(lbl("Amplían lo que puede hacer el agente con herramientas externas (GitHub, bases de datos, navegador, Notion…) mediante el "
-                        "estándar Model Context Protocol. Cada conector es un programa que se arranca en tu equipo.", "faint"))
+        v.addWidget(lbl("Amplían lo que puede hacer el agente con herramientas externas (archivos, GitHub, bases de datos, navegador, "
+                        "Notion…) mediante el estándar Model Context Protocol. Pueden ser un programa de tu equipo o un servicio "
+                        "remoto con su dirección y clave.", "faint"))
         self.mcp_box = QVBoxLayout()
+        self.mcp_box.setSpacing(6)
         v.addLayout(self.mcp_box)
         self._mcp_render()
         f = QFrame()
         f.setObjectName("noteBox")
         g = QGridLayout(f)
         g.setContentsMargins(12, 10, 12, 10)
+        g.setVerticalSpacing(6)
+        title = QLabel("Añadir conector")
+        title.setStyleSheet("font-weight:600")
+        g.addWidget(title, 0, 0)
+        self.mcp_tpl = QComboBox()
+        self.mcp_tpl.addItem("Plantillas…", None)
+        for t in MCP_TEMPLATES:
+            self.mcp_tpl.addItem(t["label"], t)
+        self.mcp_tpl.activated.connect(self._mcp_template)
+        g.addWidget(self.mcp_tpl, 0, 1)
+        self.mcp_kind = QComboBox()
+        self.mcp_kind.addItem("Programa de este equipo", "local")
+        self.mcp_kind.addItem("Servicio remoto (dirección web)", "remote")
+        self.mcp_kind.currentIndexChanged.connect(self._mcp_kind_changed)
         self.mcp_name = QLineEdit()
         self.mcp_name.setPlaceholderText("Nombre (p. ej. Archivos)")
+        g.addWidget(self.mcp_name, 1, 0)
+        g.addWidget(self.mcp_kind, 1, 1)
         self.mcp_cmd = QLineEdit()
-        self.mcp_cmd.setPlaceholderText("Comando (p. ej. npx)")
+        self.mcp_cmd.setPlaceholderText("Comando (p. ej. npx, uvx o python)")
         self.mcp_args = QLineEdit()
         self.mcp_args.setPlaceholderText("Argumentos (p. ej. -y @modelcontextprotocol/server-filesystem C:\\Users\\tú\\Documents)")
-        g.addWidget(QLabel("Añadir conector"), 0, 0, 1, 2)
-        g.addWidget(self.mcp_name, 1, 0)
-        g.addWidget(self.mcp_cmd, 1, 1)
-        g.addWidget(self.mcp_args, 2, 0, 1, 2)
+        self.mcp_env = QLineEdit()
+        self.mcp_env.setPlaceholderText("Variables (opcional): CLAVE=valor; OTRA=valor")
+        self.mcp_url = QLineEdit()
+        self.mcp_url.setPlaceholderText("Dirección del servicio (p. ej. https://servicio.com/mcp)")
+        self.mcp_hdr = QLineEdit()
+        self.mcp_hdr.setPlaceholderText("Clave o token (opcional): se envía como «Authorization: Bearer …»")
+        self.mcp_hdr.setEchoMode(QLineEdit.Password)
+        g.addWidget(self.mcp_cmd, 2, 0, 1, 2)
+        g.addWidget(self.mcp_args, 3, 0, 1, 2)
+        g.addWidget(self.mcp_env, 4, 0, 1, 2)
+        g.addWidget(self.mcp_url, 5, 0, 1, 2)
+        g.addWidget(self.mcp_hdr, 6, 0, 1, 2)
         self.mcp_res = lbl("", "faint")
-        g.addWidget(self.mcp_res, 3, 0)
-        g.addWidget(btn("Añadir y probar", "primary", self._mcp_add, "acc_anadir"), 3, 1, Qt.AlignRight)
+        g.addWidget(self.mcp_res, 7, 0)
+        g.addWidget(btn("Añadir y probar", "primary", self._mcp_add, "acc_anadir"), 7, 1, Qt.AlignRight)
         v.addWidget(f)
+        self._mcp_kind_changed()
+
+    def _mcp_kind_changed(self, *_):
+        remote = self.mcp_kind.currentData() == "remote"
+        for w in (self.mcp_cmd, self.mcp_args, self.mcp_env):
+            w.setVisible(not remote)
+        for w in (self.mcp_url, self.mcp_hdr):
+            w.setVisible(remote)
+
+    def _mcp_template(self, i):
+        t = self.mcp_tpl.itemData(i)
+        if not t:
+            return
+        self.mcp_name.setText(t["name"])
+        self.mcp_kind.setCurrentIndex(1 if t.get("url") else 0)
+        ws = core.SET.snapshot().get("workspace") or os.path.expanduser("~")
+        if t.get("url"):
+            self.mcp_url.setText(t["url"])
+            self.mcp_hdr.clear()
+        else:
+            self.mcp_cmd.setText(t["command"])
+            self.mcp_args.setText(" ".join(('"%s"' % a if " " in a else a) for a in [x.replace("{carpeta}", ws) for x in t["args"]]))
+            self.mcp_env.setText(t.get("env", ""))
+        self.mcp_res.setText(t.get("note", ""))
+        self.mcp_tpl.setCurrentIndex(0)
 
     def _mcp_render(self):
         from . import harness
@@ -476,53 +552,102 @@ class SettingsDialog(QDialog):
             it = self.mcp_box.takeAt(0)
             if it.widget():
                 it.widget().deleteLater()
-        for s in core.SET.snapshot().get("mcp_servers") or []:
+        servers = core.SET.snapshot().get("mcp_servers") or []
+        if not servers:
+            self.mcp_box.addWidget(lbl("Aún no hay conectores. Elige una plantilla abajo o añade el tuyo.", "faint"))
+        for s in servers:
             row = QFrame()
             row.setObjectName("noteBox")
             h = QHBoxLayout(row)
             h.setContentsMargins(12, 6, 6, 6)
             srv = harness.MCP.get(s["name"])
-            state = ("● %d herramientas" % len(srv.tools)) if srv else "○ sin conectar"
-            h.addWidget(lbl("<b>%s</b>  <span style='color:%s'>%s</span><br><span style='color:%s'>%s %s</span>" % (
-                s["name"], C["ok"] if srv else C["faint"], state, C["faint"], s["command"], " ".join(s.get("args") or []))), 1)
+            err = harness.MCP_STATUS.get(s["name"])
+            if not s.get("enabled", True):
+                state, col = "○ desactivado", C["faint"]
+            elif srv:
+                state, col = "● conectado · %d herramientas" % len(srv.tools), C["ok"]
+            elif err:
+                state, col = "✗ no conecta", C["bad"]
+            else:
+                state, col = "○ sin conectar", C["faint"]
+            full = s.get("url") or ("%s %s" % (s.get("command", ""), " ".join(s.get("args") or [])))
+            short = lambda a: ("…" + os.sep + os.path.basename(a.rstrip("\\/"))) if os.path.isabs(a) and len(a) > 32 else a
+            where = s.get("url") or " ".join([os.path.basename(s.get("command", ""))] + [short(a) for a in s.get("args") or []])
+            info = lbl("<b>%s</b>  <span style='color:%s'>%s</span><br><span style='color:%s'>%s</span>%s" % (
+                html_escape(s["name"]), col, state, C["faint"], html_escape(where[:140]),
+                ("<br><span style='color:%s'>%s</span>" % (C["bad"], html_escape(short_paths(err)[:220])))
+                if err and not srv and s.get("enabled", True) else ""))
+            tip = full
+            if srv and srv.tools:
+                tip += "\n\nHerramientas:\n" + "\n".join("• %s — %s" % (t["name"], (t.get("description") or "")[:80]) for t in srv.tools[:40])
+            info.setToolTip(tip)
+            h.addWidget(info, 1)
             cb = QCheckBox("Activo")
             cb.setChecked(s.get("enabled", True))
             cb.toggled.connect(lambda on, n=s["name"]: self._mcp_update(n, enabled=on))
             h.addWidget(cb)
+            h.addWidget(btn("Reconectar", None, lambda _=False, n=s["name"]: self._mcp_update(n, reconnect=True), "acc_refrescar"))
             h.addWidget(btn("Quitar", "danger", lambda _=False, n=s["name"]: self._mcp_update(n, remove=True)))
             self.mcp_box.addWidget(row)
 
-    def _mcp_update(self, name, enabled=None, remove=False):
+    def _mcp_update(self, name, enabled=None, remove=False, reconnect=False):
         from . import harness
         servers = [dict(s) for s in core.SET.snapshot().get("mcp_servers") or [] if not (remove and s["name"] == name)]
         for s in servers:
             if s["name"] == name and enabled is not None:
                 s["enabled"] = enabled
         core.SET.update({"mcp_servers": servers})
+        if reconnect and name in harness.MCP:
+            harness.MCP.pop(name).stop()
         run_bg(lambda: harness.mcp_sync(servers), lambda r: self._mcp_render())
 
     def _mcp_add(self):
         import shlex
         from . import harness
-        name, cmd = self.mcp_name.text().strip(), self.mcp_cmd.text().strip()
-        if not name or not cmd:
-            return self.mcp_res.setText("Escribe un nombre y un comando.")
-        try:
-            args = shlex.split(self.mcp_args.text(), posix=False)
-        except ValueError:
-            args = self.mcp_args.text().split()
-        servers = [s for s in core.SET.snapshot().get("mcp_servers") or [] if s["name"] != name] + [{"name": name, "command": cmd, "args": args, "enabled": True}]
+        name = self.mcp_name.text().strip()
+        remote = self.mcp_kind.currentData() == "remote"
+        if remote:
+            url = self.mcp_url.text().strip()
+            if not name or not re.match(r"(?i)https?://", url):
+                return self.mcp_res.setText("Escribe un nombre y una dirección que empiece por https://")
+            entry = {"name": name, "url": url, "enabled": True}
+            tok = self.mcp_hdr.text().strip()
+            if tok:
+                entry["headers"] = {"Authorization": tok if " " in tok else "Bearer " + tok}
+        else:
+            cmd = self.mcp_cmd.text().strip()
+            if not name or not cmd:
+                return self.mcp_res.setText("Escribe un nombre y un comando.")
+            if cmd in ("npx", "node") and not shutil.which("npx"):
+                return self.mcp_res.setText("Este conector necesita Node.js. Instálalo desde nodejs.org y vuelve a intentarlo.")
+            if cmd == "uvx" and not shutil.which("uvx"):
+                return self.mcp_res.setText("Este conector necesita uv (docs.astral.sh/uv). Instálalo y vuelve a intentarlo.")
+            try:
+                args = [a.strip('"') for a in shlex.split(self.mcp_args.text(), posix=False)]
+            except ValueError:
+                args = self.mcp_args.text().split()
+            env = {}
+            for part in re.split(r"[;\n]", self.mcp_env.text()):
+                if "=" in part:
+                    k, val = part.split("=", 1)
+                    env[k.strip()] = val.strip()
+            entry = {"name": name, "command": cmd, "args": args, "enabled": True}
+            if env:
+                entry["env"] = env
+        servers = [s for s in core.SET.snapshot().get("mcp_servers") or [] if s["name"] != name] + [entry]
         core.SET.update({"mcp_servers": servers})
-        self.mcp_res.setText("Conectando… (la primera vez npx/uvx pueden tardar en descargar el conector)")
+        self.mcp_res.setText("Conectando… (la primera vez npx o uvx pueden tardar en descargar el conector)")
 
         def done(st):
             if isinstance(st, Exception):
                 self.mcp_res.setText("✗ %s" % st)
             elif st.get(name):
-                self.mcp_res.setText("✗ No se pudo conectar: %s" % st[name][:160])
+                self.mcp_res.setText("✗ No se pudo conectar: %s" % st[name][:220])
             else:
-                self.mcp_res.setText("✓ Conectado")
-                self.mcp_name.clear(), self.mcp_cmd.clear(), self.mcp_args.clear()
+                n = len(harness.MCP[name].tools) if name in harness.MCP else 0
+                self.mcp_res.setText("✓ Conectado: %d herramientas disponibles para el agente." % n)
+                for w in (self.mcp_name, self.mcp_cmd, self.mcp_args, self.mcp_env, self.mcp_url, self.mcp_hdr):
+                    w.clear()
             self._mcp_render()
         run_bg(lambda: harness.mcp_sync(servers), done)
 

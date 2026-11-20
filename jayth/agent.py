@@ -27,7 +27,7 @@ Cómo trabajas:
 
 Herramientas:
 - run_command ejecuta %(shell)s (Python está disponible como `%(python)s`). Para servidores o procesos largos usa background=true y revisa con command_output.
-- Documentos Word, Excel, PowerPoint y PDF: read_document. Imágenes del disco: view_image.
+- Documentos Word, Excel, PowerPoint y PDF: read_document para leerlos y create_document para crearlos (escribes el contenido en Markdown). Imágenes del disco: view_image.
 - Programas con interfaz: screenshot -> click / type_text / press_keys -> screenshot para verificar. Las coordenadas son píxeles de la última captura.
 - Web (solo con internet): web_search, web_fetch y download_file.
 - remember: guarda una preferencia duradera cuando el usuario te la diga (p. ej. "usa pnpm", "mis proyectos están en %(example)s").
@@ -191,6 +191,47 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
         except Exception:
             pass
         holder["conn"] = None
+
+
+def _plain(c):
+    return c if isinstance(c, str) else " ".join(p.get("text", "") for p in (c or []) if isinstance(p, dict) and p.get("type") == "text")
+
+
+def clean_title(t):
+    """Deja el titulo que propone el modelo en una sola linea limpia: sin comillas, prefijos ni punto final."""
+    t = re.sub(r"<think>.*?</think>", "", t or "", flags=re.S)
+    lines = [l.strip() for l in t.strip().splitlines() if l.strip()]
+    if not lines:
+        return ""
+    t = re.sub(r"^(t[ií]tulo|title)\s*:\s*", "", lines[0], flags=re.I)
+    for _ in range(2):        # «"Titulo".» -> Titulo
+        t = t.strip(" \t*#_`\"'«»“”‘’").rstrip(" .:;,")
+    t = re.sub(r"\s+", " ", t)
+    return t[:60].rstrip() if len(t) <= 60 else t[:59].rstrip() + "…"
+
+
+def make_title(cfg, messages):
+    """Pide al modelo elegido un titulo breve para la conversacion. Devuelve el titulo o '' si no se pudo."""
+    user = next((_plain(m.get("content")) for m in messages if m["role"] == "user" and not m.get("_auto")), "")
+    answer = next((_plain(m.get("content")) for m in reversed(messages) if m["role"] == "assistant" and _plain(m.get("content")).strip()), "")
+    user = re.split(r"\n\n### [^\n]+\nRuta: ", user)[0]       # sin el contenido de los adjuntos, solo lo que escribio
+    if not user.strip():
+        return ""
+    external = cfg.get("llm_mode") == "external"
+    base = cfg["external_url"].rstrip("/") if external else "http://127.0.0.1:%d/v1" % int(cfg["llm_port"])
+    key = cfg.get("external_key") if external else ""
+    payload = {"model": (cfg.get("external_model") or "local") if external else "local", "stream": True,
+               "max_tokens": 400 if external else 40, "temperature": 0.3,   # fuera no se puede apagar el razonamiento: margen
+               "messages": [{"role": "system", "content": "Pones títulos breves a conversaciones. Respondes solo con el título."},
+                            {"role": "user", "content": "Escribe un título de 2 a 6 palabras, en el idioma del usuario, sin comillas ni punto final, "
+                                                        "que resuma de qué trata esta conversación.\n\nUsuario: %s\n\nAgente: %s"
+                                                        % (user[:1500], answer[:1000])}]}
+    if not external:   # sin razonamiento: el titulo debe salir en un instante
+        payload.update({"cache_prompt": False, "chat_template_kwargs": {"enable_thinking": False, "reasoning_effort": "low"}})
+    try:
+        return clean_title(llm_stream(base, key, payload, {}, lambda k, t: None)["content"])
+    except Exception:
+        return ""
 
 
 class Run:
@@ -372,8 +413,12 @@ class Run:
             if not srv:
                 return None
             schema = next((t.get("inputSchema") for t in srv.tools if t["name"] == real), None) or {}
-            return {"name": name, "category": "mcp", "parameters": schema,
-                    "fn": lambda a, ctx, srv=srv, real=real: srv.call(real, a)}
+            def fn(a, ctx, srv=srv, real=real):
+                try:
+                    return srv.call(real, a)
+                except H.MCPError as e:           # mensaje claro para el modelo, sin el nombre de la excepcion
+                    raise T.ToolError(str(e))
+            return {"name": name, "category": "mcp", "parameters": schema, "fn": fn}
         return T.TOOLS.get(name)
 
     def _needs_approval(self, tool, name, args):
@@ -507,6 +552,8 @@ class Run:
         external = self.cfg.get("llm_mode") == "external"
         base = self.cfg["external_url"].rstrip("/") if external else "http://127.0.0.1:%d/v1" % int(self.cfg["llm_port"])
         key = self.cfg.get("external_key") if external else ""
+        e = self.cfg.get("effort") or ""
+        effort = e if e in ("low", "medium", "high") else ("medium" if self.cfg.get("thinking") else "low")
         try:
             for step in range(int(self.cfg["max_steps"])):
                 if self.stop.is_set():
@@ -518,11 +565,13 @@ class Run:
                 payload = {"model": (self.cfg.get("external_model") or "local") if external else "local", "stream": True,
                            "stream_options": {"include_usage": True},
                            "messages": [{"role": "system", "content": self.system}] + sent,
-                           "temperature": self.sampling["temperature"], "top_p": self.sampling["top_p"], "max_tokens": int(self.cfg["max_tokens"])}
+                           "temperature": self.sampling["temperature"], "top_p": self.sampling["top_p"],
+                           "max_tokens": int(self.cfg["max_tokens"]) * (2 if effort == "high" else 1)}
                 if not external:   # parametros propios de llama.cpp (una API estricta podria rechazarlos)
+                    # esfuerzo: Qwen/DeepSeek usan enable_thinking; gpt-oss y otros, reasoning_effort (los demas los ignoran)
                     payload.update({"top_k": self.sampling["top_k"], "cache_prompt": True, "min_p": self.sampling["min_p"],
                                     "repeat_penalty": float(self.cfg.get("repeat_penalty", 1.0)),
-                                    "chat_template_kwargs": {"enable_thinking": bool(self.cfg["thinking"])}})
+                                    "chat_template_kwargs": {"enable_thinking": effort != "low", "reasoning_effort": effort}})
                     if int(self.cfg.get("seed", -1)) >= 0:
                         payload["seed"] = int(self.cfg["seed"])
                 payload["tools"] = self.tools
