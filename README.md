@@ -1,6 +1,9 @@
-<p align="center"><img src="assets/icon.png" width="96" alt="Jayth"></p>
-
-# Jayth
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/logotipo-fondo-oscuro.svg">
+    <img src="docs/img/logotipo-fondo-claro.svg" width="340" alt="Jayth">
+  </picture>
+</h1>
 
 Aplicación de escritorio para **Windows, macOS y Linux** que convierte **cualquier modelo de IA local** (formato GGUF) en un
 agente que programa, crea archivos, ejecuta comandos y programas, usa la web y controla el ordenador. Todo ocurre en tu

@@ -1,6 +1,9 @@
-<p align="center"><img src="assets/icon.png" width="96" alt="Jayth"></p>
-
-# Jayth
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/logotipo-fondo-oscuro.svg">
+    <img src="docs/img/logotipo-fondo-claro.svg" width="340" alt="Jayth">
+  </picture>
+</h1>
 
 A desktop app for **Windows, macOS and Linux** that turns **any local AI model** (GGUF format) into an agent that writes
 code, creates files, runs commands and programs, uses the web and controls your computer. Everything happens on your

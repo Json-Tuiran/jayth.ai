@@ -1,21 +1,32 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Jayth · icono: una «j» unida a una marca de aprobación (✓); su punto es la luz del agente.
+       Copyright (C) 2026 Ing. Jeison Tuiran. Marca del proyecto (ver MARCA.md). -->
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="fondo" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#1F2724"/>
       <stop offset="1" stop-color="#101412"/>
     </linearGradient>
-    <linearGradient id="stem" x1="0" y1="0" x2="0.4" y2="1">
-      <stop offset="0" stop-color="#7FD3A7"/>
-      <stop offset="1" stop-color="#3E9E70"/>
+    <linearGradient id="trazo" gradientUnits="userSpaceOnUse" x1="200" y1="80" x2="74" y2="196">
+      <stop offset="0" stop-color="#86D9AE"/>
+      <stop offset="1" stop-color="#2E8F62"/>
     </linearGradient>
-    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#5FE39A" stop-opacity="0.55"/>
-      <stop offset="1" stop-color="#5FE39A" stop-opacity="0"/>
+    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#6BE3A2" stop-opacity="0.75"/>
+      <stop offset="0.35" stop-color="#6BE3A2" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#6BE3A2" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="punto" cx="0.4" cy="0.38" r="0.65">
+      <stop offset="0" stop-color="#E4FFF1"/>
+      <stop offset="0.5" stop-color="#8BEDB8"/>
+      <stop offset="1" stop-color="#5FD796"/>
     </radialGradient>
   </defs>
-  <rect x="8" y="8" width="240" height="240" rx="58" fill="url(#bg)"/>
-  <rect x="9.5" y="9.5" width="237" height="237" rx="56.5" fill="none" stroke="#3E6B52" stroke-opacity="0.75" stroke-width="3"/>
-  <circle cx="152" cy="66" r="40" fill="url(#glow)"/>
-  <path d="M152 106 V170 Q152 206 116 206 H104" fill="none" stroke="url(#stem)" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="152" cy="66" r="17" fill="#6BE3A2"/>
+  <rect x="8" y="8" width="240" height="240" rx="58" fill="url(#fondo)"/>
+  <rect x="10" y="10" width="236" height="236" rx="56" fill="none" stroke="#3B6E53" stroke-width="4"/>
+  <g transform="translate(128 128) scale(0.92) translate(-134 -125)">
+    <circle cx="127" cy="58" r="40" fill="url(#halo)"/>
+    <path d="M70 156 A29 29 0 0 0 128 156 V96 L162 124 L202 80" fill="none" stroke="url(#trazo)"
+          stroke-width="23" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="127" cy="58" r="11.5" fill="url(#punto)"/>
+  </g>
 </svg>
