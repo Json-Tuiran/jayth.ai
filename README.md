@@ -19,6 +19,7 @@ Creado por **Ing. Jeison Tuiran** · Software libre con licencia [GPL-3.0](LICEN
 
 Cada enlace baja directamente la última versión para ese sistema. Todas las versiones y sus notas están en
 **[Releases](https://github.com/Json-Tuiran/jayth.ai/releases)**. Instrucciones en [Descargar e instalar](#descargar-e-instalar).
+[Code signing policy](CODE_SIGNING_POLICY.md) · [Privacidad](CODE_SIGNING_POLICY.md#privacidad)
 
 - **Cualquier modelo:** descarga GGUF de Hugging Face desde la propia app (lista las cuantizaciones y marca cuáles caben
   en tu equipo), usa un `.gguf` que ya tengas, o conéctate a un servidor compatible con OpenAI (Ollama, LM Studio, otro PC).
@@ -172,8 +173,9 @@ Es software libre con la licencia **[GNU GPL-3.0](LICENSE)**:
 
 Las contribuciones al repositorio se aceptan bajo la misma licencia GPL-3.0.
 
-**Firma del código:** los paquetes de Windows se firmarán con
-[SignPath](https://about.signpath.io/) (certificado de [SignPath Foundation](https://signpath.org/)); ver la
+**Firma del código — [Code signing policy](CODE_SIGNING_POLICY.md):** free code signing provided by
+[SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Los paquetes de
+Windows se firman con SignPath tras la aprobación manual del autor; detalles, equipo y privacidad en la
 [política de firma](CODE_SIGNING_POLICY.md).
 
 ## Estructura

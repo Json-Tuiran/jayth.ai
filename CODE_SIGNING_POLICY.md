@@ -1,4 +1,4 @@
-# Política de firma del código
+# Política de firma del código (Code signing policy)
 
 Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 
@@ -39,3 +39,26 @@ Todo lo demás ocurre solo cuando el usuario lo pide o lo aprueba:
 
 Este programa no transfiere ninguna información a otros sistemas de la red salvo en los casos anteriores, que se
 producen a petición o con la aprobación del usuario o de la persona que lo instala o lo usa.
+
+---
+
+## English summary
+
+**Code signing policy.** Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by
+[SignPath Foundation](https://signpath.org/).
+
+- **What is signed:** the Windows installer (`Jayth-Setup-<version>-x64.exe`) and `Jayth.exe` inside the portable package
+  of each release published on [GitHub Releases](https://github.com/Json-Tuiran/jayth.ai/releases). Binaries are built
+  only by GitHub Actions from the source code in this repository
+  ([`.github/workflows/release.yml`](.github/workflows/release.yml)); nothing is built or signed manually.
+- **Team roles:** committers and reviewers: [Json-Tuiran](https://github.com/Json-Tuiran) (Ing. Jeison Tuiran).
+  Approvers: [Json-Tuiran](https://github.com/Json-Tuiran) (Ing. Jeison Tuiran). Every signing request is approved
+  manually. All team members use multi-factor authentication on GitHub and SignPath.
+- **License:** [GNU GPL-3.0](LICENSE) for all components; no commercial dual-licensing.
+
+**Privacy policy.** Jayth runs on the user's computer and collects no telemetry or usage data. On its own it only checks
+for new versions of Jayth (GitHub releases of this repository) and of the user's installed models (Hugging Face); both
+checks can be turned off in *Settings → About*. Everything else (downloading the engine and models, web search and
+browsing by the agent, cloud model providers configured by the user, sending feedback) happens only when the user
+requests or approves it. This program will not transfer any information to other networked systems unless specifically
+requested by the user or the person installing or operating it, except for the optional update checks described above.
