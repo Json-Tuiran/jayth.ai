@@ -303,6 +303,12 @@ class SettingsDialog(QDialog):
         self.field(v, "response_language", "Idioma de las respuestas", "choice", choices=LANGS)
         self.field(v, "custom_instructions", "Instrucciones adicionales para el agente", "area",
                    placeholder="Ej.: Antes de borrar o mover archivos, explícame qué vas a hacer.")
+        self._section(v, "Voz")
+        from . import voice as _voice
+        self.field(v, "voice_model", "Precisión del dictado", "choice", choices=[("%s: %s" % (k.capitalize(), d), k) for k, d in _voice.MODELS.items()],
+                   help="El dictado funciona en tu equipo. El modelo elegido se descarga la primera vez que lo uses.")
+        self.field(v, "voice_lang", "Idioma del dictado", "choice",
+                   choices=[("Detectar automáticamente", ""), ("Español", "es"), ("Inglés", "en"), ("Portugués", "pt"), ("Francés", "fr"), ("Alemán", "de"), ("Italiano", "it")])
         self._section(v, "Memoria")
         v.addWidget(lbl("Lo que %s recuerda de ti entre conversaciones (lo guarda cuando le dices algo duradero, como «uso pnpm»). "
                         "Puedes editarlo o borrarlo." % APP_NAME, "faint"))

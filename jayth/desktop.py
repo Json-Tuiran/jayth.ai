@@ -75,6 +75,27 @@ class Clickable(QWidget):
 
 
 _HOTKEY = None
+_SPEAKER, _SPEAKING, _SPEAK_OK = None, None, None
+
+
+def speaker():
+    """Lector de voz único de la aplicación."""
+    global _SPEAKER
+    if _SPEAKER is None:
+        from .voice import Speaker
+        _SPEAKER = Speaker()
+    return _SPEAKER
+
+
+def speaker_available():
+    global _SPEAK_OK
+    if _SPEAK_OK is None:
+        try:
+            from .voice import Speaker
+            _SPEAK_OK = Speaker.available()
+        except Exception:
+            _SPEAK_OK = False
+    return _SPEAK_OK
 
 # ---------------------------------------------------------------- animaciones
 def animations_on():
@@ -839,7 +860,10 @@ class AssistantBlock(QWidget):
         self.b_undo_all.setIcon(icon("acc_refrescar", C["mut"], 13))
         self.b_undo_all.setToolTip("Restaura todos los archivos que el agente cambió en esta respuesta")
         self.b_undo_all.hide()
+        self.b_speak = tbtn("voz_altavoz", "Leer en voz alta", self.speak, size=15)
+        self.b_speak.setVisible(speaker_available())
         ah.addWidget(self.b_copy)
+        ah.addWidget(self.b_speak)
         ah.addWidget(self.b_regen)
         ah.addWidget(self.b_report)
         ah.addWidget(self.b_undo_all)
@@ -904,6 +928,41 @@ class AssistantBlock(QWidget):
         QGuiApplication.clipboard().setText(self.text)
         self.b_copy.setIcon(icon("ui_check", C["ok"], 15))
         QTimer.singleShot(1200, lambda: self.b_copy.setIcon(icon("acc_copiar", C["mut"], 15)))
+
+    def speak(self):
+        """Lee esta respuesta en voz alta; si ya se está leyendo, la detiene."""
+        global _SPEAKING
+        sp = speaker()
+        if _SPEAKING is self and sp.speaking():
+            sp.stop()
+            _SPEAKING = None
+            self.b_speak.setIcon(icon("voz_altavoz", C["mut"], 15))
+            self.b_speak.setToolTip("Leer en voz alta")
+            return
+        if _SPEAKING is not None:
+            try:
+                _SPEAKING.b_speak.setIcon(icon("voz_altavoz", C["mut"], 15))
+            except RuntimeError:
+                pass
+        if sp.speak(self.text, core.SET.snapshot().get("voice_rate", 0.0)):
+            _SPEAKING = self
+            self.b_speak.setIcon(icon("trans_detener", C["acc"], 13))
+            self.b_speak.setToolTip("Detener la lectura")
+            me = self
+
+            def watch():                       # cuando termina de leer, el botón vuelve a su estado
+                global _SPEAKING
+                if _SPEAKING is not me:
+                    return
+                if sp.speaking():
+                    return QTimer.singleShot(400, watch)
+                _SPEAKING = None
+                try:
+                    me.b_speak.setIcon(icon("voz_altavoz", C["mut"], 15))
+                    me.b_speak.setToolTip("Leer en voz alta")
+                except RuntimeError:
+                    pass
+            QTimer.singleShot(900, watch)
 
     def report(self):
         excerpt = self.text if len(self.text) < 1500 else self.text[:1500] + "…"
@@ -1303,6 +1362,17 @@ class ChatPanel(QWidget):
         self.chips_w, self.plus_btn = chips_w, plus
         _rs = chips_w.resizeEvent
         chips_w.resizeEvent = lambda e: (_rs(e), self._fit_model_chip())
+        self.mic_btn = QToolButton()                 # dictar con el micrófono
+        self.mic_btn.setObjectName("round")
+        self.mic_btn.setFixedSize(32, 32)
+        self.mic_btn.setIcon(icon("voz_microfono", C["mut"], 16))
+        self.mic_btn.setIconSize(QSize(16, 16))
+        self.mic_btn.setCursor(Qt.PointingHandCursor)
+        self.mic_btn.setToolTip("Dictar con el micrófono")
+        self.mic_btn.setAccessibleName("Dictar")
+        self.mic_btn.clicked.connect(lambda: self.toggle_dictation())
+        row.addWidget(self.mic_btn, 0, Qt.AlignBottom)
+        self._rec = None
         self.send_btn = QToolButton()
         self.send_btn.setObjectName("sendBtn")
         self.send_btn.setFixedSize(32, 32)
@@ -1766,7 +1836,10 @@ class ChatPanel(QWidget):
         free -= 34 if compact_mode else mode_full
         room = free - pad - fm.horizontalAdvance(" · " + label)
         room = min(room, 120 if self.compact else 220)
-        text = "%s · %s" % (fm.elidedText(name, Qt.ElideRight, max(48, room)), label)
+        if room < 48:                         # muy estrecho: solo el modelo; el esfuerzo queda en el tooltip y en el menú
+            text = fm.elidedText(name, Qt.ElideRight, max(40, min(free - pad, 120)))
+        else:
+            text = "%s · %s" % (fm.elidedText(name, Qt.ElideRight, room), label)
         if text != cur:
             self.model_chip.setText(text)
 
@@ -1915,6 +1988,83 @@ class ChatPanel(QWidget):
             self.thumbs.addWidget(w)
         self.thumbs_w.setVisible(bool(self.pending_imgs or getattr(self, "pending_files", []) or a))
         self._sync_send()
+
+    # ---- dictado por voz
+    def toggle_dictation(self):
+        from . import voice
+        if self._rec is not None and self._rec.recording():
+            return self._stop_dictation()
+        if not voice.Recorder.available():
+            return self.main.toast("No encuentro ningún micrófono en este equipo.", icon_name="est_aviso", color=C["warn"])
+        if not voice.stt_ready():
+            return self._prepare_dictation()
+        self._rec = voice.Recorder()
+        try:
+            self._rec.start()
+        except Exception as e:
+            self._rec = None
+            return self.main.toast("No se pudo usar el micrófono: %s" % e, icon_name="est_aviso", color=C["warn"])
+        self._rec_t0 = time.time()
+        self._rec_ph = self.input.placeholderText()
+        self.mic_btn.setIcon(icon("trans_detener", C["bad"], 14))
+        self.mic_btn.setToolTip("Terminar el dictado")
+        self._rec_timer = QTimer(self, interval=500, timeout=self._rec_tick)
+        self._rec_timer.start()
+        self._rec_tick()
+
+    def _rec_tick(self):
+        if self._rec is None:
+            return
+        secs = int(time.time() - self._rec_t0)
+        self.input.setPlaceholderText("Escuchando… %d s · pulsa el micrófono para terminar" % secs)
+        if secs >= 180:                       # tope de tres minutos por dictado
+            self._stop_dictation()
+
+    def _stop_dictation(self):
+        from . import voice
+        rec, self._rec = self._rec, None
+        if getattr(self, "_rec_timer", None):
+            self._rec_timer.stop()
+        self.mic_btn.setIcon(icon("voz_microfono", C["mut"], 16))
+        self.mic_btn.setToolTip("Dictar con el micrófono")
+        path = rec.stop() if rec else None
+        if not path:
+            self.input.setPlaceholderText(getattr(self, "_rec_ph", "Escribe un mensaje…"))
+            return self.main.toast("No se grabó nada.", icon_name="est_aviso", color=C["warn"])
+        self.input.setPlaceholderText("Pasando tu voz a texto…")
+        self.mic_btn.setEnabled(False)
+        cfg = core.SET.snapshot()
+
+        def done(r):
+            self.mic_btn.setEnabled(True)
+            self.input.setPlaceholderText(getattr(self, "_rec_ph", "Escribe un mensaje…"))
+            if isinstance(r, Exception):
+                return self.main.toast(str(r), icon_name="est_aviso", color=C["warn"])
+            if not str(r).strip():
+                return self.main.toast("No entendí nada en la grabación.", icon_name="est_aviso", color=C["warn"])
+            cur = self.input.toPlainText()
+            self.input.setPlainText((cur + (" " if cur and not cur.endswith((" ", "\n")) else "")) + str(r).strip())
+            self.input.moveCursor(QTextCursor.End)
+            self.input.setFocus()
+        run_bg(lambda: voice.transcribe(path, cfg.get("voice_model") or "base", cfg.get("voice_lang") or ""), done)
+
+    def _prepare_dictation(self):
+        from . import voice
+        if getattr(self.main, "_voice_setup", False):
+            return self.main.toast("El dictado se está preparando; te aviso cuando esté listo.", icon_name="est_info")
+        if QMessageBox.question(self, "Preparar el dictado",
+                                "Para dictar, %s descarga una sola vez el reconocimiento de voz (unos 450 MB con el modelo). "
+                                "Funciona en tu equipo, sin enviar tu voz a ningún sitio.\n\n¿Prepararlo ahora?" % APP_NAME) != QMessageBox.StandardButton.Yes:
+            return
+        self.main._voice_setup = True
+        self.main.toast("Preparando el dictado en segundo plano (unos minutos)…", icon_name="est_info", ms=9000)
+
+        def done(r):
+            self.main._voice_setup = False
+            if isinstance(r, Exception):
+                return self.main.toast("No se pudo preparar el dictado: %s" % str(r)[:200], icon_name="est_aviso", color=C["warn"])
+            self.main.toast("Dictado listo: pulsa el micrófono y habla.", icon_name="ui_check", color=C["ok"], ms=9000)
+        run_bg(voice.ensure_stt, done)
 
     def _sync_send(self):
         has = bool(self.input.toPlainText().strip() or self.pending_imgs or getattr(self, "pending_files", []))
@@ -3632,7 +3782,16 @@ def selftest(app):
         w.poll_t.stop()
         w.news_t.stop()
     ok("window", window)
-    report = {"version": __version__, "os": osys.os_label(), "arch": _pf.machine(), "frozen": osys.FROZEN, "web_canvas": web, "checks": checks}
+
+    def voice_parts():                        # las piezas de Qt para la voz deben venir en el paquete
+        import importlib
+        for m in ("PySide6.QtTextToSpeech", "PySide6.QtMultimedia"):
+            importlib.import_module(m)
+    ok("voice_modules", voice_parts)
+    # que haya voces o micrófono depende del equipo (en los servidores de compilación no hay): solo se informa
+    from . import voice as _vc
+    report = {"version": __version__, "os": osys.os_label(), "arch": _pf.machine(), "frozen": osys.FROZEN, "web_canvas": web,
+              "voices": _vc.Speaker.available(), "microphone": _vc.Recorder.available(), "checks": checks}
     text = json.dumps(report, ensure_ascii=False, indent=1)
     try:
         print(text, flush=True)

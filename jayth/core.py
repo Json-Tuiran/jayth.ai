@@ -65,7 +65,10 @@ DEFAULTS = {
     # personalizacion
     "assistants": [],            # asistentes propios: {id, name, instructions, files}
     "skills_disabled": [],       # habilidades apagadas (por su id de carpeta)
-    "tasks": [],                 # tareas programadas (ver schedule.py)
+    "voice_model": "base",       # modelo de dictado: tiny, base o small
+    "voice_lang": "",            # idioma del dictado ("" = detectar)
+    "voice_rate": 0.0,           # velocidad de lectura en voz alta (-1 a 1)
+    "tasks": [],               # tareas programadas (ver schedule.py)
     "memory_enabled": True,      # usar y guardar la memoria entre conversaciones
     "about_me": "",
     "response_style": "",

@@ -86,6 +86,13 @@ def find_python():
 
 def ensure_env(progress=None, stop=None):
     """Prepara (una vez) el Python aislado de análisis con uv. Devuelve su ruta."""
+    py = make_env(HOME, PACKAGES, progress, stop)
+    _cache.pop(py, None)
+    return py
+
+
+def make_env(HOME, PACKAGES, progress=None, stop=None):
+    """Crea en la carpeta HOME un Python aislado (uv) con los paquetes indicados. Lo usan el análisis y la voz."""
     from . import convert
     from .provision import download, extract_archive
     pr = progress or (lambda *a: None)
@@ -114,7 +121,7 @@ def ensure_env(progress=None, stop=None):
         r = subprocess.run(cmd, capture_output=True, env=env, **osys.popen_kwargs())
         if r.returncode != 0:
             raise RuntimeError("%s falló: %s" % (label, (r.stdout + r.stderr).decode("utf-8", "replace")[-600:]))
-    py = env_python()
+    py = os.path.join(HOME, "env", "Scripts", "python.exe") if osys.WIN else os.path.join(HOME, "env", "bin", "python")
     if not os.path.isfile(py):
         venv = [uv, "venv", "--python", "3.12", os.path.join(HOME, "env")]
         try:
@@ -122,12 +129,12 @@ def ensure_env(progress=None, stop=None):
         except RuntimeError:                     # mismo tropiezo de uv en Windows que en el convertidor: el segundo intento funciona
             shutil.rmtree(os.path.join(HOME, "env"), ignore_errors=True)
             run(venv, "Preparar Python")
-    run([uv, "pip", "install", "--python", py] + PACKAGES, "Instalar pandas y matplotlib")
+    pr(0, 0, "instalando " + ", ".join(PACKAGES))
+    run([uv, "pip", "install", "--python", py] + list(PACKAGES), "Instalar " + ", ".join(PACKAGES))
     try:
         run([uv, "cache", "clean"], "limpiar")
     except RuntimeError:
         pass
-    _cache.pop(py, None)
     return py
 
 

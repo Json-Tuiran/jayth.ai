@@ -14,7 +14,9 @@ ASSETS = os.path.join(ROOT, "assets")
 
 hidden = ["PySide6.QtSvg", "PySide6.QtSvgWidgets", "certifi", "pypdf",
           # navegador integrado del lienzo (se importa solo cuando hace falta, por eso se nombra aqui)
-          "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel", "PySide6.QtNetwork", "PySide6.QtPrintSupport"]
+          "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel", "PySide6.QtNetwork", "PySide6.QtPrintSupport",
+          # voz: leer en voz alta (voces del sistema) y grabar del micrófono para el dictado
+          "PySide6.QtTextToSpeech", "PySide6.QtMultimedia"]
 if MAC:
     # pynput elige su motor al importarse: se nombran explicitamente (el compilador no tiene pantalla)
     hidden += ["mss", "mss.darwin", "pynput", "pynput.keyboard._darwin", "pynput.mouse._darwin", "pynput._util.darwin",
@@ -50,11 +52,13 @@ a = Analysis(
     # dependencias opcionales que pypdf/mss/Qt arrastran si estan instaladas y Jayth no usa
     excludes=["tkinter", "unittest", "test", "pydoc_data", "lib2to3", "numpy", "PIL", "cryptography", "scipy", "matplotlib",
               "pandas", "IPython", "PySide6.QtPdf", "PySide6.QtWebEngineQuick", "PySide6.Qt3DCore", "PySide6.QtCharts",
-              "PySide6.QtMultimedia", "PySide6.QtDataVisualization", "PySide6.QtBluetooth", "PySide6.QtSensors"],
+              "PySide6.QtMultimediaWidgets", "PySide6.QtDataVisualization", "PySide6.QtBluetooth", "PySide6.QtSensors"],
     noarchive=False,
 )
 # Partes de Qt que Jayth no necesita: PDF y teclado virtual. (Qt Quick/QML se quedan: el navegador integrado los usa.)
-_DROP = ("qt6pdf", "qt6virtualkeyboard", "virtualkeyboard", "qpdf", "qt6quick3d", "qt6charts", "qt6multimedia", "qt6datavis",
+_DROP = ("qt6pdf", "qt6virtualkeyboard", "virtualkeyboard", "qpdf", "qt6quick3d", "qt6charts", "qt6multimediawidgets", "qt6multimediaquick", "qt6datavis",
+         # el micrófono usa el sistema de sonido nativo: no hace falta FFmpeg (~60 MB)
+         "avcodec", "avformat", "avutil", "swresample", "swscale", "ffmpegmediaplugin",
          "opengl32sw", "qt6quickcontrols2", "qt6quickdialogs2", "qt6quicktemplates2", "qt6quicklayouts", "qt6quickeffects",
          "qt6quickparticles", "qt6quickshapes", "qt6quicktest", "qt6quicktimeline", "qt6webenginequick", "qt6labs")
 a.binaries = [b for b in a.binaries if not any(d in os.path.basename(b[0]).lower() for d in _DROP)]
