@@ -2058,7 +2058,7 @@ class ChatPanel(QWidget):
                     self.cur.b_regen.clicked.connect(self.regenerate)
                     self._end_steps()
                 self.cur = None
-        elif t == "tool_call" and ev["name"] == "update_plan":
+        elif t == "tool_call" and ev["name"] in ("update_plan", "use_tools"):     # plan: en su panel; activar herramientas: interno
             pass                                        # se muestra en el panel del plan (evento «plan»)
         elif t == "plan":
             self.plan_panel.set_items(ev.get("items") or [], live=getattr(self, "_live", False))

@@ -324,21 +324,25 @@ def parse_line(seg, st):
             if st.get("phase") != "dibujando" or steps != st.get("steps"):
                 st["sample_start"] = time.time()
             st.update(phase="dibujando", step=step, steps=steps, spi=spi)
-            st["eta"] = _eta(m.group(5)) if m.group(5) else (steps - step) * spi
+            st["eta"] = (_eta(m.group(5)) if m.group(5) else (steps - step) * spi) + 0.45 * spi   # + decodificar (~medio paso en CPU)
         elif st.get("phase") in (None, "preparando", "cargando"):
-            st.update(phase="cargando", step=step, steps=steps)
+            st.update(phase="cargando", load=(step, steps))     # barra de carga de pesos: no son los pasos del dibujo
         return
     low = seg.lower()
     st.setdefault("log", []).append(seg[:400])
     del st["log"][:-80]
-    if st.get("phase") == "dibujando" and st.get("step") == st.get("steps") and re.search(r"decod|vae|sampling completed", low):
+    ph = st.get("phase")
+    # orden real de sd-cli: «loading … from» (cargar) → «loading tensors completed» (leer la descripción con el
+    # codificador) → «generating image» (dibujar; la barra de cada paso sale al terminarlo) → «sampling completed» /
+    # «decoding … latents» (terminar)
+    if re.search(r"sampling completed|decoding \d+ latent|decode_first_stage", low) and ph in ("dibujando", "entendiendo", "cargando"):
         st["phase"] = "terminando"
-    elif st.get("phase") in (None, "preparando", "cargando") and re.search(r"condition|text encod|get_learned|tokeniz|llm", low):
+    elif re.search(r"generating image", low) and ph in (None, "preparando", "cargando", "entendiendo"):
+        st.update(phase="dibujando", step=0, sample_start=time.time())
+    elif re.search(r"loading tensors completed", low) and ph in (None, "preparando", "cargando"):
         st["phase"] = "entendiendo"
-    elif st.get("phase") in (None, "preparando") and re.search(r"load|tensor|model", low):
+    elif re.search(r"^\[?i?\]?\s*loading .* from|load_backend|loading (diffusion|llm|vae|model)", low) and ph in (None, "preparando"):
         st["phase"] = "cargando"
-    elif re.search(r"decode_first_stage|decoding|vae decode", low) and st.get("phase") == "dibujando":
-        st["phase"] = "terminando"
 
 
 def describe(p):
@@ -348,7 +352,8 @@ def describe(p):
     txt = PHASES.get(p.get("phase") or "preparando", PHASES["preparando"])
     parts = [txt]
     if p.get("phase") == "dibujando" and p.get("steps"):
-        parts.append(tr("paso %d de %d") % (p.get("step") or 0, p["steps"]))
+        # la barra de un paso sale al terminarlo: mientras tanto se trabaja en el siguiente
+        parts.append(tr("paso %d de %d") % (min(p["steps"], (p.get("step") or 0) + 1), p["steps"]))
         if p.get("eta"):
             parts.append(tr("quedan %s") % P.fmt_duration(p["eta"]))
     if p.get("elapsed", 0) >= 5:
@@ -421,7 +426,7 @@ def generate(cfg, prompt, out_path, aspect="", width=0, height=0, seed=None, ref
     if not _RUN_LOCK.acquire(timeout=1):
         raise RuntimeError("Ya se está creando otra imagen; espera a que termine.")
     t0 = time.time()
-    st = {"phase": "preparando", "log": []}
+    st = {"phase": "preparando", "log": [], "steps": int(m["steps"])}
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                 cwd=exe_dir or None, env=env, **osys.popen_kwargs())

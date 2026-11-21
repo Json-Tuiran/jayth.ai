@@ -101,6 +101,7 @@ DEFAULTS = {
     "command_timeout": 60,
     "auto_allow_commands": [],   # prefijos de comandos que se permiten sin preguntar (p. ej. "git status")
     "tools_disabled": [],
+    "tools_mode": "auto",        # auto: herramientas básicas + grupos a demanda (agent.GROUPS) | all: todas siempre
     "web_access": True,
     "computer_control": True,
     "search_provider": "auto",   # auto (DuckDuckGo + Wikipedia) | brave | searxng

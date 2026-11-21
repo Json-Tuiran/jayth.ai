@@ -215,7 +215,9 @@ Se abren desde el menú del perfil (**Ajustes**). Los cambios se guardan solos. 
   - **Límites:** «Máximo de pasos por tarea», «Tiempo máximo de cada comando», «Máximo de texto que recibe el modelo de
     cada acción», «Enviar capturas e imágenes al modelo (si tiene visión)», «Imágenes recientes que recuerda».
 - **Herramientas:** «Permitir el acceso a internet (buscar, leer páginas y descargar)», «Permitir el control del
-  ordenador (ratón, teclado, capturas)».
+  ordenador (ratón, teclado, capturas)», «Herramientas que se cargan» (por defecto, solo las que necesita cada tarea:
+  el agente tiene a mano las básicas y activa los demás grupos —web, navegador, control del PC, documentos, Python,
+  imágenes, agenda y cada conector— cuando le hacen falta; así el modelo local tiene más memoria y responde antes).
   - **Herramientas disponibles:** cada herramienta del agente se puede apagar por separado.
   - **Búsqueda web:** «Buscador» (automático con DuckDuckGo y Wikipedia, Brave Search o SearXNG), «Clave de Brave
     Search», «URL de SearXNG».

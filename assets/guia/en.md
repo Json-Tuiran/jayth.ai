@@ -218,7 +218,9 @@ names):
   - **Limits:** “Maximum steps per task”, “Maximum time per command”, “Maximum text the model receives from each
     action”, “Send screenshots and images to the model (if it has vision)”, “Recent images it remembers”.
 - **Tools:** “Allow internet access (search, read pages and download)”, “Allow computer control (mouse, keyboard,
-  screenshots)”.
+  screenshots)”, “Tools that are loaded” (by default, only the ones each task needs: the agent has the basic ones at hand
+  and turns on the other groups —web, browser, computer control, documents, Python, images, schedule and each
+  connector— when it needs them; this leaves a local model more memory and makes it answer sooner).
   - **Available tools:** each of the agent's tools can be turned off separately.
   - **Web search:** “Search engine” (automatic with DuckDuckGo and Wikipedia, Brave Search or SearXNG), “Brave
     Search key”, “SearXNG URL”.

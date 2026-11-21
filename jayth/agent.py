@@ -40,15 +40,82 @@ Formato de las respuestas:
 
 Herramientas:
 - run_command ejecuta %(shell)s (Python está disponible como `%(python)s`). Para servidores o procesos largos usa background=true y revisa con command_output.
-- Documentos Word, Excel, PowerPoint y PDF: read_document para leerlos y create_document para crearlos (escribes el contenido en Markdown). Imágenes del disco: view_image.
-- Datos (CSV, Excel), cálculos y gráficos: run_python con pandas y matplotlib; los gráficos se muestran solos al usuario.
-- Páginas web, documentos largos, diagramas SVG o programas completos que el usuario quiera VER: show_canvas (lienzo junto al chat). No pegues ese contenido en tu respuesta.
-- Usar cualquier programa: ábrelo (open_target o run_command) y elige cómo manejarlo. ui_elements lista los botones, menús y campos de una ventana con su número y click_element los pulsa sin adivinar coordenadas (lo más fiable, y sirve aunque no veas imágenes). Con screenshot ves la pantalla o una ventana; zoom amplía una zona para leer texto pequeño; click, drag y scroll usan píxeles de la última captura. Además: type_text, press_keys (atajos), window_action (maximizar, mover, cerrar…) y clipboard para pasar datos entre programas.
-- Web (solo con internet): web_search, web_fetch y download_file para buscar y leer. Para webs que hay que USAR (buscar dentro de un sitio, iniciar sesión, rellenar formularios, páginas con JavaScript), el navegador integrado de Jayth: browser_open, browser_read, browser_click y browser_type por el número de cada elemento, browser_nav y browser_screenshot. El usuario lo ve a la vista y puede intervenir. Las contraseñas las escribe él, y no compres, pagues, publiques ni envíes datos personales sin su confirmación (ask_user).
-- Preguntas sobre Jayth (cómo se usa, dónde está un botón, menú o ajuste, qué versión es, dónde guarda las cosas, qué puedes hacer): consulta jayth_guide y responde con lo que diga, nombrando los botones y menús tal como aparecen en ella (es el idioma de su interfaz). No inventes menús ni opciones.
+%(tools)s- Preguntas sobre Jayth (cómo se usa, dónde está un botón, menú o ajuste, qué versión es, dónde guarda las cosas, qué puedes hacer): consulta jayth_guide y responde con lo que diga, nombrando los botones y menús tal como aparecen en ella (es el idioma de su interfaz). No inventes menús ni opciones.
 - remember: guarda una preferencia duradera cuando el usuario te la diga (p. ej. "usa pnpm", "mis proyectos están en %(example)s").
 - Si el usuario deniega una acción, no insistas: propón otra vía.
 Responde en el idioma del usuario, claro y sin relleno."""
+
+# Herramientas a demanda: un grupo básico siempre a mano y el resto por grupos que se activan cuando hacen falta (lo
+# detecta Jayth por el mensaje o lo pide el modelo con use_tools). Con modelos locales, ofrecer 50 herramientas gasta
+# ~8000 tokens de contexto y confunde a los modelos pequeños. Los grupos activados se añaden al final de la lista y se
+# conservan en la conversación: así lo ya procesado por el modelo (caché de prompt) sigue valiendo.
+CORE = ["read_file", "write_file", "edit_file", "multi_edit", "list_dir", "search_files", "move_path", "delete_path",
+        "run_command", "open_target", "update_plan", "ask_user", "remember", "jayth_guide"]
+GROUPS = {   # grupo: (para qué sirve, herramientas, cómo usarlas: se le da al modelo al activarlo)
+    "web": ("buscar en internet, leer páginas y descargar archivos", ["web_search", "web_fetch", "download_file"],
+            "- Web (solo con internet): web_search, web_fetch y download_file para buscar y leer."),
+    "navegador": ("el navegador de Jayth para webs que hay que usar: buscar dentro de un sitio, formularios, iniciar sesión",
+                  ["browser_open", "browser_read", "browser_click", "browser_type", "browser_nav", "browser_screenshot"],
+                  "- Para webs que hay que USAR (buscar dentro de un sitio, iniciar sesión, rellenar formularios, páginas con JavaScript), el navegador integrado de Jayth: browser_open, browser_read, browser_click y browser_type por el número de cada elemento, browser_nav y browser_screenshot. El usuario lo ve a la vista y puede intervenir. Las contraseñas las escribe él, y no compres, pagues, publiques ni envíes datos personales sin su confirmación (ask_user)."),
+    "control": ("manejar programas del PC: capturas, leer botones, clic, teclado, ventanas y portapapeles",
+                ["screenshot", "ui_elements", "click_element", "click", "drag", "move_mouse", "scroll", "type_text", "press_keys",
+                 "list_windows", "focus_window", "window_action", "clipboard"],
+                "- Usar cualquier programa: ábrelo (open_target o run_command) y elige cómo manejarlo. ui_elements lista los botones, menús y campos de una ventana con su número y click_element los pulsa sin adivinar coordenadas (lo más fiable, y sirve aunque no veas imágenes). Con screenshot ves la pantalla o una ventana; zoom amplía una zona para leer texto pequeño; click, drag y scroll usan píxeles de la última captura. Además: type_text, press_keys (atajos), window_action (maximizar, mover, cerrar…) y clipboard para pasar datos entre programas."),
+    "documentos": ("Word, Excel, PowerPoint y PDF, ver imágenes del disco y el lienzo junto al chat",
+                   ["read_document", "create_document", "view_image", "show_canvas"],
+                   "- Documentos Word, Excel, PowerPoint y PDF: read_document para leerlos y create_document para crearlos (escribes el contenido en Markdown). Imágenes del disco: view_image.\n- Páginas web, documentos largos, diagramas SVG o programas completos que el usuario quiera VER: show_canvas (lienzo junto al chat). No pegues ese contenido en tu respuesta."),
+    "procesos": ("Python para datos y gráficos, procesos en segundo plano y esperas", ["run_python", "command_output", "stop_command", "wait"],
+                 "- Datos (CSV, Excel), cálculos y gráficos: run_python con pandas y matplotlib; los gráficos se muestran solos al usuario. Procesos lanzados con background=true: command_output y stop_command."),
+    "imagenes": ("crear imágenes nuevas en este equipo", ["generate_image"], ""),
+    "agenda": ("olvidar recuerdos, tareas programadas, habilidades y conectar servicios externos",
+               ["forget", "schedule_task", "list_tasks", "cancel_task", "use_skill", "connect_service"],
+               "- forget borra un recuerdo; schedule_task, list_tasks y cancel_task gestionan tareas programadas; use_skill carga una habilidad; connect_service propone conectar un servicio externo con la cuenta del usuario."),
+}
+# palabras que delatan que una tarea necesitará un grupo (español, inglés y portugués; sin acentos)
+_HINTS = {
+    "web": r"\b(busca|buscar|busqueda|internet|web|google|noticia|pagina|url|http|www\.|descarg|search|news|website|link|enlace|precio|"
+           r"cotiza|clima|pesquis|baixar|noticias|wikipedia)",
+    "navegador": r"(inicia sesion|iniciar sesion|log ?in|formulario|rellena|navegador|browser|compra|reserva|portal|entrar no site|"
+                 r"preencher|cadastr)",
+    "control": r"(clic|click|pantalla|captura|ventana|programa\b|aplicacion|\bapp\b|raton|teclado|escribe en|screenshot|mouse|"
+               r"janela|tela|aplicativo|whatsapp|blender|photoshop|explorador|bloc de notas|notepad|calculadora|paint\b|outlook|"
+               r"teams|spotify|discord|telegram|panel de control|configuracion de windows|"
+               r"\b(abre|abrir|abra|open)\b.*\b(escrib|pulsa|presiona|selecciona|type|press|digit|clica))",
+    "documentos": r"(word|excel|powerpoint|\bpdf|docx|xlsx|pptx|documento|informe|presentacion|hoja de calculo|planilha|"
+                  r"lienzo|canvas|diagrama|svg|\bimagen del|esta imagen|la imagen|report|spreadsheet|slides)",
+    "procesos": r"(python|datos|\bcsv|grafic|estadistic|analiza|servidor|segundo plano|chart|plot|dataset|dados)",
+    "imagenes": r"(imagen|ilustracion|logo|foto\b|fotos|dibuj|portada|icono|fondo de pantalla|image|picture|illustration|"
+                r"drawing|imagem|desenh|ilustra)",
+    "agenda": r"(olvida|cada (dia|manana|semana|lunes|martes|miercoles|jueves|viernes|hora)|todos los dias|programa(r)? (una )?tarea|"
+              r"recordatorio|habilidad|conecta|gmail|drive|notion|canva|higgsfield|calendar|calendario|jira|linear|forget|"
+              r"schedule|every (day|morning|week)|todo dia|toda semana|agendar)",
+}
+
+
+def _fold(s):
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", str(s or "").lower()) if unicodedata.category(c) != "Mn")
+
+
+def on_demand(cfg):
+    return (cfg or {}).get("tools_mode", "auto") != "all"
+
+
+def detect_groups(text, cfg=None, files=(), images=()):
+    """Grupos que la tarea seguramente necesitará, por lo que pide el usuario (no hace falta acertar: el modelo puede
+    pedir más con use_tools)."""
+    t = _fold(text)
+    out = [g for g, pat in _HINTS.items() if re.search(pat, t)]
+    if any(os.path.splitext(f)[1].lower() in (".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pdf", ".csv") for f in files or ()):
+        out.append("documentos")
+    if images:
+        out.append("documentos")
+    if (cfg or {}).get("_project"):
+        out.append("procesos")                  # en un proyecto de código: procesos en segundo plano y Python
+    for n in list(H.MCP):                       # un conector nombrado en el mensaje
+        if _fold(n) and _fold(n) in t:
+            out.append("mcp:" + n)
+    return [g for g in dict.fromkeys(out)]
 
 PLAN_MODE = """
 
@@ -114,11 +181,28 @@ class LLMError(Exception):
     pass
 
 
+def group_guide(g):
+    """Cómo usar un grupo de herramientas (se le da al modelo al activarlo)."""
+    if g == "imagenes":
+        return IMAGES.strip()
+    if g.startswith("mcp:"):
+        return "- Herramientas del conector %s: empiezan por mcp__ y su descripción dice para qué sirven." % g[4:]
+    return GROUPS.get(g, ("", [], ""))[2]
+
+
+def _tools_text(cfg):
+    if not on_demand(cfg):                       # todas siempre: las pautas de cada grupo van en las instrucciones
+        return "".join(GROUPS[g][2] + "\n" for g in ("documentos", "procesos", "control", "web", "navegador"))
+    return ("- Tienes a mano las herramientas básicas. Para lo demás (web, navegador, control del PC, documentos, Python, "
+            "imágenes, tareas programadas, conectores…) actívalas primero con use_tools; puedes pedir varios grupos a la vez.\n")
+
+
 def system_prompt(cfg):
-    """Instrucciones del sistema. Se calculan una vez por tarea para que la cache del modelo se reutilice entre pasos."""
+    """Instrucciones del sistema. Se calculan una vez por tarea para que la cache del modelo se reutilice entre pasos
+    (no dependen de qué grupos de herramientas estén activos)."""
     p = WORKFLOW % {"os": osys.os_label(), "shell": osys.shell_name(), "date": datetime.date.today().isoformat(), "ws": cfg["workspace"],
                     "python": "python" if osys.WIN else "python3", "example": "D:\\Trabajo" if osys.WIN else "~/Trabajo",
-                    "fence": "powershell" if osys.WIN else "bash"}
+                    "fence": "powershell" if osys.WIN else "bash", "tools": _tools_text(cfg)}
     lang = {"es": "español", "en": "inglés", "pt": "portugués", "fr": "francés", "de": "alemán", "it": "italiano"}.get(cfg.get("response_language"))
     if lang:
         p += "\nResponde siempre en %s." % lang
@@ -132,7 +216,7 @@ def system_prompt(cfg):
     elif cfg.get("mode") != "readonly":          # puede ejecutar: que compruebe lo visual mirándolo (si puede ver)
         shots = cfg.get("computer_control", True) and "screenshot" not in (cfg.get("tools_disabled") or [])
         p += LOOK if (shots and can_see(cfg)) else LOOK_BLIND if shots else ""
-    if images_offered(cfg) and "generate_image" not in (cfg.get("tools_disabled") or []):
+    if images_offered(cfg) and "generate_image" not in (cfg.get("tools_disabled") or []) and not on_demand(cfg):
         p += IMAGES
     p += services_prompt(cfg)
     if cfg.get("user_name"):
@@ -161,8 +245,8 @@ def system_prompt(cfg):
     return p
 
 
-def tool_schemas(cfg):
-    """Herramientas que se ofrecen al modelo según el modo y los ajustes (la misma lista sirve para el precalentamiento)."""
+def all_schemas(cfg):
+    """Todas las herramientas permitidas por el modo y los ajustes (también las de los conectores)."""
     off = set(cfg.get("tools_disabled") or [])
     if not cfg.get("web_access", True):
         off |= {n for n, t in T.TOOLS.items() if t["category"] == "net"}
@@ -180,6 +264,91 @@ def tool_schemas(cfg):
     if mode not in ("readonly", "plan"):
         out += H.mcp_schemas()
     return out
+
+
+def _group_names(g, by):
+    if g.startswith("mcp:"):
+        return [fn for fn in by if fn.startswith("mcp__") and H._NAMES.get(fn, ("",))[0] == g[4:]]
+    return GROUPS.get(g, ("", [], ""))[1]
+
+
+def group_of(name):
+    """Grupo al que pertenece una herramienta ('' si es básica o desconocida)."""
+    if name.startswith("mcp__"):
+        hit = H._NAMES.get(name)
+        return "mcp:" + hit[0] if hit else ""
+    return next((g for g, (d, names, h) in GROUPS.items() if name in names), "")
+
+
+def available_groups(cfg, by=None):
+    """[(grupo, para qué sirve)] de los grupos con alguna herramienta permitida."""
+    by = by if by is not None else {s["function"]["name"]: s for s in all_schemas(cfg)}
+    out = [(g, d) for g, (d, names, h) in GROUPS.items() if any(n in by for n in names)]
+    for n, srv in list(H.MCP.items()):
+        if any(fn in by for fn in _group_names("mcp:" + n, by)):
+            ex = ", ".join(t["name"] for t in srv.tools[:4])
+            out.append(("mcp:" + n, "conector %s (%d herramientas: %s…)" % (n, len(srv.tools), ex)))
+    return out
+
+
+def _core(cfg):
+    core = list(CORE)
+    try:
+        from . import assistants as AS
+        if AS.enabled_skills():
+            core.append("use_skill")             # con habilidades instaladas, cargarlas siempre debe estar a mano
+    except Exception:
+        pass
+    return core
+
+
+def tool_schemas(cfg, groups=None):
+    """Herramientas que se ofrecen al modelo según el modo y los ajustes (sin grupos: la lista del precalentamiento).
+    A demanda: las básicas, use_tools y las de los grupos activos, en este orden (lo nuevo, al final)."""
+    full = all_schemas(cfg)
+    if not on_demand(cfg):
+        return full
+    by = {s["function"]["name"]: s for s in full}
+    names = [n for n in _core(cfg) if n in by]
+    av = available_groups(cfg, by)
+    out = [by[n] for n in names]
+    if av:
+        out.append({"type": "function", "function": {
+            "name": "use_tools",
+            "description": "Activa grupos de herramientas que aún no tienes, en cuanto la tarea los necesite (quedan activos el resto "
+                           "de la conversación). Grupos: " + "; ".join("%s (%s)" % (g, d) for g, d in av) + ".",
+            "parameters": {"type": "object", "properties": {"groups": {"type": "array", "items": {"type": "string"},
+                                                                       "description": "Nombres de los grupos a activar"}},
+                           "required": ["groups"]}}})
+    seen = set(names)
+    for g in groups or []:
+        for n in _group_names(g, by):
+            if n in by and n not in seen:
+                out.append(by[n])
+                seen.add(n)
+    return out
+
+
+_GROUP_ALIAS = {"internet": "web", "buscar": "web", "search": "web", "browser": "navegador", "navegar": "navegador",
+                "pc": "control", "ordenador": "control", "computer": "control", "pantalla": "control", "raton": "control",
+                "documents": "documentos", "docs": "documentos", "office": "documentos", "lienzo": "documentos", "canvas": "documentos",
+                "python": "procesos", "datos": "procesos", "data": "procesos", "processes": "procesos",
+                "images": "imagenes", "imagen": "imagenes", "image": "imagenes", "imagens": "imagenes",
+                "memoria": "agenda", "tareas": "agenda", "tasks": "agenda", "habilidades": "agenda", "skills": "agenda",
+                "servicios": "agenda", "services": "agenda"}
+
+
+def resolve_group(name, cfg):
+    """Nombre de grupo que da el modelo -> grupo válido ('' si no existe)."""
+    g = _fold(name).strip().strip("«»\"'")
+    valid = [x for x, d in available_groups(cfg)]
+    if g in valid:
+        return g
+    g = _GROUP_ALIAS.get(g, g)
+    if g in valid:
+        return g
+    hit = next((x for x in valid if x.startswith("mcp:") and (_fold(x[4:]) == g.replace("mcp:", "") or _fold(x[4:]) in g)), "")
+    return hit
 
 
 def coerce(args, schema):
@@ -345,7 +514,8 @@ class Run:
         self.fails_seen = Counter()
         self.truncated = False
         self.system = system_prompt(settings)          # fijo durante toda la tarea (cache de prompt)
-        self.tools = tool_schemas(settings)
+        self.groups = list(self.s.get("tool_groups") or [])     # grupos de herramientas ya activos en esta conversación
+        self.tools = tool_schemas(settings, self.groups)
         self.sampling = self._sampling()
 
     def _sampling(self):
@@ -560,6 +730,34 @@ class Run:
             return [self.ctx.path(args["path"])]
         return []
 
+    def _activate(self, groups):
+        """Añade grupos de herramientas (al final de la lista: lo ya procesado por el modelo sigue valiendo). Devuelve los nuevos."""
+        new = [g for g in groups if g and g not in self.groups]
+        if new:
+            self.groups += new
+            self.s["tool_groups"] = list(self.groups)
+            self.tools = tool_schemas(self.cfg, self.groups)
+        return new
+
+    def _use_tools(self, args):
+        want = args.get("groups") or args.get("group") or []
+        if isinstance(want, str):
+            want = re.split(r"[,;\s]+", want)
+        ok_g, bad = [], []
+        for w in want:
+            g = resolve_group(w, self.cfg)
+            (ok_g if g else bad).append(g or str(w))
+        if not ok_g:
+            return False, "Grupos desconocidos: %s. Disponibles: %s." % (", ".join(bad) or "(ninguno)", ", ".join(g for g, d in available_groups(self.cfg)))
+        new = self._activate(ok_g)
+        txt = ("Activadas: %s. Ya puedes usar sus herramientas." % ", ".join(new)) if new else "Esos grupos ya estaban activos."
+        guides = [group_guide(g) for g in new if group_guide(g)]
+        if guides:
+            txt += "\n" + "\n".join(guides)
+        if bad:
+            txt += "\n(No existen: %s.)" % ", ".join(bad)
+        return True, txt
+
     def _exec(self, call):
         """Ejecuta una llamada. Devuelve (ok, texto, imagen, extra)."""
         f = call["function"]
@@ -574,9 +772,18 @@ class Run:
                 return False, ("Tu respuesta se cortó por el límite de longitud y los argumentos quedaron incompletos. Divide el trabajo: "
                                "escribe el archivo en partes (write_file con la primera parte y luego multi_edit/edit_file para añadir el resto)."), None, {}
             return False, "Argumentos JSON inválidos (%s). Envía un objeto JSON válido con los parámetros de la herramienta." % e, None, {}
+        if name == "use_tools":                         # activar grupos de herramientas (lo gestiona el bucle; no se muestra)
+            self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": "agent", "approval": "auto"})
+            return self._use_tools(args) + (None, {})
         if tool is None:
             self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": "read", "approval": "auto"})
             return False, "Herramienta desconocida: %s. Usa una de las disponibles." % name, None, {}
+        offered = {s["function"]["name"] for s in self.tools}
+        if name not in offered:
+            if name not in {s["function"]["name"] for s in all_schemas(self.cfg)}:   # desactivada en Ajustes, sin internet…
+                self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": tool["category"], "approval": "blocked"})
+                return False, "La herramienta %s no está disponible en esta sesión (está desactivada o no se permite en este modo)." % name, None, {}
+            self._activate([group_of(name)])            # la conocía aunque no estaba cargada: se activa su grupo y se usa
         args = coerce(args, tool["parameters"])
         sig = name + json.dumps(args, sort_keys=True, ensure_ascii=False)[:2000]
         self.calls_seen[sig] += 1
@@ -655,6 +862,13 @@ class Run:
     def run(self, text, image_names=(), attachments=""):
         msgs = self.s["messages"]
         body = text + (("\n\n" + attachments) if attachments else "")
+        if on_demand(self.cfg):                         # grupos que seguramente hagan falta: activos desde el primer paso
+            files = [l[4:].strip() for l in attachments.splitlines() if l.startswith("### ")]
+            valid = {g for g, d in available_groups(self.cfg)}
+            new = self._activate([g for g in detect_groups(text, self.cfg, files, image_names) if g in valid])
+            guides = [group_guide(g) for g in new if group_guide(g)]
+            if new:                                     # sus pautas van con el mensaje (no cambian las instrucciones fijas)
+                body += "\n\n[Herramientas activadas para esta tarea: %s]%s" % (", ".join(new), ("\n" + "\n".join(guides)) if guides else "")
         content = body if not image_names else [{"type": "text", "text": body}] + [{"type": "image_ref", "name": n} for n in image_names]
         msgs.append({"role": "user", "content": content})
         self.emit({"t": "user", "text": text, "images": list(image_names), "files": [l[4:].strip() for l in attachments.splitlines() if l.startswith("### ")]})

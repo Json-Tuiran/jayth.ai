@@ -693,6 +693,11 @@ class SettingsDialog(QDialog):
     def p_tools(self, v):
         self.field(v, "web_access", tr("Permitir el acceso a internet (buscar, leer páginas y descargar)"), "bool")
         self.field(v, "computer_control", tr("Permitir el control del ordenador (ratón, teclado, capturas)"), "bool")
+        self.field(v, "tools_mode", tr("Herramientas que se cargan"), "choice",
+                   choices=[(tr("Solo las que necesita cada tarea (recomendado)"), "auto"), (tr("Todas siempre"), "all")],
+                   help=tr("Con solo las necesarias, el modelo tiene más memoria para la conversación, responde antes y se equivoca "
+                           "menos; el agente activa las demás en cuanto las necesita. «Todas siempre» gasta unas 6000 palabras más "
+                           "de contexto en cada conversación."))
         self._section(v, tr("Herramientas disponibles"))
         off = set(core.SET.snapshot()["tools_disabled"])
         grid = QGridLayout()

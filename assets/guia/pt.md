@@ -222,7 +222,9 @@ exato):
   - **Limites:** “Máximo de passos por tarefa”, “Tempo máximo de cada comando”, “Máximo de texto que o modelo recebe
     de cada ação”, “Enviar capturas e imagens ao modelo (se ele tiver visão)”, “Imagens recentes que ele lembra”.
 - **Ferramentas:** “Permitir o acesso à internet (pesquisar, ler páginas e baixar)”, “Permitir o controle do
-  computador (mouse, teclado, capturas)”.
+  computador (mouse, teclado, capturas)”, “Ferramentas carregadas” (por padrão, só as que cada tarefa precisa: o
+  agente tem as básicas à mão e ativa os outros grupos —web, navegador, controle do PC, documentos, Python, imagens,
+  agenda e cada conector— quando precisa; assim o modelo local tem mais memória e responde antes).
   - **Ferramentas disponíveis:** cada ferramenta do agente pode ser desligada separadamente.
   - **Pesquisa na web:** “Buscador” (automático com DuckDuckGo e Wikipedia, Brave Search ou SearXNG), “Chave do Brave
     Search”, “URL do SearXNG”.
