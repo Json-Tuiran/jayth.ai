@@ -16,7 +16,12 @@ else:
 
 
 class ToolError(Exception):
-    """Error 'normal' de una herramienta: se le devuelve al modelo como texto."""
+    """Error 'normal' de una herramienta: se le devuelve al modelo como texto. ui: datos para la interfaz (p. ej. la
+    tarjeta para instalar lo que falta)."""
+
+    def __init__(self, msg="", ui=None):
+        super().__init__(msg)
+        self.ui = ui or {}
 
 
 class Abort(Exception):
@@ -25,6 +30,7 @@ class Abort(Exception):
 
 MAX_OUT = 10000
 TOOLS = {}
+PROGRESS = {}       # id de la llamada -> avance de una herramienta larga (la interfaz lo lee mientras se ejecuta)
 
 # Nombres comprensibles para la interfaz (el modelo usa los internos)
 TOOL_LABELS = {
@@ -41,10 +47,11 @@ TOOL_LABELS = {
     "window_action": tr("Manejar ventanas"), "clipboard": tr("Usar el portapapeles"), "jayth_guide": tr("Consultar la guía de Jayth"),
     "browser_open": tr("Abrir páginas en el navegador de Jayth"), "browser_read": tr("Leer la página del navegador"), "browser_click": tr("Pulsar en el navegador"),
     "browser_type": tr("Escribir en el navegador"), "browser_nav": tr("Navegar (atrás, recargar, desplazar)"), "browser_screenshot": tr("Capturar el navegador"),
+    "generate_image": tr("Crear imágenes"), "connect_service": tr("Proponer conectar un servicio"),
 }
 CATEGORIES = {"read": tr("Lectura"), "write": tr("Escritura"), "exec": tr("Ejecución"), "net": tr("Red"), "control": tr("Control del PC"),
               "agent": tr("Agente"), "mcp": tr("Conector")}
-WRITE_TOOLS = {"write_file", "edit_file", "multi_edit", "move_path", "delete_path", "create_document"}   # crean punto de restauracion
+WRITE_TOOLS = {"write_file", "edit_file", "multi_edit", "move_path", "delete_path", "create_document", "generate_image"}   # crean punto de restauracion
 
 
 def clip(s, n=MAX_OUT):
@@ -65,6 +72,7 @@ class Ctx:
         self.scale = None  # factor captura -> pantalla real
         self.img_w = None
         self.origin = None  # esquina de la ventana capturada (None = pantalla entera)
+        self.call_id = None  # llamada en curso (para publicar su avance en PROGRESS)
 
     def path(self, p):
         p = os.path.expandvars(os.path.expanduser(str(p)))
@@ -1571,6 +1579,69 @@ def view_image(a, ctx):
         return {"text": "Imagen %s (%d KB)" % (os.path.basename(p), os.path.getsize(p) // 1024), "image": f.read()}
 
 
+@tool("generate_image", "write",
+      "Crea una imagen nueva (foto, ilustración, logotipo, icono, fondo, portada…) a partir de una descripción, con el "
+      "generador de imágenes de Jayth, que funciona en este equipo. Úsalo cuando el usuario pida una imagen o cuando la "
+      "tarea la necesite (p. ej. ilustrar una web, una presentación o un documento). Describe con detalle qué se ve, el "
+      "estilo, la luz, los colores y el encuadre; el texto que deba aparecer, entre comillas. Una imagen por llamada: "
+      "tarda de segundos a varios minutos según el equipo. Con reference modifica una imagen existente. El usuario ve la "
+      "imagen en el chat y tú también (si el modelo tiene visión): compruébala y repite con otra descripción si no encaja.",
+      {"prompt": S("Descripción detallada de la imagen (funciona en cualquier idioma; en inglés suele ser más precisa)"),
+       "path": S("Archivo .png donde guardarla (opcional; por defecto en la carpeta «imagenes» de la carpeta de trabajo)"),
+       "aspect": S("square (cuadrada, por defecto), landscape (horizontal 16:9), portrait (vertical 9:16), wide (3:2) o tall (2:3)"),
+       "width": I("Ancho en píxeles (opcional; mejor usa aspect)"), "height": I("Alto en píxeles (opcional)"),
+       "seed": I("Semilla para repetir una imagen con pequeños cambios en la descripción (opcional)"),
+       "reference": S("Imagen existente que modificar o usar como referencia (opcional)")}, ["prompt"])
+def generate_image(a, ctx):
+    from . import imagegen as IG, core
+    cfg = core.SET.snapshot()
+    prompt = re.sub(r"\s+", " ", str(a.get("prompt") or "")).strip()
+    if not prompt:
+        raise ToolError("Falta la descripción de la imagen (prompt).")
+    if not IG.available():
+        raise ToolError("El generador de imágenes de Jayth no está disponible en este sistema (%s). Dile al usuario que, de momento, "
+                        "no se pueden crear imágenes aquí." % osys.os_label())
+    m = IG.model(cfg)
+    st = IG.status(cfg)
+    if not st["ready"]:
+        if IG.installing():
+            raise ToolError("El generador de imágenes se está instalando ahora (el usuario ve el avance en el chat). Espera a que el "
+                            "usuario te diga que terminó; mientras, sigue con el resto de la tarea.", ui={"image_setup": m["id"]})
+        raise ToolError("El generador de imágenes todavía no está instalado en este equipo (hace falta descargar %s una sola vez). "
+                        "El usuario ya ve en el chat un botón para instalarlo: no lo intentes de nuevo hasta que te diga que está listo; "
+                        "mientras, sigue con el resto de la tarea o explícale que hace falta." % _human(st["need"]),
+                        ui={"image_setup": m["id"]})
+    out = ctx.path(a["path"]) if a.get("path") else IG.default_path(cfg, ctx.workspace, prompt)
+    if os.path.splitext(out)[1].lower() != ".png":
+        out = os.path.splitext(out)[0] + ".png"
+    refs = [ctx.path(a["reference"])] if a.get("reference") else []
+    cid = ctx.call_id
+    existed = os.path.exists(out)
+
+    def prog(info):
+        if cid:
+            PROGRESS[cid] = info
+    try:
+        r = IG.generate(cfg, prompt, out, aspect=a.get("aspect") or "", width=a.get("width") or 0, height=a.get("height") or 0,
+                        seed=a.get("seed"), refs=refs, progress=prog, stop=ctx.stop)
+    except IG.Cancelled:
+        raise ToolError("Cancelado por el usuario.")
+    except IG.NotInstalled:
+        raise ToolError("Faltan archivos del generador de imágenes. El usuario ve en el chat un botón para instalarlos.", ui={"image_setup": m["id"]})
+    except RuntimeError as e:
+        raise ToolError(str(e))
+    finally:
+        PROGRESS.pop(cid, None)
+    with open(r["path"], "rb") as f:
+        png = f.read()
+    took = r["seconds"]
+    return {"text": "%s imagen %s (%dx%d, %s, semilla %d) en %s. El usuario ya la ve en el chat; no la describas entera. "
+                    "Para otra versión parecida usa la misma semilla con la descripción retocada." % (
+                        "Reemplazada la" if existed else "Creada la", r["path"], r["width"], r["height"], r["model"], r["seed"],
+                        ("%d s" % took) if took < 120 else ("%.1f min" % (took / 60))),
+            "image": png, "ui": {"generated": r["path"]}}
+
+
 # ---------------------------------------------------------------- herramientas del propio agente (las gestiona el bucle)
 @tool("update_plan", "agent", "Crea o actualiza tu lista de tareas para trabajos de varios pasos (el usuario la ve). "
       "Mantén una sola tarea in_progress y marca completed al terminar cada una.",
@@ -1694,6 +1765,26 @@ def use_skill(a, ctx):
       ["question"])
 def ask_user(a, ctx):
     return "(la respuesta la gestiona el agente)"
+
+
+@tool("connect_service", "agent",
+      "Propone al usuario conectar un servicio externo con su propia cuenta cuando lo pida o la tarea lo necesite: higgsfield "
+      "(imágenes y vídeo con IA en la nube; gasta sus créditos), gmail, drive (Google Drive), calendar (Google Calendar), notion, "
+      "canva, linear, atlassian (Jira y Confluence) o huggingface. En el chat aparece un botón «Conectar» y el usuario inicia sesión "
+      "él mismo en la página del servicio; tú nunca ves su contraseña. No lo propongas si la tarea se puede hacer bien en el equipo.",
+      {"service": S("Id del servicio (higgsfield, gmail, drive, calendar, notion, canva, linear, atlassian, huggingface)"),
+       "reason": S("Para qué lo necesitas, en una frase (la ve el usuario)")}, ["service"])
+def connect_service(a, ctx):
+    from . import conectores as CN
+    q = str(a.get("service") or "").strip().lower()
+    c = CN.find(q) or next((x for x in CN.CATALOG if q and (q in x["name"].lower() or x["name"].lower() in q)), None)
+    if not c:
+        raise ToolError("No conozco el servicio «%s». Disponibles: %s." % (a.get("service"), ", ".join(x["id"] for x in CN.CATALOG)))
+    if CN.connected(c["id"]):
+        return "%s ya está conectado: usa sus herramientas (empiezan por mcp__%s__)." % (c["name"], re.sub(r"[^A-Za-z0-9_-]+", "_", c["name"])[:16])
+    return {"text": "El usuario ve en el chat un botón para conectar %s con su cuenta. Espera a que te diga que ya está conectado; "
+                    "mientras, sigue con lo que puedas hacer sin ese servicio." % c["name"],
+            "ui": {"connect_service": c["id"], "reason": str(a.get("reason") or "")[:200]}}
 
 
 @tool("jayth_guide", "agent", "Guía de Jayth, la app en la que trabajas: qué hace cada parte, dónde está cada botón, menú o ajuste, "

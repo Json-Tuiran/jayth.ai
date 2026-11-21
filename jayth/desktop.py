@@ -419,7 +419,15 @@ STEP = {  # herramienta: (infinitivo, pasado, objeto)
     "browser_click": (tr("pulsar"), tr("Pulsó"), lambda a: (tr("«%s»") % _q(a.get("text"), 40)) if a.get("text") else tr("el elemento %s") % a.get("index")),
     "browser_type": (tr("escribir"), tr("Escribió"), lambda a: tr("«%s»") % _q(a.get("text"), 40)),
     "browser_screenshot": (tr("capturar la página"), tr("Capturó la página"), lambda a: ""),
+    "generate_image": (tr("crear la imagen"), tr("Creó la imagen"), lambda a: tr("«%s»") % _q(a.get("prompt"), 50)),
+    "connect_service": (tr("proponer conectar"), tr("Propuso conectar"), lambda a: _svc_name(a.get("service"))),
 }
+
+
+def _svc_name(cid):
+    from . import conectores as CN
+    c = CN.find(str(cid or "").lower())
+    return c["name"] if c else str(cid or "")
 BROWSER_NAV = {"back": (tr("volver atrás"), tr("Volvió atrás"), tr("Volviendo atrás…")), "forward": (tr("ir adelante"), tr("Fue adelante"), tr("Yendo adelante…")),
                "reload": (tr("recargar la página"), tr("Recargó la página"), tr("Recargando la página…")),
                "down": (tr("bajar por la página"), tr("Bajó por la página"), tr("Bajando por la página…")),
@@ -444,7 +452,7 @@ GERUND = {
     "list_tasks": tr("Consultando las tareas programadas"), "cancel_task": tr("Quitando la tarea"), "use_skill": tr("Usando la habilidad"),
     "ui_elements": tr("Leyendo la interfaz de"), "click_element": tr("Pulsando"), "drag": tr("Arrastrando"),
     "browser_open": tr("Abriendo"), "browser_read": tr("Leyendo la página"), "browser_click": tr("Pulsando"), "browser_type": tr("Escribiendo"),
-    "browser_screenshot": tr("Capturando la página"),
+    "browser_screenshot": tr("Capturando la página"), "generate_image": tr("Creando la imagen"), "connect_service": tr("Proponiendo conectar"),
 }
 
 
@@ -569,6 +577,9 @@ class StepRow(QWidget):
             av.setContentsMargins(12, 10, 12, 10)
             if ev.get("danger"):
                 av.addWidget(TextView(tr("Acción delicada: revisa bien el detalle antes de permitirla."), "plain", color=C["warn"], size="9pt"))
+            if ev.get("account"):
+                av.addWidget(TextView(tr("Actúa en tu cuenta de %s: puede publicar, enviar o gastar créditos.") % ev["account"], "plain",
+                                      color=C["warn"], size="9pt"))
             bw = QWidget()
             row = FlowLayout(bw)
             cat = T.CATEGORIES.get(ev["category"], ev["category"])
@@ -654,7 +665,49 @@ class StepRow(QWidget):
         self.details.hide()
         self._set("run" if decision in ("allow", "allow_category") else "denied")
 
+    def live(self, info):
+        """Avance de una acción larga (crear una imagen): «Dibujando · paso 2 de 4 · quedan 1 min» y su vista previa."""
+        from . import imagegen as IG
+        if info is getattr(self, "_last_info", None):   # sin novedades desde la última vez (llega cada medio segundo)
+            return
+        self._last_info = info
+        if getattr(self, "live_w", None) is None:
+            w = QWidget()
+            lv = QVBoxLayout(w)
+            lv.setContentsMargins(30, 0, 6, 6)
+            lv.setSpacing(6)
+            self.live_txt = QLabel()
+            self.live_txt.setObjectName("faint")
+            lv.addWidget(self.live_txt)
+            self.live_img = QLabel()
+            self.live_img.setObjectName("thumb")
+            self.live_img.hide()
+            lv.addWidget(self.live_img, 0, Qt.AlignLeft)
+            self.layout().insertWidget(1, w)
+            self.live_w, self._prev_sig = w, None
+        self.live_txt.setText(IG.describe(info))
+        p = info.get("preview")
+        try:
+            sig = (os.path.getmtime(p), os.path.getsize(p)) if p else None
+        except OSError:
+            sig = None
+        if sig and sig != self._prev_sig:
+            pm = QPixmap(p)
+            if not pm.isNull():                          # a medio escribir: se queda la anterior
+                self._prev_sig = sig
+                w, h = info.get("size") or (pm.width(), pm.height())
+                k = min(260.0 / max(1, w), 200.0 / max(1, h))
+                self.live_img.setPixmap(rounded(pm.scaled(max(1, int(w * k)), max(1, int(h * k)), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)))
+                self.live_img.setToolTip(tr("Vista previa: la imagen se va formando en cada paso"))
+                self.live_img.show()
+
     def result(self, ok, text, image):
+        if getattr(self, "live_w", None) is not None:
+            self.live_w.hide()
+            self.live_w.deleteLater()
+            self.live_w = None
+        if self.ev["name"] == "generate_image":
+            image = None                              # la imagen creada se muestra en grande en su tarjeta
         self._set("ok" if ok else "err")
         if ok and text and self.ev["name"] in ("browser_click", "click_element"):     # «Pulsó el elemento 7» -> «Pulsó «Iniciar sesión»»
             m = re.search(r"«([^»\n]{1,60})»", text.split("\n", 1)[0])
@@ -677,6 +730,18 @@ class StepRow(QWidget):
             m = re.search(r"documento \w+ (.+?\.(?:docx|xlsx|pptx|pdf)) \(", text or "", re.I)
             if m:
                 self.doc_card = self.box.add_doc(m.group(1))
+        self._chev()
+
+    def needs_setup(self):
+        """La acción no pudo hacerse porque falta instalar algo (el generador de imágenes): aviso, no error."""
+        self.details.hide()
+        self.st_icon.set_icon("est_aviso", C["warn"])
+        self.st_icon.set_active(False)
+        t = tr("Para crear la imagen falta instalar el generador de imágenes")
+        self.title.setText(t, -1)
+        self.title.set_active(False)
+        self.title.set_color(C["mut"], C["tx"])
+        self.head.setToolTip(t)
         self._chev()
 
     def undone(self):
@@ -709,6 +774,7 @@ GROUP = {
     "browser_click": (tr("pulsó en la página"), tr("pulsó %d veces en la página")), "browser_type": (tr("escribió en la página"), tr("rellenó %d campos")),
     "browser_nav": (tr("navegó por la página"), tr("navegó %d veces")), "browser_screenshot": (tr("capturó la página"), tr("capturó %d veces la página")),
     "run_python": (tr("analizó los datos con Python"), tr("hizo %d análisis con Python")), "show_canvas": (tr("mostró algo en el lienzo"), tr("actualizó el lienzo %d veces")),
+    "generate_image": (tr("creó una imagen"), tr("creó %d imágenes")),
 }
 _GROUP_ALIAS = {"multi_edit": "edit_file", "click": "control", "move_mouse": "control", "scroll": "control", "type_text": "control",
                 "press_keys": "control", "list_windows": "control", "focus_window": "control", "ui_elements": "control",
@@ -781,6 +847,40 @@ class DocCard(QFrame):
         h.addWidget(btn(tr("Abrir"), "primary", lambda: os.path.isfile(self.path) and osys.open_path(self.path)))
         h.addWidget(tbtn("act_carpeta_abierta", tr("Mostrar en la carpeta"), lambda: reveal(self.path), size=15))
         self.setToolTip(path)
+
+
+class ImageCard(QFrame):
+    """Imagen creada por el agente: en grande, con su nombre y botones para abrirla o verla en su carpeta."""
+
+    def __init__(self, path):
+        super().__init__()
+        self.setObjectName("docCard")
+        self.path = path
+        v = QVBoxLayout(self)
+        v.setContentsMargins(8, 8, 8, 8)
+        v.setSpacing(8)
+        v.addWidget(Preview(path, 480, 360), 0, Qt.AlignLeft)
+        h = QHBoxLayout()
+        h.setSpacing(10)
+        info = QVBoxLayout()
+        info.setSpacing(1)
+        name = ElidedLabel(os.path.basename(path))
+        name.setStyleSheet("font-weight:600")
+        info.addWidget(name)
+        pm = QImage(path)
+        try:
+            size = T._human(os.path.getsize(path))
+        except OSError:
+            size = ""
+        sub = ElidedLabel(" · ".join(x for x in (tr("Imagen PNG"), "%d × %d" % (pm.width(), pm.height()) if not pm.isNull() else "", size) if x))
+        sub.setObjectName("faint")
+        info.addWidget(sub)
+        h.addLayout(info, 1)
+        h.addWidget(btn(tr("Abrir"), "primary", lambda: os.path.isfile(self.path) and osys.open_path(self.path)))
+        h.addWidget(tbtn("act_carpeta_abierta", tr("Mostrar en la carpeta"), lambda: reveal(self.path), size=15))
+        v.addLayout(h)
+        self.setToolTip(path)
+        self.setMaximumWidth(500)
 
 
 class CanvasCard(QFrame):
@@ -933,6 +1033,17 @@ class StepsBox(QFrame):
     def add_canvas(self, item, on_open):
         self.ev_.addWidget(CanvasCard(item, on_open))
         self.extras.show()
+
+    def add_image(self, path):
+        if path and os.path.isfile(path):
+            self.ev_.addWidget(ImageCard(path), 0, Qt.AlignLeft)
+            self.images = getattr(self, "images", []) + [path]      # ya se ve aquí: no se repite al final de la respuesta
+            self.extras.show()
+
+    def add_widget(self, w):
+        self.ev_.addWidget(w)
+        self.extras.show()
+        return w
 
     def add_doc(self, path):
         if path and os.path.isfile(path):
@@ -1881,6 +1992,14 @@ class ChatPanel(QWidget):
             except Exception as e:
                 print("evento", ev.get("t"), e, file=sys.stderr)
         self.ev_i += len(new)
+        if T.PROGRESS:                                   # acciones largas en curso (crear una imagen): su avance
+            for cid, info in list(T.PROGRESS.items()):
+                r = self.rows.get(cid)
+                if r is not None and r.phase == "run":
+                    try:
+                        r.live(info)
+                    except Exception as e:
+                        print("avance", cid, e, file=sys.stderr)
         busy = s.run is not None
         if busy != self.busy:
             self.busy = busy
@@ -2010,6 +2129,18 @@ class ChatPanel(QWidget):
                     fact = str((r.ev.get("args") or {}).get("fact") or (r.ev.get("args") or {}).get("text") or "")
                     self.main.toast((tr("Guardado en la memoria: «%s»") if r.ev["name"] == "remember" else tr("Olvidado: «%s»")) % fact[:90],
                                     tr("Ver memoria"), lambda: self.main.settings("Personalización"), icon_name="ia_memoria")
+                if ev.get("connect_service") and r.box is not None and getattr(r, "svc_tile", None) is None:
+                    from .conectores_ui import ServiceTile         # el agente propone conectar un servicio: tú decides
+                    r.svc_tile = r.box.add_widget(ServiceTile(ev["connect_service"], on_continue=self._service_ready,
+                                                              reason=ev.get("reason") or ""))
+                if ev.get("image_setup") and r.box is not None and getattr(r, "setup_box", None) is None:
+                    from .imagen_ui import ImageInstallBox      # falta el generador de imágenes: se instala desde aquí
+                    r.needs_setup()
+                    r.setup_box = r.box.add_widget(ImageInstallBox(ev["image_setup"], on_continue=self._images_ready, intro=True))
+                if ev["ok"] and ev.get("generated") and r.box is not None:
+                    r.box.add_image(ev["generated"])
+                    if ev.get("image"):                          # su copia en el chat tampoco se repite al final
+                        r.box.images.append(os.path.join(paths.IMG_DIR, ev["image"]))
                 if ev["ok"] and r.box is not None:
                     for n in (ev.get("images") or [])[1:]:           # el resto de gráficos de un análisis
                         r.box.add_preview(os.path.join(paths.IMG_DIR, n))
@@ -2334,6 +2465,20 @@ class ChatPanel(QWidget):
         s = self.session()
         if s and s.run:
             s.run.request_stop()
+
+    def _service_ready(self, name):
+        """Botón «Continuar» de la ficha de un servicio recién conectado: avisa al agente."""
+        if self.busy:
+            return self.main.toast(tr("El agente sigue trabajando; díselo cuando termine."), icon_name="est_info")
+        self.input.setPlainText(tr("Ya conecté %s: continúa.") % name)
+        self.send()
+
+    def _images_ready(self):
+        """Botón «Continuar» de la tarjeta del generador de imágenes: avisa al agente de que ya puede crearlas."""
+        if self.busy:
+            return self.main.toast(tr("El agente sigue trabajando; díselo cuando termine."), icon_name="est_info")
+        self.input.setPlainText(tr("Ya está instalado el generador de imágenes: continúa y crea la imagen."))
+        self.send()
 
     def _add_image(self, src=None, qimage=None):
         name = uuid.uuid4().hex[:12] + ".png"
@@ -4624,6 +4769,27 @@ def selftest(app):
     ok("i18n", lambda: i18n.LANG == "es" or len(i18n.CATALOG) > 500 or "falta el catálogo de " + i18n.LANG)
     # la guía que consulta el agente sobre la propia app (jayth_guide), en el idioma de la interfaz
     ok("guide", lambda: (len(importlib.import_module("jayth.guide").sections()) >= 20 and "jayth_guide" in T.TOOLS) or "falta la guía de Jayth")
+    # generador de imágenes: catálogo y la parte de la interfaz (sin descargar nada)
+    def images():
+        IG = importlib.import_module("jayth.imagegen")
+        importlib.import_module("jayth.imagen_ui")
+        bad = [f["file"] for m in IG.MODELS for f in m["files"] if not f["size"] or len(f["sha256"]) != 64]
+        return ("faltan datos de " + ", ".join(bad)) if bad else ("generate_image" in T.TOOLS or "falta la herramienta generate_image")
+    ok("images", images)
+
+    def connectors():                       # catálogo de servicios, inicio de sesión y bóveda cifrada (sin conectarse a nada)
+        CN = importlib.import_module("jayth.conectores")
+        importlib.import_module("jayth.conectores_ui")
+        importlib.import_module("jayth.oauth")
+        bad = [c["id"] for c in CN.CATALOG if not c["url"].startswith("https://")]
+        if bad or len({c["id"] for c in CN.CATALOG}) != len(CN.CATALOG):
+            return "catálogo de servicios incorrecto: " + ", ".join(bad)
+        BV = importlib.import_module("jayth.boveda")
+        BV.put("autodiagnostico", {"ok": 1})
+        good = BV.get("autodiagnostico") == {"ok": 1}
+        BV.delete("autodiagnostico")
+        return ("connect_service" in T.TOOLS and good) or "la bóveda de credenciales no funciona"
+    ok("connectors", connectors)
     ok("tools", lambda: len(T.TOOLS) >= 25 or "faltan herramientas")
     ok("shell", lambda: "JAYTH_OK" in __import__("subprocess").run(osys.shell_argv("echo JAYTH_OK"), capture_output=True, text=True,
                                                                      timeout=60, **osys.popen_kwargs()).stdout or "la terminal no responde")

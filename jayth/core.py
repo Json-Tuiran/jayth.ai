@@ -107,6 +107,11 @@ DEFAULTS = {
     "brave_key": "",
     "searxng_url": "",
     "custom_instructions": "",
+    # imágenes (imagegen.py: stable-diffusion.cpp en el propio equipo)
+    "image_gen": True,           # ofrecer al agente la herramienta generate_image
+    "image_model": "flux2-klein-4b",
+    "image_size": "auto",        # auto (512 sin tarjeta gráfica, 1024 con ella) | 512 | 768 | 1024
+    "image_dir": "",             # carpeta donde se guardan ("" = «imagenes» dentro de la carpeta de trabajo)
 }
 
 # Ajustes que solo se aplican al reiniciar el motor

@@ -124,6 +124,27 @@ siempre el usuario, y el agente pide confirmación antes de comprar, pagar, publ
 Para páginas web, documentos largos, diagramas SVG o programas que el usuario quiera ver: el agente los muestra en un
 panel junto al chat («Ver en el lienzo»), con vista previa y código, versiones (v1 de n) y opción de guardarlos.
 
+## Imágenes
+
+El agente puede crear imágenes nuevas (fotos, ilustraciones, logotipos, iconos, fondos, portadas) en el propio equipo:
+cuando se lo pides o cuando una tarea las necesita (ilustrar una web, una presentación o un documento). También
+modifica una imagen que ya tienes (con FLUX.2 [klein]). Mientras la crea se ve el paso en el que va, lo que queda y una
+vista previa; al terminar aparece en grande en el chat con **Abrir** y **Mostrar en la carpeta**. Se guarda en la
+carpeta «imagenes» de la carpeta de trabajo (o del proyecto), o en la que se elija en Ajustes.
+
+- Funciona sin internet ni servicios externos, con stable-diffusion.cpp (MIT) y un modelo de imagen de licencia libre
+  (Apache-2.0): **FLUX.2 [klein] 4B** (rápido y versátil, el recomendado) o **Z-Image Turbo** (más realista, mejor con
+  tarjeta gráfica).
+- La primera vez hay que instalarlo (unos 5 GB, una sola vez): con **Instalar** en la tarjeta que aparece en el chat
+  cuando el agente lo necesita (después, **Continuar**), o en **Ajustes › Imágenes**. Se ve el avance, se puede
+  cancelar y se reanuda si se corta. **Quitar** borra sus archivos.
+- Tiempo: con tarjeta gráfica, menos de un minuto por imagen; sin ella, varios minutos (por eso, sin tarjeta gráfica se
+  crean a 512 px). Se cambia en Ajustes › Imágenes › «Tamaño de las imágenes».
+- Solo se usa si el modelo de texto activo no crea imágenes por sí mismo (hoy ninguno de los que funcionan con
+  llama.cpp lo hace). Se apaga con «Permitir que el agente cree imágenes».
+- Cada imagen es una acción de escritura: según el modo de permisos se aprueba antes de crearla, y se puede deshacer.
+- Para gráficos de datos el agente usa Python, y para diagramas, SVG en el lienzo.
+
 ## Control del ordenador y otros programas
 
 El agente puede abrir programas y archivos, leer los botones y campos de cualquier ventana (accesibilidad del sistema),
@@ -198,7 +219,13 @@ Se abren desde el menú del perfil (**Ajustes**). Los cambios se guardan solos. 
   - **Herramientas disponibles:** cada herramienta del agente se puede apagar por separado.
   - **Búsqueda web:** «Buscador» (automático con DuckDuckGo y Wikipedia, Brave Search o SearXNG), «Clave de Brave
     Search», «URL de SearXNG».
+  - **Servicios con tu cuenta:** fichas para conectar servicios en línea (**Conectar**, **Desconectar**, **Configurar
+    Google…**).
   - **Conectores MCP:** plantillas, añadir (**Añadir y probar**), probar y quitar conectores.
+- **Imágenes:** «Permitir que el agente cree imágenes».
+  - **Modelo de imagen:** «Modelo elegido» (FLUX.2 [klein] 4B o Z-Image Turbo), su estado y **Instalar**, **Cancelar** o
+    **Quitar**.
+  - **Imágenes creadas:** «Tamaño de las imágenes» (Automático, 512, 768 o 1024 px) y «Carpeta donde se guardan».
 - **Datos y privacidad:** la carpeta de datos (**Abrir carpeta**).
   - **Conversaciones:** **Exportar conversaciones (Markdown)…**, liberar espacio de imágenes sin usar y borrar todas las
     conversaciones.
@@ -243,7 +270,18 @@ había en la pantalla (Ctrl+S). Enter envía, Esc cierra.
 - **Conectores MCP** (Ajustes › Herramientas): amplían las herramientas del agente con el estándar Model Context
   Protocol (archivos, memoria, navegador Playwright, Git, Fetch, GitHub…). Hay plantillas que rellenan el formulario;
   pueden ser un programa del equipo (comando y argumentos, muchos necesitan Node.js o uv) o un servicio remoto
-  (dirección y clave). **Añadir y probar** los conecta.
+  (dirección y clave). **Añadir y probar** los conecta; si el servicio pide iniciar sesión, se abre su página
+  (después, **Iniciar sesión** o **Cerrar sesión** en su fila).
+- **Servicios con tu cuenta** (Ajustes › Herramientas): todo es opcional; Jayth funciona en local y sin internet. Hay
+  fichas para Higgsfield (imágenes y vídeo con IA en la nube, con tus créditos), Notion, Canva, Gmail, Google Drive,
+  Google Calendar, Linear, Jira y Confluence, y Hugging Face (sin cuenta). **Conectar** abre la página del servicio en
+  el navegador: el usuario inicia sesión allí y autoriza; Jayth nunca ve la contraseña y guarda el permiso cifrado en
+  el equipo (se renueva solo). **Desconectar** lo olvida. Gmail, Drive y Calendar piden antes **Configurar Google…**:
+  crear una vez un «ID de cliente de OAuth» de tipo «App de escritorio» en Google Cloud (con las API de MCP activadas y
+  el correo como usuario de prueba) y pegar su ID y su secreto; sirve para los tres.
+- Si una tarea lo necesita, el agente puede proponer conectar un servicio: aparece su ficha en el chat con
+  **Conectar** y, al terminar, **Continuar**. Lo que cambie algo en la cuenta (enviar, publicar, gastar créditos)
+  siempre pide aprobación, también en modo Automático; leer no.
 - **Búsqueda web:** por defecto DuckDuckGo; si pide un captcha, Jayth no lo salta y usa Wikipedia. Para búsquedas
   completas se puede poner una clave de Brave Search o una instancia propia de SearXNG.
 
@@ -267,7 +305,8 @@ Conversaciones, ajustes y modelos se conservan al actualizar.
 - **Ajustes, conversaciones, motor y modelos:** Windows `%LOCALAPPDATA%\Jayth`, macOS `~/Library/Application
   Support/Jayth`, Linux `~/.local/share/jayth` (la ruta real de este equipo va en los datos de esta versión).
 - **Carpeta de trabajo del modo Chat:** por defecto `Documentos/Jayth`; se cambia en Ajustes › Agente y permisos.
-- **Carpeta de modelos:** se cambia en Ajustes › Modelos.
+- **Carpeta de modelos:** se cambia en Ajustes › Modelos. Los modelos de imagen van en su subcarpeta `imagen`, y el
+  motor de imágenes, junto al de llama.cpp (`runtime/imagen`).
 - **Modo portátil:** un archivo `portable.txt` junto al programa guarda todo en `userdata/` a su lado (para un USB).
 - **Privacidad:** todo se queda en el equipo; Jayth no envía conversaciones ni archivos a ningún servidor. Solo usa
   internet para descargar modelos y motores, buscar actualizaciones y las herramientas web que el usuario permita (o al
@@ -292,6 +331,9 @@ proyecto está en https://github.com/Json-Tuiran/jayth.ai (descargas en Releases
   **Buscar en una carpeta…**.
 - **No ve las imágenes:** el modelo necesita visión (proyector); al añadirlo, marcar **Incluir visión**. Comprobar
   Ajustes › Agente y permisos › Enviar capturas e imágenes al modelo.
+- **No crea imágenes o falla al crearlas:** instalar el generador en Ajustes › Imágenes y comprobar que «Permitir que el
+  agente cree imágenes» está marcado. Si se queda sin memoria, elegir un tamaño menor o FLUX.2 [klein] y cerrar otros
+  programas; el detalle del último intento está en el registro `imagen.log` de la carpeta de datos.
 - **No puede usar internet o el ratón:** revisar Ajustes › Herramientas (acceso a internet, control del ordenador y la
   lista de herramientas).
 - **Windows muestra «Windows protegió su PC»:** el instalador aún no está firmado: Más información › Ejecutar de todas

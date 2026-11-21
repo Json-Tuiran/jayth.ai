@@ -66,6 +66,20 @@ def search(topic, lang=None, top=3):
     return [(t, b) for s, t, b in scored[:top] if s >= scored[0][0] * 0.35]
 
 
+def _images_line(cfg, yes, no):
+    """«Imágenes: activadas · FLUX.2 [klein] 4B instalado · 512 px» (o lo que falte)."""
+    try:
+        from . import imagegen as IG
+        if not IG.available():
+            return tr("Imágenes: no disponibles en este sistema")
+        m, st = IG.model(cfg), IG.status(cfg)
+        return tr("Imágenes: permitidas %s · modelo %s (%s) · tamaño %d px · carpeta %s") % (
+            yes if cfg.get("image_gen", True) else no, m["name"], tr("instalado") if st["ready"] else tr("sin instalar"),
+            IG.base_side(cfg), cfg.get("image_dir") or tr("«%s» en la carpeta de trabajo") % tr("imagenes"))
+    except Exception:
+        return tr("Imágenes: —")
+
+
 def live():
     """Datos de esta instalación, en el idioma de la interfaz (sacados de los ajustes y del código al consultar)."""
     from . import core, agent as A, tools as T
@@ -98,6 +112,7 @@ def live():
             mode_label, yes if cfg.get("memory_enabled", True) else no, yes if cfg.get("web_access", True) else no,
             yes if cfg.get("computer_control", True) else no),
         "- " + tr("Conectores MCP: %s") % (", ".join(mcp) or tr("ninguno")),
+        "- " + _images_line(cfg, yes, no),
         "- " + tr("Actualizaciones: avisar %s · instalar al cerrar %s · autoguardado del editor: %s") % (
             yes if cfg.get("auto_update_check", True) else no, yes if cfg.get("auto_install_updates", True) else no, autosave),
     ]

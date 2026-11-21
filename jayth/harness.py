@@ -316,6 +316,14 @@ class MCPError(RuntimeError):
     pass
 
 
+class MCPAuthNeeded(MCPError):
+    """El conector pide iniciar sesión con la cuenta del usuario (OAuth)."""
+
+    def __init__(self, msg, www_auth=""):
+        super().__init__(msg)
+        self.www_auth = www_auth
+
+
 class MCPServer:
     """Cliente de MCP por stdio: arranca el programa del conector, lista sus herramientas y las llama (JSON-RPC por lineas).
     Si el conector se cae, se vuelve a arrancar una vez al llamarlo; sus mensajes de error (stderr) se guardan para
@@ -329,6 +337,9 @@ class MCPServer:
 
     def key(self):
         return ("stdio", self.command, tuple(self.args), tuple(sorted(self.env.items())))
+
+    def account(self):
+        return False                                # programa de este equipo: no actúa con una cuenta en internet
 
     def alive(self):
         return self.proc is not None and self.proc.poll() is None
@@ -421,21 +432,31 @@ class MCPHttpServer:
     """Cliente de MCP remoto por HTTP («streamable HTTP»): POST con JSON-RPC; la respuesta llega como JSON o como
     flujo SSE. Admite cabeceras propias (p. ej. Authorization: Bearer …) y la sesion Mcp-Session-Id."""
 
-    def __init__(self, name, url, headers=None):
-        self.name, self.url, self.headers = name, url, dict(headers or {})
+    def __init__(self, name, url, headers=None, auth=None):
+        self.name, self.url, self.headers, self.auth = name, url, dict(headers or {}), auth
         self.tools, self.error, self.session = [], "", None
         self._id, self._lock = 0, threading.Lock()
 
     def key(self):
-        return ("http", self.url, tuple(sorted(self.headers.items())))
+        return ("http", self.url, tuple(sorted(self.headers.items())), self.auth)
 
     def alive(self):
         return True
 
-    def _post(self, obj, timeout):
+    def account(self):
+        """¿Actúa con la cuenta del usuario en ese servicio (sesión iniciada o clave propia)?"""
+        return self.auth == "oauth" or any(k.lower() == "authorization" for k in self.headers)
+
+    def _post(self, obj, timeout, retried=False):
         import urllib.request, urllib.error
+        from . import oauth
         h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream", "MCP-Protocol-Version": MCP_PROTOCOL}
         h.update(self.headers)
+        if self.auth == "oauth":
+            tok = oauth.token(self.url, force_refresh=retried)
+            if not tok:
+                raise MCPAuthNeeded(tr("Hay que iniciar sesión en %s con tu cuenta (Ajustes › Herramientas › Conectores).") % self.name)
+            h["Authorization"] = "Bearer " + tok
         if self.session:
             h["Mcp-Session-Id"] = self.session
         req = urllib.request.Request(self.url, data=json.dumps(obj).encode("utf-8"), headers=h, method="POST")
@@ -443,6 +464,10 @@ class MCPHttpServer:
             r = urllib.request.urlopen(req, timeout=timeout)
         except urllib.error.HTTPError as e:
             body = e.read(500).decode("utf-8", "replace")
+            if e.code == 401 and self.auth == "oauth" and not retried:      # caducó: se renueva y se reintenta una vez
+                return self._post(obj, timeout, True)
+            if e.code == 401 and (self.auth == "oauth" or not self.account()):
+                raise MCPAuthNeeded(tr("%s pide iniciar sesión con tu cuenta.") % self.name, e.headers.get("WWW-Authenticate") or "")
             if e.code in (401, 403):
                 raise MCPError(tr("El conector %s rechazó la conexión (HTTP %d): revisa la clave o el token en sus cabeceras.") % (self.name, e.code))
             raise MCPError(tr("El conector %s respondió HTTP %d: %s") % (self.name, e.code, body[:200]))
@@ -496,6 +521,11 @@ class MCPHttpServer:
             try:
                 import urllib.request
                 h = dict(self.headers, **{"Mcp-Session-Id": self.session})
+                if self.auth == "oauth":
+                    from . import oauth
+                    tok = oauth.token(self.url)
+                    if tok:
+                        h["Authorization"] = "Bearer " + tok
                 urllib.request.urlopen(urllib.request.Request(self.url, headers=h, method="DELETE"), timeout=3)
             except Exception:
                 pass
@@ -560,7 +590,7 @@ def tool_result(res):
 def make_server(s):
     """Conector a partir de sus ajustes: local (command/args/env) o remoto (url/headers)."""
     if s.get("url"):
-        return MCPHttpServer(s["name"], s["url"].strip(), s.get("headers"))
+        return MCPHttpServer(s["name"], s["url"].strip(), s.get("headers"), s.get("auth"))
     return MCPServer(s["name"], s["command"], s.get("args"), s.get("env"))
 
 

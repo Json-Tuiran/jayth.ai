@@ -13,7 +13,8 @@ from PySide6.QtGui import (QTextOption, QTextCursor, QColor, QTextFormat, QDeskt
                            QTextFrameFormat)
 from PySide6.QtWidgets import (QTextBrowser, QFrame, QLayout, QSizePolicy, QHBoxLayout, QLabel, QWidget, QAbstractScrollArea, QApplication,
                                QToolButton, QPushButton, QStyledItemDelegate, QScrollArea, QDialog)
-from PySide6.QtCore import QObject, QEvent
+from PySide6.QtCore import QObject, QEvent, QRectF, QVariantAnimation
+from PySide6.QtWidgets import QCheckBox, QComboBox
 from .theme import C, pix
 from .i18n import tr
 
@@ -545,3 +546,92 @@ class OptionRow(QPushButton):
 
     def hasHeightForWidth(self):
         return True
+
+
+class Switch(QCheckBox):
+    """Interruptor de encendido/apagado con el estilo de Jayth. Es un QCheckBox (toggled, isChecked, text) que se
+    dibuja como un interruptor: el texto no se pinta, va en la etiqueta de su fila."""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAccessibleName(text)
+        self._pos = 0.0
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(140)
+        self._anim.valueChanged.connect(self._moved)
+        self.toggled.connect(self._go)
+
+    def sizeHint(self):
+        return QSize(40, 22)
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
+
+    def hitButton(self, pos):
+        return self.rect().contains(pos)
+
+    def _moved(self, v):
+        self._pos = float(v)
+        self.update()
+
+    def _go(self, on):
+        if not self.isVisible():
+            self._pos = 1.0 if on else 0.0
+            return self.update()
+        self._anim.stop()
+        self._anim.setStartValue(self._pos)
+        self._anim.setEndValue(1.0 if on else 0.0)
+        self._anim.start()
+
+    def showEvent(self, e):
+        self._pos = 1.0 if self.isChecked() else 0.0
+        super().showEvent(e)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = 40, 22
+        y = (self.height() - h) / 2.0
+        k = self._pos
+        off, on = QColor(C["panel2"]), QColor(C["acc"])
+        track = QColor(int(off.red() + (on.red() - off.red()) * k), int(off.green() + (on.green() - off.green()) * k),
+                       int(off.blue() + (on.blue() - off.blue()) * k))
+        if not self.isEnabled():
+            track.setAlpha(110)
+        p.setPen(QColor(C["line"]) if k < 0.5 else Qt.NoPen)
+        p.setBrush(track)
+        p.drawRoundedRect(0.5, y + 0.5, w - 1, h - 1, h / 2.0, h / 2.0)
+        d = h - 6
+        x = 3 + (w - 6 - d) * k
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#FFFFFF") if k >= 0.5 else QColor(C["mut"]))
+        p.drawEllipse(QRectF(x, y + 3, d, d))
+        if self.hasFocus():
+            p.setPen(QColor(C["acc"]))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(QRectF(-0.5, y - 0.5, w + 1, h + 1), h / 2.0 + 1, h / 2.0 + 1)
+        p.end()
+
+
+class ElideCombo(QComboBox):
+    """Lista desplegable de ancho fijo: si la opción elegida no cabe, termina en «…» (completa en el tooltip y en la
+    lista desplegada, que se abre con el ancho de la opción más larga)."""
+
+    def paintEvent(self, e):
+        from PySide6.QtWidgets import QStylePainter, QStyleOptionComboBox, QStyle
+        p = QStylePainter(self)
+        opt = QStyleOptionComboBox()
+        self.initStyleOption(opt)
+        room = self.style().subControlRect(QStyle.CC_ComboBox, opt, QStyle.SC_ComboBoxEditField, self).width()
+        full = opt.currentText
+        opt.currentText = self.fontMetrics().elidedText(full, Qt.ElideRight, max(20, room - 4))
+        self.setToolTip(full if opt.currentText != full else "")
+        p.drawComplexControl(QStyle.CC_ComboBox, opt)
+        p.drawControl(QStyle.CE_ComboBoxLabel, opt)
+
+    def showPopup(self):
+        fm = self.fontMetrics()
+        widest = max((fm.horizontalAdvance(self.itemText(i)) for i in range(self.count())), default=0)
+        self.view().setMinimumWidth(min(620, max(self.width(), widest + 48)))
+        super().showPopup()

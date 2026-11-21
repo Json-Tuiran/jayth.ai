@@ -167,6 +167,42 @@ QLabel#status[kind="ok"] { color: %(ok)s; } QLabel#status[kind="bad"] { color: %
 QLabel#avatar { background: %(acc_bg)s; color: %(acc)s; border-radius: 13px; font-weight: 600; font-size: 9pt; }
 QCheckBox { spacing: 8px; }
 QCheckBox::indicator, QRadioButton::indicator { width: 16px; height: 16px; }
+QDialog#settings { background: %(bg)s; }
+QWidget#setSide { background: %(side)s; border-right: 1px solid %(line)s; }
+QListWidget#setNav { background: transparent; border: none; outline: 0; }
+QListWidget#setNav::item { padding: 7px 10px; margin: 1px 0; border-radius: 8px; color: %(mut)s; }
+QListWidget#setNav::item:selected { background: %(acc_bg)s; color: %(tx)s; font-weight: 600; }
+QListWidget#setNav::item:hover:!selected { background: %(hover)s; color: %(tx)s; }
+QLabel#setTitle { font-size: 15pt; font-weight: 600; }
+QLabel#setSub { color: %(mut)s; }
+QLabel#setSection { color: %(mut)s; font-size: 9.5pt; font-weight: 600; padding: 0 4px; }
+QFrame#setCard { background: %(panel)s; border: 1px solid %(line)s; border-radius: 12px; }
+QFrame#setSep { background: %(line)s; border: none; min-height: 1px; max-height: 1px; }
+QLabel#setLabel { color: %(tx)s; }
+QLabel#setHelp { color: %(faint)s; font-size: 9pt; }
+QFrame#setCard QLineEdit, QFrame#setCard QComboBox, QFrame#setCard QSpinBox, QFrame#setCard QDoubleSpinBox,
+QFrame#setCard QPlainTextEdit { background: %(bg)s; }
+QFrame#setCard QFrame#noteBox, QFrame#setCard QFrame#docCard { background: %(bg)s; border: 1px solid %(line)s; border-radius: 10px; }
+QWidget#setFoot { border-top: 1px solid %(line)s; }
+"""
+# flechas de listas desplegables y campos numéricos y la marca de las casillas (imágenes teñidas con el color del tema)
+QSS_ARROWS = """
+QComboBox { padding-right: 26px; }
+QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: center right; border: none; width: 26px; }
+QComboBox::down-arrow { image: url(%(down)s); width: 10px; height: 10px; }
+QComboBox::down-arrow:on { image: url(%(up)s); }
+QSpinBox, QDoubleSpinBox { padding-right: 24px; }
+QSpinBox::up-button, QDoubleSpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right; width: 22px;
+  border: none; border-top-right-radius: 8px; background: transparent; margin: 1px 1px 0 0; }
+QSpinBox::down-button, QDoubleSpinBox::down-button { subcontrol-origin: border; subcontrol-position: bottom right; width: 22px;
+  border: none; border-bottom-right-radius: 8px; background: transparent; margin: 0 1px 1px 0; }
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover, QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover { background: %(hover)s; }
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow { image: url(%(up)s); width: 8px; height: 8px; }
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow { image: url(%(down)s); width: 8px; height: 8px; }
+QCheckBox::indicator { border: 1px solid %(faint)s; border-radius: 4px; background: transparent; }
+QCheckBox::indicator:hover { border-color: %(acc)s; }
+QCheckBox::indicator:checked { background: %(acc)s; border-color: %(acc)s; image: url(%(check)s); }
+QCheckBox::indicator:disabled { border-color: %(line)s; }
 """
 QSS_T = QSS_T.replace("'Segoe UI'", UI_FONT).replace("font-family: Consolas", "font-family: " + MONO_FONT)
 QSS = QSS_T % C
@@ -248,6 +284,19 @@ def resolve(name):
     return "dark"
 
 
+def _arrow_files():
+    """Iconos teñidos para la hoja de estilos (que solo admite archivos): flecha abajo/arriba y la marca de las casillas."""
+    d = os.path.join(paths.DATA, "tema")
+    os.makedirs(d, exist_ok=True)
+    out = {}
+    for key, name, col in (("down", "ui_chevron_abajo", C["mut"]), ("up", "ui_chevron_arriba", C["mut"]), ("check", "ui_check", C["on_acc"])):
+        p = os.path.join(d, "%s_%s.png" % (key, col.lstrip("#")))
+        if not os.path.isfile(p):
+            pix(name, col, 32).save(p)
+        out[key] = p.replace("\\", "/")
+    return out
+
+
 def apply(app, name="system", scale=100):
     """Aplica el tema (system | dark | light) y el tamaño de texto (%): estilo, paleta, hoja de estilos y pulido de ventanas."""
     global QSS, MODE, _polisher
@@ -258,6 +307,10 @@ def apply(app, name="system", scale=100):
     QSS = re.sub(r"(\d+(?:\.\d+)?)pt", lambda m: "%.1fpt" % (float(m.group(1)) * f), QSS_T % C)
     SCALE[0] = f
     _cache.clear()
+    try:
+        QSS += QSS_ARROWS % dict(C, **_arrow_files())
+    except Exception:
+        pass                                   # sin carpeta de datos escribible: flechas de Qt por defecto
     app.setStyle(_Style("Fusion"))
     pal = QPalette()
     for role, col in ((QPalette.Window, C["bg"]), (QPalette.WindowText, C["tx"]), (QPalette.Base, C["panel"]), (QPalette.AlternateBase, C["panel2"]),

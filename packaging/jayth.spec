@@ -16,7 +16,11 @@ hidden = ["PySide6.QtSvg", "PySide6.QtSvgWidgets", "certifi", "pypdf",
           # navegador integrado del lienzo (se importa solo cuando hace falta, por eso se nombra aqui)
           "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel", "PySide6.QtNetwork", "PySide6.QtPrintSupport",
           # voz: leer en voz alta (voces del sistema) y grabar del micrófono para el dictado
-          "PySide6.QtTextToSpeech", "PySide6.QtMultimedia"]
+          "PySide6.QtTextToSpeech", "PySide6.QtMultimedia",
+          # imágenes (se importan al usarse y en el autodiagnóstico por su nombre)
+          "jayth.imagegen", "jayth.imagen_ui",
+          # servicios con la cuenta del usuario (conectores con inicio de sesión)
+          "jayth.conectores", "jayth.conectores_ui", "jayth.oauth", "jayth.boveda"]
 if MAC:
     # pynput elige su motor al importarse: se nombran explicitamente (el compilador no tiene pantalla)
     hidden += ["mss", "mss.darwin", "pynput", "pynput.keyboard._darwin", "pynput.mouse._darwin", "pynput._util.darwin",

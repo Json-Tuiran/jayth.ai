@@ -75,6 +75,41 @@ def can_see(cfg):
     return bool(m and m.get("mmproj") and os.path.isfile(m["mmproj"]))
 
 
+def images_offered(cfg):
+    """¿Se ofrece generate_image? Solo si está activado y el modelo activo no crea imágenes por sí mismo."""
+    if not cfg.get("image_gen", True) or cfg.get("mode") in ("readonly", "plan"):
+        return False
+    from . import imagegen as IG
+    return IG.available() and not IG.native_image_output(cfg)
+
+
+IMAGES = """
+
+Imágenes nuevas (fotos, ilustraciones, logotipos, iconos, fondos, portadas): créalas con generate_image, que funciona en este equipo. Úsala cuando el usuario lo pida o cuando la tarea lo necesite (una web, una presentación o un documento con ilustraciones), una por llamada porque tarda. Para gráficos de datos sigue usando run_python, y para diagramas o dibujos sencillos, SVG."""
+
+
+def services_prompt(cfg):
+    """Servicios externos: los que el usuario puede conectar (si hace falta) y cómo usar los ya conectados."""
+    if not cfg.get("web_access", True) or cfg.get("mode") == "readonly" or "connect_service" in (cfg.get("tools_disabled") or []):
+        return ""
+    try:
+        from . import conectores as CN
+        off = CN.offered(cfg)
+        higgs = CN.connected("higgsfield", cfg)
+    except Exception:
+        return ""
+    out = ""
+    if off:
+        out += ("\n\nServicios externos que el usuario puede conectar con su propia cuenta si lo pide o la tarea lo necesita: %s. "
+                "Para proponerlo usa connect_service (él pulsa «Conectar» e inicia sesión). Lo normal es trabajar en el equipo; "
+                "propón un servicio solo cuando aporte algo que aquí no se puede hacer bien.") % ", ".join(
+            "%s (%s)" % (c["name"], c["id"]) for c in off)
+    if higgs:
+        out += ("\nHiggsfield está conectado: crea imágenes y vídeos en la nube gastando créditos del usuario. Úsalo solo si lo pide "
+                "o para vídeo; para imágenes, por defecto generate_image (en el equipo y gratis).")
+    return out
+
+
 class LLMError(Exception):
     pass
 
@@ -97,6 +132,9 @@ def system_prompt(cfg):
     elif cfg.get("mode") != "readonly":          # puede ejecutar: que compruebe lo visual mirándolo (si puede ver)
         shots = cfg.get("computer_control", True) and "screenshot" not in (cfg.get("tools_disabled") or [])
         p += LOOK if (shots and can_see(cfg)) else LOOK_BLIND if shots else ""
+    if images_offered(cfg) and "generate_image" not in (cfg.get("tools_disabled") or []):
+        p += IMAGES
+    p += services_prompt(cfg)
     if cfg.get("user_name"):
         p += "\n\nEl usuario se llama %s." % cfg["user_name"]
     if cfg.get("about_me"):
@@ -132,6 +170,10 @@ def tool_schemas(cfg):
         off |= {n for n, t in T.TOOLS.items() if t["category"] == "control"}
     if cfg.get("_temp") or not cfg.get("memory_enabled", True):       # chat temporal o memoria apagada: ni guarda ni olvida
         off |= {"remember", "forget"}
+    if not images_offered(cfg):                  # desactivado, sin motor para este sistema o el modelo ya crea imágenes
+        off.add("generate_image")
+    if not cfg.get("web_access", True):          # los servicios externos necesitan internet
+        off.add("connect_service")
     mode = cfg.get("mode")
     cats = {"read", "agent"} if mode == "readonly" else {"read", "agent", "net"} if mode == "plan" else None
     out = [s for s in T.schemas(cats) if s["function"]["name"] not in off]
@@ -482,6 +524,8 @@ class Run:
             return "blocked"
         if T.is_dangerous(name, args, self.ctx):
             return "pending"
+        if self._account_of(name) and cat not in self.s.setdefault("allowed", []):
+            return "pending"        # cambia algo en una cuenta del usuario (publicar, enviar, gastar créditos): siempre se pregunta
         if cat in ("read", "agent") or cat in self.s.setdefault("allowed", []) or mode == "auto" or (mode == "edits" and cat == "write"):
             return "auto"
         if name == "run_command":   # comandos que el usuario marco como seguros (p. ej. "git status", "npm test")
@@ -489,6 +533,16 @@ class Run:
             if any(p.strip() and cmd.startswith(p.strip().lower()) for p in self.cfg.get("auto_allow_commands") or []) and not any(c in cmd for c in ";|&`$("):
                 return "auto"
         return "pending"
+
+    def _account_of(self, name):
+        """Nombre del servicio si la herramienta actúa en una cuenta del usuario y no es de solo lectura; si no, ''."""
+        if not name.startswith("mcp__"):
+            return ""
+        srv, real = H.mcp_resolve(name)
+        if srv is None or not getattr(srv, "account", lambda: False)():
+            return ""
+        t = next((t for t in srv.tools if t.get("name") == real), {}) or {}
+        return "" if (t.get("annotations") or {}).get("readOnlyHint") is True else srv.name
 
     def _wait(self, cid):
         ev = {"event": threading.Event(), "decision": None}
@@ -543,7 +597,7 @@ class Run:
             return True, "Respuesta del usuario: " + ans, None, {}
         approval = self._needs_approval(tool, name, args)
         self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": tool["category"], "approval": approval,
-                   "danger": T.is_dangerous(name, args, self.ctx)})
+                   "danger": T.is_dangerous(name, args, self.ctx), "account": self._account_of(name)})
         if approval == "blocked":
             why = "el modo Planificar solo permite investigar" if self.cfg["mode"] == "plan" else "el modo actual es solo lectura o la herramienta está desactivada"
             return False, "Bloqueado: %s." % why, None, {}
@@ -565,6 +619,7 @@ class Run:
             except Exception:
                 pass
         try:
+            self.ctx.call_id = cid                   # las herramientas largas publican su avance con este id
             r = tool["fn"](args, self.ctx)
             if name == "update_plan":
                 self.s["plan"] = [{"content": str(i.get("content", "")), "status": str(i.get("status", "pending"))} for i in args.get("items") or []]
@@ -579,7 +634,7 @@ class Run:
             raise
         except T.ToolError as e:
             self.fails_seen[sig] += 1
-            return False, str(e), None, {}
+            return False, str(e), None, dict(getattr(e, "ui", None) or {})
         except Exception as e:
             self.fails_seen[sig] += 1
             return False, "%s: %s" % (type(e).__name__, e), None, {}

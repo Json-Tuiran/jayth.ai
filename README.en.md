@@ -39,6 +39,12 @@ Each link downloads the latest version for that system. All versions and their n
 - **Uses your programs and the web:** it reads the buttons and fields of any program (system accessibility APIs), clicks,
   drags, types and manages windows; it has a **built-in browser** it uses in plain sight (search, click, fill in forms),
   with its own pointer and a glow around the edges while it is in control.
+- **Creates images on your computer:** photos, illustrations, logos or covers when you ask or when a task needs them,
+  with stable-diffusion.cpp and freely licensed models (FLUX.2 [klein] 4B, Z-Image Turbo). You watch the image take
+  shape; it installs from inside the app and then works offline.
+- **Your services, if you want:** connect Gmail, Google Drive, Calendar, Notion, Canva, Higgsfield and more with your
+  own account (you sign in on their page; Jayth never sees your password and keeps the permission encrypted). Anything
+  that changes something in your account —sending, publishing, spending credits— always asks you first.
 - **Any model:** download GGUF models from Hugging Face inside the app (it lists the quantizations and marks which ones
   fit your machine), use a `.gguf` you already have, or connect to an OpenAI-compatible server (Ollama, LM Studio, another PC).
 - **Adapts to your hardware:** detects RAM, CPU and GPU; downloads the right official llama.cpp build (Metal on Apple
@@ -137,7 +143,8 @@ ask for confirmation, even in Automatic mode. To stop mouse control instantly, m
 Files (read, write, edit, move, trash, search) · system terminal (PowerShell on Windows, zsh/bash on macOS and Linux)
 and background processes · open programs/files/URLs · documents and images · web (search, read pages, download) and the
 built-in browser · computer control (screenshots of the screen or a window, reading any program's buttons and fields
-through accessibility, click, drag, keyboard, windows, clipboard) · MCP connectors.
+through accessibility, click, drag, keyboard, windows, clipboard) · creating and editing images on the computer itself ·
+MCP connectors.
 
 Web search uses DuckDuckGo. If it asks for a captcha, the app does not bypass it and falls back to Wikipedia. For full
 web search, add a Brave Search key or your own SearXNG instance in Settings.

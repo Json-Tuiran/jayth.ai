@@ -10,6 +10,7 @@ from . import APP_NAME, __version__, core, paths, osys, i18n, hardware as HW, ag
 from .i18n import tr
 from .theme import C, icon, pix
 from .wizard import SetupWizard, ModelsDialog, btn, lbl, browse_row, run_bg
+from .widgets import Switch, ElideCombo
 import shutil
 from html import escape as html_escape
 
@@ -98,27 +99,120 @@ def local_commit():
 
 
 # ---------------------------------------------------------------- dialogo
+# una frase bajo el título de cada página (por su nombre interno)
+SUBTITLES = {
+    "General": tr("Idioma, aspecto de la ventana y cómo se abre %s.") % APP_NAME,
+    "Personalización": tr("Cómo te llama, cómo responde, la voz y lo que recuerda de ti."),
+    "Modelos": tr("El modelo que usa el agente y de dónde lo obtiene."),
+    "Generación": tr("Cómo escribe el modelo: cuánto piensa, cuánta creatividad y qué longitud."),
+    "Rendimiento": tr("Velocidad y memoria del motor en este equipo."),
+    "Agente y permisos": tr("Qué puede hacer el agente sin preguntarte y hasta dónde llega."),
+    "Herramientas": tr("Internet, control del ordenador, búsqueda web y conectores con otros servicios."),
+    "Imágenes": tr("Imágenes creadas en tu propio equipo, sin internet."),
+    "Datos y privacidad": tr("Dónde se guarda todo y cómo exportarlo o borrarlo."),
+    "Registro del modelo": tr("Lo que escribe el motor al trabajar, para diagnosticar problemas."),
+    "Atajos de teclado": tr("Combinaciones de teclas de %s.") % APP_NAME,
+    "Acerca de": tr("Versión, licencia, actualizaciones y comentarios."),
+}
+
+
+class Page:
+    """Contenido de una página de Ajustes. Ofrece lo que usan las páginas de un QVBoxLayout (addWidget, addLayout,
+    addSpacing, addStretch), pero lo agrupa: lo que se añade va a la tarjeta de la sección en curso, con una línea fina
+    entre filas; section() cierra la tarjeta y pone el título de la siguiente."""
+
+    def __init__(self, layout):
+        self.root = layout
+        self.card, self.n = None, 0
+
+    def section(self, text):
+        self.card, self.n = None, 0
+        t = QLabel(text)
+        t.setObjectName("setSection")
+        self.root.addSpacing(12)
+        self.root.addWidget(t)
+        self.root.addSpacing(2)
+
+    def _next(self):
+        if self.card is None:
+            fr = QFrame()
+            fr.setObjectName("setCard")
+            self.card = QVBoxLayout(fr)
+            self.card.setContentsMargins(16, 4, 16, 4)
+            self.card.setSpacing(0)
+            self.root.addWidget(fr)
+            self.n = 0
+        elif self.n:
+            sep = QFrame()
+            sep.setObjectName("setSep")
+            self.card.addWidget(sep)
+        self.n += 1
+        return self.card
+
+    def addWidget(self, w, *a):
+        if w.objectName() == "noteBox" and not self.n:          # un recuadro propio al empezar: él es la tarjeta
+            w.setObjectName("setCard")
+            self.root.addWidget(w, *a)
+            self.card, self.n = None, 0
+            return
+        if w.property("setRow"):
+            return self._next().addWidget(w, *a)
+        holder = QWidget()                                       # el resto, con el mismo aire que una fila
+        hl = QVBoxLayout(holder)
+        hl.setContentsMargins(0, 10, 0, 10)
+        hl.addWidget(w, *a)
+        self._next().addWidget(holder)
+
+    def addLayout(self, lay, *a):
+        holder = QWidget()
+        hl = QVBoxLayout(holder)
+        hl.setContentsMargins(0, 10, 0, 10)
+        hl.addLayout(lay, *a)
+        self._next().addWidget(holder)
+
+    def addSpacing(self, n):
+        (self.card or self.root).addSpacing(n)
+
+    def addStretch(self, n=0):
+        self.root.addStretch(n)
+
+
+class _Row(QWidget):
+    """Fila de una opción: nombre y explicación a la izquierda, el control a la derecha. Un clic en la fila de un
+    interruptor lo cambia (no hace falta acertar en él)."""
+    switch = None
+
+    def mouseReleaseEvent(self, e):
+        if self.switch is not None and e.button() == Qt.LeftButton and self.switch.isEnabled():
+            self.switch.toggle()
+        super().mouseReleaseEvent(e)
+
+
 class SettingsDialog(QDialog):
     def __init__(self, parent=None, page="General"):
         super().__init__(parent)
         self.setWindowTitle(tr("Ajustes"))
-        self.resize(980, 680)
+        self.setObjectName("settings")
+        self.resize(1000, 700)
         self.before = core.SET.snapshot()
         self.timers = {}
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         side = QWidget()
-        side.setObjectName("sidebar")
-        side.setFixedWidth(230)
+        side.setObjectName("setSide")
+        side.setAttribute(Qt.WA_StyledBackground, True)
+        side.setFixedWidth(224)
         sv = QVBoxLayout(side)
-        sv.setContentsMargins(10, 16, 10, 10)
+        sv.setContentsMargins(12, 18, 12, 12)
         t = QLabel(tr("Ajustes"))
         t.setObjectName("h1")
+        t.setContentsMargins(8, 0, 0, 0)
         sv.addWidget(t)
-        sv.addSpacing(6)
+        sv.addSpacing(10)
         self.nav = QListWidget()
-        self.nav.setObjectName("history")
+        self.nav.setObjectName("setNav")
+        self.nav.setIconSize(QSize(17, 17))
         sv.addWidget(self.nav, 1)
         root.addWidget(side)
         right = QWidget()
@@ -134,18 +228,21 @@ class SettingsDialog(QDialog):
         self.banner.hide()
         bw = QWidget()
         bwl = QHBoxLayout(bw)
-        bwl.setContentsMargins(24, 12, 24, 0)
+        bwl.setContentsMargins(32, 12, 32, 0)
         bwl.addWidget(self.banner)
         rv.addWidget(bw)
         self.pages = QStackedWidget()
         rv.addWidget(self.pages, 1)
-        foot = QHBoxLayout()
-        foot.setContentsMargins(24, 8, 24, 14)
+        fw = QWidget()
+        fw.setObjectName("setFoot")
+        fw.setAttribute(Qt.WA_StyledBackground, True)
+        foot = QHBoxLayout(fw)
+        foot.setContentsMargins(32, 10, 20, 12)
         self.saved = QLabel(tr("Los cambios se guardan automáticamente."))
         self.saved.setObjectName("faint")
         foot.addWidget(self.saved, 1)
         foot.addWidget(btn(tr("Cerrar"), "primary", self.accept))
-        rv.addLayout(foot)
+        rv.addWidget(fw)
         root.addWidget(right, 1)
         # key: nombre interno de la página (lo usan SettingsDialog(page=…) y _reload); label: el texto que se muestra
         for key, label, ico, build in (("General", tr("General"), "acc_ajustes", self.p_general),
@@ -155,41 +252,58 @@ class SettingsDialog(QDialog):
                                        ("Rendimiento", tr("Rendimiento"), "prof_cpu", self.p_performance),
                                        ("Agente y permisos", tr("Agente y permisos"), "est_bloqueado", self.p_agent),
                                        ("Herramientas", tr("Herramientas"), "cod_terminal", self.p_tools),
+                                       ("Imágenes", tr("Imágenes"), "uij_imagen", self.p_images),
                                        ("Datos y privacidad", tr("Datos y privacidad"), "prof_disco", self.p_data),
                                        ("Registro del modelo", tr("Registro del modelo"), "pan_consola", self.p_log),
                                        ("Atajos de teclado", tr("Atajos de teclado"), "inp_teclado", self.p_keys),
                                        ("Acerca de", tr("Acerca de"), "est_info", self.p_about)):
-            it = QListWidgetItem(icon(ico, C["mut"], 16), label)
+            it = QListWidgetItem(icon(ico, C["mut"], 17), label)
             it.setData(Qt.UserRole, key)
             self.nav.addItem(it)
-            self.pages.addWidget(self._scroll(label, build))
+            self.pages.addWidget(self._scroll(label, build, SUBTITLES.get(key, "")))
         self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
         keys = [self.nav.item(i).data(Qt.UserRole) for i in range(self.nav.count())]
         labels = [self.nav.item(i).text() for i in range(self.nav.count())]
         self.nav.setCurrentRow(keys.index(page) if page in keys else labels.index(page) if page in labels else 0)
 
     # ---- infraestructura
-    def _scroll(self, title, build):
+    def _scroll(self, title, build, sub=""):
+        """Página con su título, una frase que explica para qué sirve y las opciones agrupadas en tarjetas."""
         sc = QScrollArea()
         sc.setWidgetResizable(True)
         w = QWidget()
         w.setObjectName("chatHolder")
         sc.viewport().setObjectName("chatHolder")
-        v = QVBoxLayout(w)
-        v.setContentsMargins(28, 18, 28, 18)
-        v.setSpacing(10)
+        outer = QHBoxLayout(w)
+        outer.setContentsMargins(32, 22, 24, 24)
+        col = QWidget()
+        col.setMaximumWidth(780)                    # en ventanas anchas no se estira de lado a lado
+        outer.addWidget(col, 1)
+        outer.addStretch(0)
+        v = QVBoxLayout(col)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(8)
         h = QLabel(title)
-        h.setObjectName("h1")
+        h.setObjectName("setTitle")
         v.addWidget(h)
-        build(v)
+        if sub:
+            s = QLabel(sub)
+            s.setObjectName("setSub")
+            s.setWordWrap(True)
+            v.addWidget(s)
+        v.addSpacing(8)
+        page = Page(v)
+        build(page)
         v.addStretch(1)
         sc.setWidget(w)
         return sc
 
     def _section(self, v, text):
-        l = QLabel(text.upper())
-        l.setObjectName("section")
-        v.addSpacing(6)
+        if isinstance(v, Page):
+            return v.section(text)
+        l = QLabel(text)
+        l.setObjectName("setSection")
+        v.addSpacing(12)
         v.addWidget(l)
 
     def _save(self, key, value):
@@ -202,6 +316,8 @@ class SettingsDialog(QDialog):
             set_autostart(bool(value))
         if key == "ui_language":
             QTimer.singleShot(0, self._ask_restart_language)
+        if key in ("image_model", "image_size", "models_dir", "backend") and getattr(self, "img_box", None) is not None:
+            self.img_box.refresh()
 
     def _ask_restart_language(self):
         """El idioma se elige al arrancar: ofrece reiniciar Jayth para verlo ya."""
@@ -227,78 +343,94 @@ class SettingsDialog(QDialog):
         t.start()
 
     def field(self, v, key, label, kind, help="", **kw):
-        """Crea un control enlazado a un ajuste y lo guarda al cambiar."""
+        """Crea una fila enlazada a un ajuste y lo guarda al cambiar: nombre y explicación a la izquierda y el control a
+        la derecha (interruptor, lista o número); los textos y carpetas, a todo el ancho debajo del nombre."""
         val = core.SET.snapshot()[key]
-        box = QWidget()
+        box = _Row()
+        box.setProperty("setRow", True)
         bl = QVBoxLayout(box)
-        bl.setContentsMargins(0, 2, 0, 2)
-        bl.setSpacing(3)
-        if kind == "bool":
-            w = QCheckBox(label)
-            w.setChecked(bool(val))
-            w.toggled.connect(lambda on: self._save(key, on))
-            bl.addWidget(w)
-        else:
-            bl.addWidget(QLabel(label))
-            if kind == "int":
-                w = QSpinBox()
-                w.setRange(kw.get("min", 0), kw.get("max", 1_000_000))
-                w.setValue(int(val))
-                if kw.get("suffix"):
-                    w.setSuffix(kw["suffix"])
-                if kw.get("special"):
-                    w.setSpecialValueText(kw["special"])
-                w.valueChanged.connect(lambda x: self._debounced(key, w.value, 400))
-                w.setMaximumWidth(220)
-            elif kind == "float":
-                w = QDoubleSpinBox()
-                w.setRange(kw.get("min", 0.0), kw.get("max", 2.0))
-                w.setSingleStep(kw.get("step", 0.05))
-                w.setDecimals(kw.get("decimals", 2))
-                w.setValue(float(val))
-                w.valueChanged.connect(lambda x: self._debounced(key, w.value, 400))
-                w.setMaximumWidth(220)
-            elif kind == "choice":
-                w = QComboBox()
-                for t, d in kw["choices"]:
-                    w.addItem(t, d)
-                i = w.findData(val)
-                if i < 0:
-                    w.addItem(str(val), val)
-                    i = w.count() - 1
-                w.setCurrentIndex(i)
-                w.currentIndexChanged.connect(lambda _: self._save(key, w.currentData()))
-                w.setMaximumWidth(420)
-            elif kind in ("text", "secret"):
-                w = QLineEdit(str(val))
-                if kind == "secret":
-                    w.setEchoMode(QLineEdit.Password)
-                if kw.get("placeholder"):
-                    w.setPlaceholderText(kw["placeholder"])
-                w.textChanged.connect(lambda _: self._debounced(key, w.text))
-            elif kind in ("area", "list"):
-                w = QPlainTextEdit("\n".join(val) if kind == "list" else str(val))
-                w.setFixedHeight(kw.get("height", 96))
-                if kw.get("placeholder"):
-                    w.setPlaceholderText(kw["placeholder"])
-                getter = (lambda: [l.strip() for l in w.toPlainText().splitlines() if l.strip()]) if kind == "list" else w.toPlainText
-                w.textChanged.connect(lambda: self._debounced(key, getter))
-            elif kind == "dir":
-                w = QLineEdit(str(val))
-                w.textChanged.connect(lambda _: self._debounced(key, w.text, 900))
-                row = browse_row(w, folder=True, parent=self)
-                wr = QWidget()
-                wr.setLayout(row)
-                row.setContentsMargins(0, 0, 0, 0)
-                bl.addWidget(wr)
-                w = None
-            if w is not None:
-                bl.addWidget(w)
+        bl.setContentsMargins(0, 11, 0, 11)
+        bl.setSpacing(8)
+        top = QHBoxLayout()
+        top.setSpacing(18)
+        texts = QVBoxLayout()
+        texts.setSpacing(2)
+        name = QLabel(label)
+        name.setObjectName("setLabel")
+        name.setWordWrap(True)
+        texts.addWidget(name)
         if help:
             h = QLabel(help)
-            h.setObjectName("faint")
+            h.setObjectName("setHelp")
             h.setWordWrap(True)
-            bl.addWidget(h)
+            texts.addWidget(h)
+        top.addLayout(texts, 1)
+        bl.addLayout(top)
+        side = None                                    # control a la derecha
+        if kind == "bool":
+            w = Switch(label)
+            w.setChecked(bool(val))
+            w.toggled.connect(lambda on: self._save(key, on))
+            box.switch = side = w
+            box.setCursor(Qt.PointingHandCursor)
+        elif kind == "int":
+            w = QSpinBox()
+            w.setRange(kw.get("min", 0), kw.get("max", 1_000_000))
+            w.setValue(int(val))
+            if kw.get("suffix"):
+                w.setSuffix(kw["suffix"])
+            if kw.get("special"):
+                w.setSpecialValueText(kw["special"])
+            w.valueChanged.connect(lambda x: self._debounced(key, w.value, 400))
+            w.setFixedWidth(150)
+            side = w
+        elif kind == "float":
+            w = QDoubleSpinBox()
+            w.setRange(kw.get("min", 0.0), kw.get("max", 2.0))
+            w.setSingleStep(kw.get("step", 0.05))
+            w.setDecimals(kw.get("decimals", 2))
+            w.setValue(float(val))
+            w.valueChanged.connect(lambda x: self._debounced(key, w.value, 400))
+            w.setFixedWidth(150)
+            side = w
+        elif kind == "choice":
+            w = ElideCombo()                          # todas del mismo ancho; si no cabe, «…» (entera al desplegarla)
+            for t, d in kw["choices"]:
+                w.addItem(t, d)
+            i = w.findData(val)
+            if i < 0:
+                w.addItem(str(val), val)
+                i = w.count() - 1
+            w.setCurrentIndex(i)
+            w.currentIndexChanged.connect(lambda _: self._save(key, w.currentData()))
+            w.setFixedWidth(300)
+            side = w
+        elif kind in ("text", "secret"):
+            w = QLineEdit(str(val))
+            if kind == "secret":
+                w.setEchoMode(QLineEdit.Password)
+            if kw.get("placeholder"):
+                w.setPlaceholderText(kw["placeholder"])
+            w.textChanged.connect(lambda _: self._debounced(key, w.text))
+            bl.addWidget(w)
+        elif kind in ("area", "list"):
+            w = QPlainTextEdit("\n".join(val) if kind == "list" else str(val))
+            w.setFixedHeight(kw.get("height", 96))
+            if kw.get("placeholder"):
+                w.setPlaceholderText(kw["placeholder"])
+            getter = (lambda: [l.strip() for l in w.toPlainText().splitlines() if l.strip()]) if kind == "list" else w.toPlainText
+            w.textChanged.connect(lambda: self._debounced(key, getter))
+            bl.addWidget(w)
+        elif kind == "dir":
+            w = QLineEdit(str(val))
+            w.textChanged.connect(lambda _: self._debounced(key, w.text, 900))
+            row = browse_row(w, folder=True, parent=self)
+            wr = QWidget()
+            wr.setLayout(row)
+            row.setContentsMargins(0, 0, 0, 0)
+            bl.addWidget(wr)
+        if side is not None:
+            top.addWidget(side, 0, Qt.AlignVCenter | Qt.AlignRight)
         v.addWidget(box)
         return box
 
@@ -361,11 +493,8 @@ class SettingsDialog(QDialog):
         self.mem_new.returnPressed.connect(self._mem_add)
         r.addWidget(self.mem_new, 1)
         r.addWidget(btn(tr("Añadir"), None, self._mem_add, "acc_anadir"))
-        v.addLayout(r)
-        r = QHBoxLayout()
         self.mem_clear = btn(tr("Borrar toda la memoria"), "danger", self._mem_clear)
         r.addWidget(self.mem_clear)
-        r.addStretch(1)
         v.addLayout(r)
         self._mem_render()
         v.addWidget(lbl(tr("En los proyectos, %s también lee AGENTS.md, JAYTH.md o CLAUDE.md de la carpeta: escribe ahí las normas del proyecto.") % APP_NAME, "faint"))
@@ -567,13 +696,15 @@ class SettingsDialog(QDialog):
         self._section(v, tr("Herramientas disponibles"))
         off = set(core.SET.snapshot()["tools_disabled"])
         grid = QGridLayout()
-        grid.setHorizontalSpacing(18)
+        grid.setHorizontalSpacing(24)
+        grid.setVerticalSpacing(14)
         cats = {}
         for name, t in T.TOOLS.items():
             cats.setdefault(t["category"], []).append(name)
         col = 0
         for cat, names in cats.items():
             box = QVBoxLayout()
+            box.setSpacing(5)
             h = QLabel(T.CATEGORIES.get(cat, cat))
             h.setStyleSheet("font-weight:600")
             box.addWidget(h)
@@ -584,18 +715,28 @@ class SettingsDialog(QDialog):
                 cb.toggled.connect(lambda on, n=n: self._toggle_tool(n, on))
                 box.addWidget(cb)
             box.addStretch(1)
-            grid.addLayout(box, col // 3, col % 3)
+            grid.addLayout(box, col // 2, col % 2)          # dos columnas: los nombres largos caben enteros
             col += 1
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
         v.addLayout(grid)
         self._section(v, tr("Búsqueda web"))
         self.field(v, "search_provider", tr("Buscador"), "choice",
                    choices=[(tr("Automático (DuckDuckGo; si lo bloquea, Wikipedia)"), "auto"), (tr("Brave Search (necesita clave)"), "brave"), (tr("SearXNG (tu propio buscador)"), "searxng")])
         self.field(v, "brave_key", tr("Clave de Brave Search"), "secret", help=tr("Gratis en api.search.brave.com para uso personal."))
         self.field(v, "searxng_url", tr("URL de SearXNG"), "text", placeholder="http://127.0.0.1:8888")
+        self._section(v, tr("Servicios con tu cuenta"))
+        from .conectores_ui import services_grid
+        v.addWidget(lbl(tr("Opcional: conecta servicios en línea para que el agente trabaje con ellos (Gmail, Drive, Notion, "
+                           "Higgsfield…). Inicias sesión tú en la página de cada servicio; %s no ve tu contraseña y guarda el permiso "
+                           "cifrado en este equipo. Lo que cambie algo en tu cuenta (enviar, publicar, gastar créditos) siempre te lo "
+                           "pregunta.") % APP_NAME, "faint"))
+        self.svc_grid = services_grid(lambda: QTimer.singleShot(0, self._mcp_render))
+        v.addWidget(self.svc_grid)
         self._section(v, tr("Conectores MCP"))
         v.addWidget(lbl(tr("Amplían lo que puede hacer el agente con herramientas externas (archivos, GitHub, bases de datos, navegador, "
                         "Notion…) mediante el estándar Model Context Protocol. Pueden ser un programa de tu equipo o un servicio "
-                        "remoto con su dirección y clave."), "faint"))
+                        "remoto con su dirección; si pide iniciar sesión, se abre su página."), "faint"))
         self.mcp_box = QVBoxLayout()
         self.mcp_box.setSpacing(6)
         v.addLayout(self.mcp_box)
@@ -674,7 +815,7 @@ class SettingsDialog(QDialog):
             it = self.mcp_box.takeAt(0)
             if it.widget():
                 it.widget().deleteLater()
-        servers = core.SET.snapshot().get("mcp_servers") or []
+        servers = [s for s in core.SET.snapshot().get("mcp_servers") or [] if not s.get("catalog")]   # los del catálogo, en sus fichas
         if not servers:
             self.mcp_box.addWidget(lbl(tr("Aún no hay conectores. Elige una plantilla abajo o añade el tuyo."), "faint"))
         for s in servers:
@@ -704,6 +845,12 @@ class SettingsDialog(QDialog):
                 tip += "\n\n" + tr("Herramientas:\n%s") % "\n".join("• %s — %s" % (t["name"], (t.get("description") or "")[:80]) for t in srv.tools[:40])
             info.setToolTip(tip)
             h.addWidget(info, 1)
+            if s.get("auth") == "oauth":
+                from . import oauth
+                if oauth.signed_in(s["url"]):
+                    h.addWidget(btn(tr("Cerrar sesión"), None, lambda _=False, s=s: (oauth.logout(s["url"]), self._mcp_update(s["name"], reconnect=True))))
+                else:
+                    h.addWidget(btn(tr("Iniciar sesión"), "primary", lambda _=False, s=s: self._mcp_login(s), "hub_conectar"))
             cb = QCheckBox(tr("Activo"))
             cb.setChecked(s.get("enabled", True))
             cb.toggled.connect(lambda on, n=s["name"]: self._mcp_update(n, enabled=on))
@@ -758,7 +905,18 @@ class SettingsDialog(QDialog):
                 entry["env"] = env
         servers = [s for s in core.SET.snapshot().get("mcp_servers") or [] if s["name"] != name] + [entry]
         core.SET.update({"mcp_servers": servers})
-        self.mcp_res.setText(tr("Conectando… (la primera vez npx o uvx pueden tardar en descargar el conector)"))
+        self.mcp_res.setText(tr("Conectando… (la primera vez npx o uvx pueden tardar en descargar el conector)") if not remote else
+                             tr("Conectando… si el servicio pide iniciar sesión, se abrirá su página en tu navegador."))
+
+        def work():
+            if remote and not entry.get("headers"):        # ¿pide iniciar sesión con una cuenta? (OAuth del estándar MCP)
+                from . import oauth
+                wa = oauth.probe(entry["url"])
+                if wa is not None:
+                    entry["auth"] = "oauth"
+                    core.SET.update({"mcp_servers": servers})
+                    oauth.login(entry["url"], www_auth=wa)
+            return harness.mcp_sync(servers)
 
         def done(st):
             if isinstance(st, Exception):
@@ -771,12 +929,46 @@ class SettingsDialog(QDialog):
                 for w in (self.mcp_name, self.mcp_cmd, self.mcp_args, self.mcp_env, self.mcp_url, self.mcp_hdr):
                     w.clear()
             self._mcp_render()
-        run_bg(lambda: harness.mcp_sync(servers), done)
+        run_bg(work, done)
+
+    def _mcp_login(self, s):
+        """Iniciar sesión en un conector remoto añadido a mano que pide cuenta."""
+        from . import harness, oauth
+        self.mcp_res.setText(tr("Inicia sesión en la ventana del navegador que se abrió…"))
+        run_bg(lambda: (oauth.login(s["url"]), harness.MCP.pop(s["name"], None), harness.mcp_sync(core.SET.snapshot().get("mcp_servers") or []))[2],
+               lambda r: (self.mcp_res.setText(("✗ %s" % r) if isinstance(r, Exception) else tr("✓ Sesión iniciada en %s.") % s["name"]),
+                          self._mcp_render()))
 
     def _toggle_tool(self, name, on):
         off = set(core.SET.snapshot()["tools_disabled"])
         off.discard(name) if on else off.add(name)
         self._save("tools_disabled", sorted(off))
+
+    def p_images(self, v):
+        from . import imagegen as IG, provision as P
+        from .imagen_ui import ImageInstallBox
+        v.addWidget(lbl(tr("El agente puede crear imágenes (fotos, ilustraciones, logotipos, iconos…) en tu propio equipo, sin "
+                           "internet ni servicios externos, con stable-diffusion.cpp y un modelo de imagen de licencia libre. Solo "
+                           "se usa cuando el modelo de texto activo no crea imágenes por sí mismo."), "faint"))
+        self.field(v, "image_gen", tr("Permitir que el agente cree imágenes"), "bool",
+                   help=tr("Las crea cuando se lo pides o cuando una tarea las necesita (una web, una presentación…). Cada una "
+                           "se aprueba como el resto de acciones de escritura y aparece en el chat."))
+        self._section(v, tr("Modelo de imagen"))
+        self.field(v, "image_model", tr("Modelo elegido"), "choice",
+                   choices=[("%s · %s · %s" % (m["name"], P.fmt_bytes(IG.total_size(m)), m["license"]), m["id"]) for m in IG.MODELS],
+                   help=tr("Los dos comparten el lector de la descripción: si instalas el segundo, descarga menos."))
+        self.img_box = ImageInstallBox(removable=True)
+        v.addWidget(self.img_box)
+        self._section(v, tr("Imágenes creadas"))
+        self.field(v, "image_size", tr("Tamaño de las imágenes"), "choice",
+                   choices=[(tr("Automático (según tu equipo)"), "auto"), (tr("512 px (más rápido)"), "512"), ("768 px", "768"),
+                            (tr("1024 px (más detalle)"), "1024")],
+                   help=tr("El lado de una imagen cuadrada; las horizontales y verticales tienen los mismos píxeles. En automático, "
+                           "512 px sin tarjeta gráfica y 1024 px con ella."))
+        self.field(v, "image_dir", tr("Carpeta donde se guardan"), "dir",
+                   help=tr("Vacío: la carpeta «%s» dentro de la carpeta de trabajo o del proyecto.") % tr("imagenes"))
+        v.addWidget(lbl(tr("Licencias: stable-diffusion.cpp es MIT; FLUX.2 [klein] 4B, Z-Image Turbo y Qwen3 4B son Apache-2.0, "
+                           "que permite también el uso comercial. Registro de la última imagen: %s") % IG.LOG, "faint"))
 
     def p_data(self, v):
         v.addWidget(lbl(tr("Todo se guarda solo en este equipo. %s no envía tus conversaciones ni archivos a ningún servidor. "
@@ -877,12 +1069,16 @@ class SettingsDialog(QDialog):
         commit = local_commit()
         v.addWidget(lbl(tr("Código: %s%s\nMotor: llama.cpp %s\nDatos: %s") % (paths.APP_DIR, (" · " + commit[:7]) if commit else "", cfg["llama_tag"] or "—", paths.HOME), "faint"))
         self.upd = lbl("", "muted")
+        self.upd.hide()
         r = QHBoxLayout()
         r.addWidget(btn(tr("Buscar actualizaciones"), cb=self._check_updates, ico="acc_refrescar"))
         r.addWidget(btn(tr("Abrir en GitHub"), cb=lambda: webbrowser.open("https://github.com/" + REPO), ico="acc_abrir_externo"))
         r.addStretch(1)
-        v.addLayout(r)
-        v.addWidget(self.upd)
+        box = QVBoxLayout()                    # el resultado de la búsqueda aparece bajo los botones (sin banda vacía antes)
+        box.setSpacing(8)
+        box.addLayout(r)
+        box.addWidget(self.upd)
+        v.addLayout(box)
         self._section(v, tr("Novedades"))
         self.field(v, "auto_update_check", tr("Avisarme cuando haya una versión nueva de %s") % APP_NAME, "bool")
         self.field(v, "auto_install_updates", tr("Descargar las actualizaciones en segundo plano e instalarlas al cerrar %s") % APP_NAME, "bool",
@@ -900,6 +1096,7 @@ class SettingsDialog(QDialog):
         v.addLayout(r)
 
     def _check_updates(self):
+        self.upd.show()
         self.upd.setText(tr("Consultando GitHub…"))
 
         from . import updater

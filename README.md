@@ -36,6 +36,12 @@ Cada enlace baja directamente la última versión para ese sistema. Todas las ve
 - **Usa tus programas y la web:** lee los botones y campos de cualquier programa (accesibilidad del sistema), hace clic,
   arrastra, escribe y maneja ventanas; tiene un **navegador integrado** que usa a la vista (buscar, pulsar, rellenar
   formularios), con su propio puntero y un brillo en los bordes mientras tiene el control.
+- **Crea imágenes en tu equipo:** fotos, ilustraciones, logotipos o portadas cuando se lo pides o cuando una tarea las
+  necesita, con stable-diffusion.cpp y modelos de licencia libre (FLUX.2 [klein] 4B, Z-Image Turbo). Ves cómo se va
+  formando la imagen; se instala desde la propia app y después funciona sin internet.
+- **Tus servicios, si quieres:** conecta Gmail, Google Drive, Calendar, Notion, Canva, Higgsfield y más con tu propia
+  cuenta (inicias sesión en su página; Jayth no ve tu contraseña y guarda el permiso cifrado). Lo que cambie algo en tu
+  cuenta —enviar, publicar, gastar créditos— siempre te lo pregunta.
 - **Cualquier modelo:** descarga GGUF de Hugging Face desde la propia app (lista las cuantizaciones y marca cuáles caben
   en tu equipo), usa un `.gguf` que ya tengas, o conéctate a un servidor compatible con OpenAI (Ollama, LM Studio, otro PC).
 - **Se adapta al hardware:** detecta RAM, CPU y GPU; descarga la compilación oficial de llama.cpp adecuada
@@ -139,7 +145,8 @@ superior izquierda de la pantalla.
 Archivos (leer, escribir, editar, mover, papelera, buscar) · terminal del sistema (PowerShell en Windows, zsh/bash en
 macOS y Linux) y procesos en segundo plano · abrir programas/archivos/URLs · documentos e imágenes · web (buscar, leer
 páginas, descargar) y navegador integrado · control del PC (capturas de la pantalla o de una ventana, leer los botones y
-campos de cualquier programa por accesibilidad, clic, arrastrar, teclado, ventanas, portapapeles) · conectores MCP.
+campos de cualquier programa por accesibilidad, clic, arrastrar, teclado, ventanas, portapapeles) · crear y modificar
+imágenes en el propio equipo · conectores MCP.
 
 La búsqueda web usa DuckDuckGo. Si este pide un captcha, la app no lo salta y cae a Wikipedia. Para una búsqueda web
 completa añade una clave de Brave Search o tu propio SearXNG en Ajustes.

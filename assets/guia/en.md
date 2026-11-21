@@ -126,6 +126,28 @@ asks for confirmation before buying, paying, publishing or sending personal data
 For web pages, long documents, SVG diagrams or programs the user wants to see: the agent shows them in a panel next
 to the chat (“View on canvas”), with preview and code, versions (v1 of n) and the option to save them.
 
+## Images
+
+The agent can create new images (photos, illustrations, logos, icons, backgrounds, covers) on the computer itself:
+when you ask for one or when a task needs it (illustrating a website, a presentation or a document). It can also
+modify an image you already have (with FLUX.2 [klein]). While it works you see the current step, the time left and a
+preview; when it's done the image appears large in the chat with **Open** and **Show in folder**. It's saved in the
+“images” folder of the working folder (or of the project), or in the one chosen in Settings.
+
+- It works without internet or external services, with stable-diffusion.cpp (MIT) and an image model with a free
+  license (Apache-2.0): **FLUX.2 [klein] 4B** (fast and versatile, the recommended one) or **Z-Image Turbo** (more
+  realistic, better with a graphics card).
+- The first time it has to be installed (about 5 GB, only once): with **Install** on the card that appears in the chat
+  when the agent needs it (then **Continue**), or in **Settings › Images**. You see the progress, you can cancel, and
+  it resumes if interrupted. **Remove** deletes its files.
+- Time: with a graphics card, under a minute per image; without one, several minutes (that's why, without a graphics
+  card, images are made at 512 px). Change it in Settings › Images › “Image size”.
+- It's only used if the active text model can't create images by itself (today none of the ones that run on llama.cpp
+  can). Turn it off with “Allow the agent to create images”.
+- Each image is a writing action: depending on the permission mode it's approved before it's created, and it can be
+  undone.
+- For data charts the agent uses Python, and for diagrams, SVG on the canvas.
+
 ## Computer control and other apps
 
 The agent can open programs and files, read the buttons and fields of any window (system accessibility), click,
@@ -200,7 +222,13 @@ names):
   - **Available tools:** each of the agent's tools can be turned off separately.
   - **Web search:** “Search engine” (automatic with DuckDuckGo and Wikipedia, Brave Search or SearXNG), “Brave
     Search key”, “SearXNG URL”.
+  - **Services with your account:** cards to connect online services (**Connect**, **Disconnect**, **Set up
+    Google…**).
   - **MCP connectors:** templates, add (**Add and test**), test and remove connectors.
+- **Images:** “Allow the agent to create images”.
+  - **Image model:** “Chosen model” (FLUX.2 [klein] 4B or Z-Image Turbo), its status and **Install**, **Cancel** or
+    **Remove**.
+  - **Created images:** “Image size” (Automatic, 512, 768 or 1024 px) and “Folder where they're saved”.
 - **Data and privacy:** the data folder (**Open folder**).
   - **Conversations:** **Export conversations (Markdown)…**, free up space from unused images and delete all
     conversations.
@@ -244,7 +272,18 @@ window shortcut) or **Quick question** in the tray. **With screenshot** attaches
 - **MCP connectors** (Settings › Tools): extend the agent's tools with the Model Context Protocol standard (files,
   memory, Playwright browser, Git, Fetch, GitHub…). There are templates that fill in the form; they can be a program
   on the computer (command and arguments; many need Node.js or uv) or a remote service (address and key). **Add and
-  test** connects them.
+  test** connects them; if the service asks you to sign in, its page opens (afterwards, **Sign in** or **Sign out** on
+  its row).
+- **Services with your account** (Settings › Tools): all optional; Jayth works locally and offline. There are cards for
+  Higgsfield (AI images and video in the cloud, with your credits), Notion, Canva, Gmail, Google Drive, Google Calendar,
+  Linear, Jira and Confluence, and Hugging Face (no account). **Connect** opens the service's page in the browser: the
+  user signs in there and authorizes; Jayth never sees the password and keeps the permission encrypted on the computer
+  (it renews itself). **Disconnect** forgets it. Gmail, Drive and Calendar first need **Set up Google…**: create once an
+  “OAuth client ID” of type “Desktop app” in Google Cloud (with the MCP APIs enabled and the email as a test user) and
+  paste its ID and secret; it works for all three.
+- If a task needs it, the agent can suggest connecting a service: its card appears in the chat with **Connect** and,
+  when done, **Continue**. Anything that changes something in the account (sending, publishing, spending credits)
+  always asks for approval, even in Automatic mode; reading doesn't.
 - **Web search:** DuckDuckGo by default; if it asks for a captcha, Jayth doesn't bypass it and uses Wikipedia. For
   full searches you can set a Brave Search key or your own SearXNG instance.
 
@@ -269,7 +308,8 @@ Settings › About › Updates. Conversations, settings and models are kept when
 - **Settings, conversations, engine and models:** Windows `%LOCALAPPDATA%\Jayth`, macOS `~/Library/Application
   Support/Jayth`, Linux `~/.local/share/jayth` (this computer's real path is in this version's data).
 - **Chat mode working folder:** by default `Documents/Jayth`; change it in Settings › Agent and permissions.
-- **Models folder:** change it in Settings › Models.
+- **Models folder:** change it in Settings › Models. Image models go in its `imagen` subfolder, and the image engine
+  next to llama.cpp's (`runtime/imagen`).
 - **Portable mode:** a `portable.txt` file next to the program stores everything in `userdata/` beside it (for a USB
   drive).
 - **Privacy:** everything stays on the computer; Jayth doesn't send conversations or files to any server. It only
@@ -295,6 +335,9 @@ https://github.com/Json-Tuiran/jayth.ai (downloads in Releases).
   **Search in a folder…**.
 - **It doesn't see images:** the model needs vision (projector); when adding it, check **Include vision**. Check
   Settings › Agent and permissions › Send screenshots and images to the model.
+- **It doesn't create images or fails while creating them:** install the generator in Settings › Images and check that
+  “Allow the agent to create images” is ticked. If it runs out of memory, choose a smaller size or FLUX.2 [klein] and
+  close other programs; the details of the last attempt are in the `imagen.log` file in the data folder.
 - **It can't use the internet or the mouse:** check Settings › Tools (internet access, computer control and the list
   of tools).
 - **Windows shows “Windows protected your PC”:** the installer isn't signed yet: More info › Run anyway. **macOS:**
