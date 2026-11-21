@@ -47,7 +47,7 @@ TOOL_LABELS = {
     "window_action": tr("Manejar ventanas"), "clipboard": tr("Usar el portapapeles"), "jayth_guide": tr("Consultar la guía de Jayth"),
     "browser_open": tr("Abrir páginas en el navegador de Jayth"), "browser_read": tr("Leer la página del navegador"), "browser_click": tr("Pulsar en el navegador"),
     "browser_type": tr("Escribir en el navegador"), "browser_nav": tr("Navegar (atrás, recargar, desplazar)"), "browser_screenshot": tr("Capturar el navegador"),
-    "generate_image": tr("Crear imágenes"), "connect_service": tr("Proponer conectar un servicio"),
+    "generate_image": tr("Crear imágenes"), "connect_service": tr("Proponer conectar un servicio"), "search_knowledge": tr("Buscar en tu conocimiento"),
 }
 CATEGORIES = {"read": tr("Lectura"), "write": tr("Escritura"), "exec": tr("Ejecución"), "net": tr("Red"), "control": tr("Control del PC"),
               "agent": tr("Agente"), "mcp": tr("Conector")}
@@ -1785,6 +1785,28 @@ def connect_service(a, ctx):
     return {"text": "El usuario ve en el chat un botón para conectar %s con su cuenta. Espera a que te diga que ya está conectado; "
                     "mientras, sigue con lo que puedas hacer sin ese servicio." % c["name"],
             "ui": {"connect_service": c["id"], "reason": str(a.get("reason") or "")[:200]}}
+
+
+@tool("search_knowledge", "read",
+      "Busca por significado (no solo palabras exactas) en las carpetas de conocimiento que eligió el usuario: sus notas, documentos "
+      "y proyectos. Devuelve los fragmentos más parecidos con su archivo y línea. Úsalo antes de responder sobre sus documentos o "
+      "sobre temas que puedan estar en ellos; después lee lo que necesites con read_file o read_document.",
+      {"query": S("Qué buscas, con tus palabras (una pregunta o un tema)"), "k": I("Cuántos fragmentos (por defecto 6, máximo 12)")}, ["query"])
+def search_knowledge(a, ctx):
+    from . import conocimiento as KN
+    q = str(a.get("query") or "").strip()
+    if not q:
+        raise ToolError("Falta qué buscar (query).")
+    if not KN.ready():
+        raise ToolError("El conocimiento local no está listo: el usuario debe elegir carpetas e instalar el buscador en Ajustes › Conocimiento.")
+    try:
+        hits = KN.search(q, max(1, min(12, int(a.get("k") or 6))))
+    except Exception as e:
+        raise ToolError("No se pudo buscar: %s" % e)
+    if not hits:
+        return "No encontré nada parecido en las carpetas de conocimiento."
+    return clip("\n\n".join("[%d] %s (línea %d, parecido %.2f)\n%s" % (i + 1, h["path"], h["line"], h["score"], h["text"][:900])
+                            for i, h in enumerate(hits)), ctx.max_out)
 
 
 @tool("jayth_guide", "agent", "Guía de Jayth, la app en la que trabajas: qué hace cada parte, dónde está cada botón, menú o ajuste, "

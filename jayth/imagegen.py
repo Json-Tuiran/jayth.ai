@@ -16,8 +16,9 @@ GB = 1024 ** 3
 REPO = "leejet/stable-diffusion.cpp"
 LOG = os.path.join(paths.DATA, "imagen.log")
 
-# ---------------------------------------------------------------- modelos (todos con licencia Apache-2.0)
-# El codificador de texto (Qwen3 4B) es el mismo para los dos: se descarga una sola vez y lo comparten.
+# ---------------------------------------------------------------- modelos (licencias libres: Apache-2.0 y MIT)
+# FLUX.2 y Z-Image usan el mismo codificador de texto (Qwen3 4B): se descarga una sola vez y lo comparten.
+# Papeles de los archivos: diffusion + llm + vae (modelos nuevos) o model (un solo archivo, familia SD 1.5/SDXL).
 _QWEN3_4B = {"role": "llm", "repo": "unsloth/Qwen3-4B-GGUF", "file": "Qwen3-4B-Q4_K_M.gguf", "size": 2497281312,
              "sha256": "f6f851777709861056efcdad3af01da38b31223a3ba26e61a4f8bf3a2195813a", "shared": True}
 MODELS = [
@@ -37,9 +38,23 @@ MODELS = [
                {"role": "vae", "repo": "Comfy-Org/Z-Image-Turbo", "file": "split_files/vae/ae.safetensors", "size": 335304388,
                 "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"}],
      "steps": 8, "cfg": 1.0, "edit": False},
+    {"id": "vega-rt", "name": "Segmind Vega RT", "lab": "Segmind", "license": "Apache-2.0", "fast": True,
+     "desc": tr("El más rápido sin tarjeta gráfica: ilustraciones y fotos sencillas en 4 pasos. Menos detalle que FLUX.2 y no "
+                "escribe bien texto dentro de la imagen."),
+     # Vega (SDXL destilado) + VegaRT (LoRA LCM de 4 pasos) + TAESDXL (decodificador diminuto: decodificar con el
+     # normal tarda más de un minuto en CPU)
+     "files": [{"role": "model", "repo": "segmind/Segmind-Vega", "file": "segmind-vega.safetensors", "size": 3293395670,
+                "sha256": "94762e983e5942056be73c5c1d4464b8ffa1ada500b4fef1267550e2447953ce"},
+               {"role": "lora", "repo": "segmind/Segmind-VegaRT", "file": "pytorch_lora_weights.safetensors", "save_as": "vegart.safetensors",
+                "size": 239224692, "sha256": "9b6e8cd833fa205eaeeed391ca623a6f2546e447470bd1c5dcce3fa8d2f26afb"},
+               {"role": "tae", "repo": "madebyollin/taesdxl", "file": "diffusion_pytorch_model.safetensors", "save_as": "taesdxl.safetensors",
+                "size": 9793292, "sha256": "ff4824aca94dd6111e0340fa749347fb74101060d9712cb5ef1ca8f1cf17502f"}],
+     "steps": 4, "cfg": 1.0, "sampler": "lcm", "lora": "vegart", "edit": False, "min_side": 768, "max_side": 1024},
 ]
 DEFAULT_MODEL = MODELS[0]["id"]
-ROLE_TXT = {"diffusion": tr("modelo de imagen"), "llm": tr("lector de la descripción"), "vae": tr("decodificador")}
+FAST_MODEL = "vega-rt"
+ROLE_TXT = {"diffusion": tr("modelo de imagen"), "model": tr("modelo de imagen"), "llm": tr("lector de la descripción"),
+            "vae": tr("decodificador"), "lora": tr("ajuste de 4 pasos"), "tae": tr("decodificador rápido")}
 
 # arquitecturas GGUF que generan imágenes por sí mismas con llama.cpp: hoy ninguna. Si llega alguna, se añade aquí y,
 # con ese modelo activo, el agente deja de usar este motor aparte.
@@ -47,7 +62,11 @@ NATIVE_IMAGE_ARCH = set()
 
 
 def model(cfg, mid=None):
-    mid = mid or (cfg or {}).get("image_model") or DEFAULT_MODEL
+    """Modelo elegido; «auto»: el rápido sin tarjeta gráfica (FLUX.2 tarda ~11 min por imagen en un portátil sin ella)
+    y FLUX.2 [klein] con ella."""
+    mid = mid or (cfg or {}).get("image_model") or "auto"
+    if mid == "auto":
+        mid = DEFAULT_MODEL if gpu(cfg) else FAST_MODEL
     return next((m for m in MODELS if m["id"] == mid), MODELS[0])
 
 
@@ -153,7 +172,7 @@ def model_root(cfg):
 
 
 def file_path(cfg, m, f):
-    return os.path.join(model_root(cfg), "comun" if f.get("shared") else m["id"], os.path.basename(f["file"]))
+    return os.path.join(model_root(cfg), "comun" if f.get("shared") else m["id"], f.get("save_as") or os.path.basename(f["file"]))
 
 
 def missing(cfg, m):
@@ -263,11 +282,11 @@ def gpu(cfg):
     return backend(cfg) in ("cuda", "vulkan", "metal")
 
 
-def base_side(cfg):
+def base_side(cfg, m=None):
     s = str((cfg or {}).get("image_size") or "auto")
-    if s.isdigit():
-        return max(256, min(2048, int(s)))
-    return 1024 if gpu(cfg) else 512                # sin tarjeta gráfica: 512 px tarda unas cuatro veces menos
+    side = max(256, min(2048, int(s))) if s.isdigit() else (1024 if gpu(cfg) else 512)   # sin gráfica: 512 px, 4 veces menos
+    m = m or model(cfg)                                              # cada familia tiene su tamaño natural
+    return max(m.get("min_side", 256), min(side, m.get("max_side", 2048)))
 
 
 ASPECTS = {"square": 1.0, "landscape": 16 / 9, "portrait": 9 / 16, "wide": 3 / 2, "tall": 2 / 3}
@@ -280,9 +299,9 @@ def _r64(x):
     return max(256, min(2048, int(round(x / 64.0)) * 64))
 
 
-def pick_size(cfg, aspect="", width=0, height=0):
+def pick_size(cfg, aspect="", width=0, height=0, m=None):
     """Ancho y alto en múltiplos de 64; sin medidas se usa la proporción con el lado base del equipo."""
-    base = base_side(cfg)
+    base = base_side(cfg, m)
     width, height = int(width or 0), int(height or 0)
     if width and height:
         w, h = _r64(width), _r64(height)
@@ -390,7 +409,7 @@ def generate(cfg, prompt, out_path, aspect="", width=0, height=0, seed=None, ref
     if not argv or missing(cfg, m):
         raise NotInstalled(m["id"])
     files = {f["role"]: file_path(cfg, m, f) for f in m["files"]}
-    w, h = pick_size(cfg, aspect, width, height)
+    w, h = pick_size(cfg, aspect, width, height, m)
     seed = int(seed) if seed not in (None, "") and str(seed).lstrip("-").isdigit() and int(seed) >= 0 else random.randint(0, 2 ** 31 - 1)
     out_path = os.path.abspath(out_path)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -403,9 +422,19 @@ def generate(cfg, prompt, out_path, aspect="", width=0, height=0, seed=None, ref
             os.remove(q)
         except OSError:
             pass
-    cmd = argv + ["--diffusion-model", files["diffusion"], "--llm", files["llm"], "--vae", files["vae"],
-                  "-p", prompt, "--cfg-scale", str(m["cfg"]), "--steps", str(m["steps"]), "-W", str(w), "-H", str(h),
-                  "--seed", str(seed), "-o", part, "--preview", "proj", "--preview-path", prev]
+    if "model" in files:                            # un solo archivo (familia SD 1.5 / SDXL)
+        parts = ["-m", files["model"]]
+    else:
+        parts = ["--diffusion-model", files["diffusion"], "--llm", files["llm"], "--vae", files["vae"]]
+    cmd = argv + parts + ["-p", prompt, "--cfg-scale", str(m["cfg"]), "--steps", str(m["steps"]), "-W", str(w), "-H", str(h),
+                          "--seed", str(seed), "-o", part, "--preview", "proj", "--preview-path", prev]
+    if m.get("sampler"):
+        cmd += ["--sampling-method", m["sampler"]]
+    if "lora" in files:                             # el ajuste de pocos pasos va como LoRA, nombrado en la descripción
+        cmd += ["--lora-model-dir", os.path.dirname(files["lora"])]
+        cmd[cmd.index("-p") + 1] = prompt + "<lora:%s:1>" % m.get("lora", "lora")
+    if "tae" in files:
+        cmd += ["--taesd", files["tae"]]
     threads = int((cfg or {}).get("threads") or 0)
     if threads > 0:
         cmd += ["-t", str(threads)]

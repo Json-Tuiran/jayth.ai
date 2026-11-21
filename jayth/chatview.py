@@ -52,7 +52,7 @@ TOOL_ICON = {
     "open_target": "acc_abrir_externo", "wait": "est_cargando", "remember": "ia_memoria", "forget": "ia_memoria",
     "schedule_task": "lista_subir", "list_tasks": "ui_menu_hamburguesa", "cancel_task": "acc_eliminar", "use_skill": "vfx_magia",
     "show_canvas": "uij_panel", "ui_elements": "act_layout_ui", "click_element": "inp_raton", "drag": "inp_raton",
-    "window_action": "app_restaurar", "clipboard": "acc_copiar", "jayth_guide": "est_info", "generate_image": "uij_imagen", "connect_service": "hub_conectar",
+    "window_action": "app_restaurar", "clipboard": "acc_copiar", "jayth_guide": "est_info", "generate_image": "uij_imagen", "connect_service": "hub_conectar", "search_knowledge": "acc_buscar",
     "browser_open": "herr_espacio_mundo", "browser_read": "acc_examinar", "browser_click": "inp_raton", "browser_type": "inp_teclado",
     "browser_nav": "herr_espacio_mundo", "browser_screenshot": "vista_captura",
 }
@@ -63,7 +63,7 @@ def tool_icon(name):
 
 
 _KIND = {"write_file": "write", "edit_file": "write", "multi_edit": "write", "create_document": "write", "move_path": "write",
-         "delete_path": "write", "show_canvas": "write", "generate_image": "write",
+         "delete_path": "write", "show_canvas": "write", "generate_image": "write", "search_knowledge": "read",
          "run_command": "run", "run_python": "run", "command_output": "run", "stop_command": "run",
          "read_file": "read", "read_document": "read", "list_dir": "read", "search_files": "read",
          "web_search": "web", "web_fetch": "web", "download_file": "web",

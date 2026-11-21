@@ -109,6 +109,7 @@ SUBTITLES = {
     "Agente y permisos": tr("Qué puede hacer el agente sin preguntarte y hasta dónde llega."),
     "Herramientas": tr("Internet, control del ordenador, búsqueda web y conectores con otros servicios."),
     "Imágenes": tr("Imágenes creadas en tu propio equipo, sin internet."),
+    "Conocimiento": tr("Carpetas en las que el agente busca por significado: tus notas, documentos y proyectos."),
     "Datos y privacidad": tr("Dónde se guarda todo y cómo exportarlo o borrarlo."),
     "Registro del modelo": tr("Lo que escribe el motor al trabajar, para diagnosticar problemas."),
     "Atajos de teclado": tr("Combinaciones de teclas de %s.") % APP_NAME,
@@ -253,6 +254,7 @@ class SettingsDialog(QDialog):
                                        ("Agente y permisos", tr("Agente y permisos"), "est_bloqueado", self.p_agent),
                                        ("Herramientas", tr("Herramientas"), "cod_terminal", self.p_tools),
                                        ("Imágenes", tr("Imágenes"), "uij_imagen", self.p_images),
+                                       ("Conocimiento", tr("Conocimiento"), "acc_examinar", self.p_knowledge),
                                        ("Datos y privacidad", tr("Datos y privacidad"), "prof_disco", self.p_data),
                                        ("Registro del modelo", tr("Registro del modelo"), "pan_consola", self.p_log),
                                        ("Atajos de teclado", tr("Atajos de teclado"), "inp_teclado", self.p_keys),
@@ -636,8 +638,17 @@ class SettingsDialog(QDialog):
         cl.addWidget(lbl(tr("Motor: llama.cpp %s · %s") % (cfg["llama_tag"] or "", {"cpu": "CPU", "cuda": tr("GPU NVIDIA (CUDA)"), "vulkan": "GPU (Vulkan)"}.get(cfg["backend"], cfg["backend"])), "faint"))
         r = QHBoxLayout()
         r.addWidget(btn(tr("Cambiar o actualizar el motor…"), cb=lambda: SetupWizard(self).exec(), ico="acc_refrescar"))
+        self.tune_btn = btn(tr("Optimizar para este equipo"), "primary", self._tune, "prof_cpu")
+        self.tune_btn.setToolTip(tr("Prueba de verdad varias configuraciones del motor con tu modelo (unos minutos) y deja la más rápida."))
+        r.addWidget(self.tune_btn)
+        self.tune_cancel = btn(tr("Cancelar"), None, self._tune_cancel)
+        self.tune_cancel.hide()
+        r.addWidget(self.tune_cancel)
         r.addStretch(1)
         cl.addLayout(r)
+        self.tune_lbl = lbl("", "faint")
+        cl.addWidget(self.tune_lbl)
+        self._tune_show()
         v.addWidget(card)
         run_bg(HW.detect, lambda h: hw.setText(HW.summary(h) if not isinstance(h, Exception) else tr("No se pudo detectar el hardware.")))
         self.field(v, "warmup", tr("Precalentar al encender el modelo"), "bool",
@@ -668,6 +679,13 @@ class SettingsDialog(QDialog):
         self.field(v, "cache_type", tr("Contexto comprimido"), "choice",
                    choices=[(tr("No (máxima calidad)"), "f16"), (tr("8 bits (la mitad de memoria, casi sin pérdida)"), "q8_0"), (tr("4 bits (un cuarto de memoria)"), "q4_0")])
         self.field(v, "flash_attn", "Flash attention", "choice", choices=[(tr("Automático"), "auto"), (tr("Activado"), "on"), (tr("Desactivado"), "off")])
+        self.field(v, "spec_type", tr("Aceleración al escribir"), "choice",
+                   choices=[(tr("Automática (la que elija «Optimizar»)"), "auto"), (tr("Desactivada"), "none"),
+                            (tr("MTP (capas de predicción del modelo)"), "draft-mtp"), (tr("Repetición de texto (n-gramas)"), "ngram-mod"),
+                            (tr("MTP y n-gramas"), "draft-mtp,ngram-mod")],
+                   help=tr("Decodificación especulativa: el modelo adelanta varias palabras y las comprueba de una vez. MTP usa capas "
+                           "que traen algunos modelos (p. ej. Qwen 3.5 y 3.8); los n-gramas aceleran al reescribir código o texto. "
+                           "Solo se usa si tu motor y tu modelo lo admiten."))
         self.field(v, "mmap", tr("Cargar el modelo con mmap (arranque más rápido)"), "bool")
         self.field(v, "mlock", tr("Bloquear el modelo en la RAM (evita que el sistema lo mueva al disco)"), "bool",
                    help=tr("Útil si tienes RAM de sobra; si no, puede ralentizar el equipo."))
@@ -676,6 +694,56 @@ class SettingsDialog(QDialog):
         self.field(v, "download_connections", tr("Conexiones simultáneas al descargar modelos"), "int", min=1, max=16,
                    help=tr("Varias conexiones aprovechan mejor tu internet (como un gestor de descargas). Pon 1 si tu red "
                         "o tu router van mal con muchas conexiones a la vez."))
+
+    # ---- ajuste medido del motor (ajuste.py)
+    def _tune_show(self):
+        from . import ajuste
+        job = ajuste.JOB
+        busy = bool(job and job["running"])
+        self.tune_btn.setVisible(not busy)
+        self.tune_cancel.setVisible(busy)
+        if busy:
+            self.tune_lbl.setText(tr("Optimizando: %s") % job["text"])
+        elif job and job.get("error"):
+            self.tune_lbl.setText(tr("No se pudo optimizar: %s") % job["error"])
+        else:
+            rep = core.SET.snapshot().get("tuning") or {}
+            self.tune_lbl.setText(tr("Última optimización (%s, %s): %s") % (rep["date"], rep.get("model", ""), ajuste.summary(rep)) if rep
+                                  else tr("Aún sin optimizar: %s usa valores calculados. «Optimizar» mide tu equipo de verdad.") % APP_NAME)
+
+    def _tune(self):
+        from . import ajuste
+        if core.SET.snapshot().get("llm_mode") == "external":
+            return QMessageBox.information(self, APP_NAME, tr("La optimización es para modelos locales."))
+        was = core.LLM_MGR.mine()
+        if was:
+            r = QMessageBox.question(self, tr("Optimizar para este equipo"),
+                                     tr("Para medir bien, %s apaga el modelo unos minutos y lo vuelve a encender al terminar. ¿Seguir?") % APP_NAME,
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if r != QMessageBox.StandardButton.Yes:
+                return
+            core.LLM_MGR.stop()
+
+        def done(job):
+            if was:
+                core.LLM_MGR.start()
+        ajuste.start(done=done)
+        self._tune_timer = QTimer(self, interval=500, timeout=self._tune_tick)
+        self._tune_timer.start()
+        self._tune_show()
+
+    def _tune_tick(self):
+        from . import ajuste
+        self._tune_show()
+        if ajuste.JOB and not ajuste.JOB["running"]:
+            self._tune_timer.stop()
+            if ajuste.JOB.get("report"):
+                QTimer.singleShot(0, lambda: self._reload("Rendimiento"))     # se ven los valores nuevos (hilos, flash attention…)
+
+    def _tune_cancel(self):
+        from . import ajuste
+        if ajuste.JOB:
+            ajuste.JOB["stop"].set()
 
     def p_agent(self, v):
         self.field(v, "mode", tr("Permisos por defecto"), "choice", choices=[(d, k) for k, d in A.MODES.items()])
@@ -960,8 +1028,10 @@ class SettingsDialog(QDialog):
                            "se aprueba como el resto de acciones de escritura y aparece en el chat."))
         self._section(v, tr("Modelo de imagen"))
         self.field(v, "image_model", tr("Modelo elegido"), "choice",
-                   choices=[("%s · %s · %s" % (m["name"], P.fmt_bytes(IG.total_size(m)), m["license"]), m["id"]) for m in IG.MODELS],
-                   help=tr("Los dos comparten el lector de la descripción: si instalas el segundo, descarga menos."))
+                   choices=[(tr("Automático (según tu equipo)"), "auto")] +
+                           [("%s · %s · %s" % (m["name"], P.fmt_bytes(IG.total_size(m)), m["license"]), m["id"]) for m in IG.MODELS],
+                   help=tr("En automático: Segmind Vega RT (rápido) sin tarjeta gráfica y FLUX.2 [klein] con ella. FLUX.2 y Z-Image "
+                           "comparten el lector de la descripción: si instalas los dos, descarga menos."))
         self.img_box = ImageInstallBox(removable=True)
         v.addWidget(self.img_box)
         self._section(v, tr("Imágenes creadas"))
@@ -972,8 +1042,143 @@ class SettingsDialog(QDialog):
                            "512 px sin tarjeta gráfica y 1024 px con ella."))
         self.field(v, "image_dir", tr("Carpeta donde se guardan"), "dir",
                    help=tr("Vacío: la carpeta «%s» dentro de la carpeta de trabajo o del proyecto.") % tr("imagenes"))
-        v.addWidget(lbl(tr("Licencias: stable-diffusion.cpp es MIT; FLUX.2 [klein] 4B, Z-Image Turbo y Qwen3 4B son Apache-2.0, "
-                           "que permite también el uso comercial. Registro de la última imagen: %s") % IG.LOG, "faint"))
+        v.addWidget(lbl(tr("Licencias: stable-diffusion.cpp y TAESDXL son MIT; FLUX.2 [klein] 4B, Z-Image Turbo, Qwen3 4B y Segmind Vega "
+                           "son Apache-2.0. Ambas permiten también el uso comercial. Registro de la última imagen: %s") % IG.LOG, "faint"))
+
+    # ---- conocimiento local (conocimiento.py)
+    def p_knowledge(self, v):
+        from . import conocimiento as KN, provision as P
+        v.addWidget(lbl(tr("Elige carpetas (notas, documentos, proyectos) y el agente buscará en ellas por significado, sin tener "
+                           "que leerlas enteras: ideal con modelos locales, que tienen poca memoria de conversación. Todo se queda "
+                           "en tu equipo."), "faint"))
+        self._section(v, tr("Buscador por significado"))
+        self.kn_model = lbl("")
+        row = QHBoxLayout()
+        self.kn_install = btn(tr("Instalar (%s)") % P.fmt_bytes(KN.EMB["size"]), "primary", self._kn_install, "acc_descargar")
+        row.addWidget(self.kn_install)
+        row.addStretch(1)
+        box = QVBoxLayout()
+        box.setSpacing(8)
+        box.addWidget(self.kn_model)
+        box.addLayout(row)
+        v.addLayout(box)
+        self._section(v, tr("Carpetas de conocimiento"))
+        self.kn_list = QVBoxLayout()
+        self.kn_list.setSpacing(6)
+        v.addLayout(self.kn_list)
+        r = QHBoxLayout()
+        r.addWidget(btn(tr("Añadir carpeta…"), None, self._kn_add, "acc_anadir"))
+        r.addStretch(1)
+        v.addLayout(r)
+        self._section(v, tr("Índice"))
+        self.kn_stats = lbl("")
+        r = QHBoxLayout()
+        self.kn_btn = btn(tr("Actualizar el índice"), None, self._kn_index, "acc_refrescar")
+        self.kn_cancel = btn(tr("Cancelar"), None, self._kn_stop)
+        r.addWidget(self.kn_btn)
+        r.addWidget(self.kn_cancel)
+        r.addStretch(1)
+        box = QVBoxLayout()
+        box.setSpacing(8)
+        box.addWidget(self.kn_stats)
+        box.addLayout(r)
+        v.addLayout(box)
+        self.field(v, "knowledge_auto", tr("Actualizar el índice al abrir %s") % APP_NAME, "bool",
+                   help=tr("Solo vuelve a leer los archivos nuevos o cambiados."))
+        self._kn_timer = QTimer(self, interval=500, timeout=self._kn_refresh)
+        self._kn_render()
+        self._kn_refresh()
+
+    def _kn_render(self):
+        from . import conocimiento as KN
+        while self.kn_list.count():
+            w = self.kn_list.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        fs = KN.folders()
+        if not fs:
+            self.kn_list.addWidget(lbl(tr("Aún no hay carpetas. Añade las que quieras que el agente pueda consultar."), "faint"))
+        for f in fs:
+            row = QFrame()
+            row.setObjectName("noteBox")
+            h = QHBoxLayout(row)
+            h.setContentsMargins(10, 4, 4, 4)
+            h.addWidget(lbl(f), 1)
+            h.addWidget(btn(tr("Quitar"), "danger", lambda _=False, f=f: self._kn_remove(f)))
+            self.kn_list.addWidget(row)
+
+    def _kn_add(self):
+        from . import conocimiento as KN
+        d = QFileDialog.getExistingDirectory(self, tr("Carpeta de conocimiento"), os.path.expanduser("~"))
+        if not d:
+            return
+        d = os.path.normpath(d)
+        fs = KN.folders()
+        if d not in fs:
+            core.SET.update({"knowledge_folders": fs + [d]})
+        self._kn_render()
+        if KN.installed():
+            self._kn_index()
+
+    def _kn_remove(self, f):
+        from . import conocimiento as KN
+        core.SET.update({"knowledge_folders": [x for x in KN.folders() if x != f]})
+        self._kn_render()
+        if KN.installed():
+            self._kn_index()                   # olvida lo que ya no está en ninguna carpeta
+
+    def _kn_install(self):
+        from . import conocimiento as KN
+        KN.install()
+        self._kn_timer.start()
+        self._kn_refresh()
+
+    def _kn_index(self):
+        from . import conocimiento as KN
+        if not KN.installed():
+            return self._kn_refresh()
+        KN.start_index()
+        self._kn_timer.start()
+        self._kn_refresh()
+
+    def _kn_stop(self):
+        from . import conocimiento as KN
+        if KN.INDEX_JOB and KN.INDEX_JOB.get("running"):
+            KN.INDEX_JOB["stop"].set()
+        elif KN.JOB is not None and not KN.JOB.finished:
+            KN.JOB.cancel()
+
+    def _kn_refresh(self):
+        from . import conocimiento as KN, provision as P
+        job, ij = KN.JOB, KN.INDEX_JOB
+        downloading = job is not None and not job.finished
+        indexing = bool(ij and ij.get("running"))
+        if KN.installed():
+            self.kn_model.setText(tr("✓ Instalado: Qwen3-Embedding 0.6B (Apache-2.0), en tu equipo."))
+        elif downloading:
+            self.kn_model.setText(tr("Instalando: %s") % P.describe_overall(job.overall()))
+        elif job is not None and job.error:
+            self.kn_model.setText(tr("No se pudo instalar: %s") % job.error)
+        else:
+            self.kn_model.setText(tr("Hace falta descargarlo una vez (%s). Entiende español, inglés, portugués y muchos más idiomas.")
+                                  % P.fmt_bytes(KN.EMB["size"]))
+        self.kn_install.setVisible(not KN.installed() and not downloading)
+        st = KN.stats()
+        if indexing:
+            txt = tr("Actualizando: %s") % ij["text"]
+        elif ij and ij.get("error"):
+            txt = tr("No se pudo actualizar: %s") % ij["error"]
+        elif st["chunks"]:
+            txt = tr("%d archivos · %d fragmentos · actualizado %s") % (st["files"], st["chunks"], core.SET.snapshot().get("knowledge_indexed") or "—")
+        else:
+            txt = tr("Vacío.") if KN.installed() else tr("Se crea al instalar el buscador y elegir carpetas.")
+        self.kn_stats.setText(txt)
+        self.kn_btn.setVisible(KN.installed() and bool(KN.folders()) and not indexing)
+        self.kn_cancel.setVisible(indexing or downloading)
+        if not indexing and not downloading and self._kn_timer.isActive():
+            self._kn_timer.stop()
+            if KN.installed() and KN.folders() and job is not None and job.finished and not job.error and not st["chunks"]:
+                self._kn_index()               # recién instalado: primer índice
 
     def p_data(self, v):
         v.addWidget(lbl(tr("Todo se guarda solo en este equipo. %s no envía tus conversaciones ni archivos a ningún servidor. "

@@ -67,6 +67,9 @@ GROUPS = {   # grupo: (para qué sirve, herramientas, cómo usarlas: se le da al
     "procesos": ("Python para datos y gráficos, procesos en segundo plano y esperas", ["run_python", "command_output", "stop_command", "wait"],
                  "- Datos (CSV, Excel), cálculos y gráficos: run_python con pandas y matplotlib; los gráficos se muestran solos al usuario. Procesos lanzados con background=true: command_output y stop_command."),
     "imagenes": ("crear imágenes nuevas en este equipo", ["generate_image"], ""),
+    "conocimiento": ("buscar por significado en las carpetas de conocimiento del usuario (sus notas, documentos y proyectos)",
+                     ["search_knowledge"],
+                     "- search_knowledge busca por significado en las carpetas de conocimiento del usuario y devuelve los fragmentos más parecidos con su archivo y línea; después lee con read_file o read_document lo que necesites. Cita de qué archivo sale cada dato."),
     "agenda": ("olvidar recuerdos, tareas programadas, habilidades y conectar servicios externos",
                ["forget", "schedule_task", "list_tasks", "cancel_task", "use_skill", "connect_service"],
                "- forget borra un recuerdo; schedule_task, list_tasks y cancel_task gestionan tareas programadas; use_skill carga una habilidad; connect_service propone conectar un servicio externo con la cuenta del usuario."),
@@ -86,10 +89,27 @@ _HINTS = {
     "procesos": r"(python|datos|\bcsv|grafic|estadistic|analiza|servidor|segundo plano|chart|plot|dataset|dados)",
     "imagenes": r"(imagen|ilustracion|logo|foto\b|fotos|dibuj|portada|icono|fondo de pantalla|image|picture|illustration|"
                 r"drawing|imagem|desenh|ilustra)",
+    "conocimiento": r"(mis notas|mis documentos|mis apuntes|mis archivos|mis proyectos|segun mis|en mis (notas|documentos|archivos)|"
+                    r"base de conocimiento|conocimiento|my notes|my documents|my files|knowledge|minhas notas|meus documentos|meus arquivos)",
     "agenda": r"(olvida|cada (dia|manana|semana|lunes|martes|miercoles|jueves|viernes|hora)|todos los dias|programa(r)? (una )?tarea|"
               r"recordatorio|habilidad|conecta|gmail|drive|notion|canva|higgsfield|calendar|calendario|jira|linear|forget|"
               r"schedule|every (day|morning|week)|todo dia|toda semana|agendar)",
 }
+
+# las mismas pistas en francés, alemán e italiano (sin interfaz traducida, pero el agente responde en su idioma)
+_HINTS_MORE = {
+    "web": r"(recherch|cherche|actualit|prix|meteo|suche|nachricht|preis|wetter|ricerca|cerca |notizi|prezzo)",
+    "navegador": r"(connecte-toi|formulaire|anmeld|formular|accedi|modulo|reserv)",
+    "control": r"(clique|fenetre|ecran|souris|clavier|klick|fenster|bildschirm|maus|tastatur|clicca|finestra|schermo|tastiera|"
+               r"\b(ouvre|offne|apri)\b.*\b(ecri|schreib|scriv|appuie|druck|premi))",
+    "documentos": r"(rapport|tableur|feuille de calcul|bericht|tabelle|prasentation|rapporto|foglio di calcolo|presentazione|dokument)",
+    "procesos": r"(donnees|graphique|daten|diagramm|\bdati\b|grafico)",
+    "imagenes": r"(dessin|bild|zeichn|immagine|disegn)",
+    "conocimiento": r"(mes notes|mes documents|meine notizen|meine dokumente|miei appunti|miei documenti)",
+    "agenda": r"(chaque (jour|matin|semaine)|jeden (tag|morgen)|ogni (giorno|mattina)|rappel|erinner|promemoria|oublie|vergiss|dimentica)",
+}
+for _g, _p in _HINTS_MORE.items():
+    _HINTS[_g] = "(?:%s|%s)" % (_HINTS[_g], _p)
 
 
 def _fold(s):
@@ -208,7 +228,7 @@ def system_prompt(cfg):
         p += "\nResponde siempre en %s." % lang
     elif (cfg.get("response_language") or "auto") == "auto" and i18n.LANG != "es":   # ante la duda, el idioma de su interfaz
         p += "\nSi no está claro en qué idioma escribe el usuario, responde en %s (el idioma de su interfaz)." % (
-            {"en": "inglés", "pt": "portugués de Brasil"}.get(i18n.LANG, "inglés"))
+            {"en": "inglés", "pt": "portugués de Brasil", "fr": "francés", "de": "alemán", "it": "italiano"}.get(i18n.LANG, "inglés"))
     if not cfg.get("web_access", True):
         p += "\nNo tienes acceso a internet en esta sesión."
     if cfg.get("mode") == "plan":
@@ -258,6 +278,12 @@ def all_schemas(cfg):
         off.add("generate_image")
     if not cfg.get("web_access", True):          # los servicios externos necesitan internet
         off.add("connect_service")
+    try:                                         # conocimiento local: solo con carpetas elegidas y el buscador instalado
+        from . import conocimiento as KN
+        if not (KN.folders(cfg) and KN.installed(cfg)):
+            off.add("search_knowledge")
+    except Exception:
+        off.add("search_knowledge")
     mode = cfg.get("mode")
     cats = {"read", "agent"} if mode == "readonly" else {"read", "agent", "net"} if mode == "plan" else None
     out = [s for s in T.schemas(cats) if s["function"]["name"] not in off]

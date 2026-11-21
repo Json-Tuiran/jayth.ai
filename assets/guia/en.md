@@ -135,8 +135,10 @@ preview; when it's done the image appears large in the chat with **Open** and **
 “images” folder of the working folder (or of the project), or in the one chosen in Settings.
 
 - It works without internet or external services, with stable-diffusion.cpp (MIT) and an image model with a free
-  license (Apache-2.0): **FLUX.2 [klein] 4B** (fast and versatile, the recommended one) or **Z-Image Turbo** (more
-  realistic, better with a graphics card).
+  license (Apache-2.0 or MIT): **FLUX.2 [klein] 4B** (versatile and with text inside the image, the recommended one
+  with a graphics card), **Z-Image Turbo** (more realistic, better with a graphics card) or **Segmind Vega RT** (the
+  fastest without a graphics card, in 4 steps, with less detail). In “Automatic”, Jayth chooses based on
+  the computer. Without a graphics card, FLUX.2 takes about 11 minutes per image (measured on a laptop with a 4-core i5).
 - The first time it has to be installed (about 5 GB, only once): with **Install** on the card that appears in the chat
   when the agent needs it (then **Continue**), or in **Settings › Images**. You see the progress, you can cancel, and
   it resumes if interrupted. **Remove** deletes its files.
@@ -147,6 +149,20 @@ preview; when it's done the image appears large in the chat with **Open** and **
 - Each image is a writing action: depending on the permission mode it's approved before it's created, and it can be
   undone.
 - For data charts the agent uses Python, and for diagrams, SVG on the canvas.
+
+## Knowledge
+
+In **Settings › Knowledge** you choose folders (notes, documents, projects) and the agent searches them by meaning,
+not just exact words (“how much did fixing the car cost?” finds the note about the car's invoice), without having to
+read them whole: ideal with local models, which have little conversation memory. It does this with a small search
+model that runs on the computer (Qwen3-Embedding 0.6B, 640 MB, downloaded once) and understands Spanish, English,
+Portuguese and many more languages. It supports text, code, Markdown, Word, PDF, PowerPoint and Excel.
+
+- **Search by meaning:** **Install** (once).
+- **Knowledge folders:** **Add folder…** and **Remove**.
+- **Index:** how many files and fragments it has and when it was updated; **Update the index** (only rereads what's new
+  or changed) and “Update the index when Jayth opens”.
+- The agent uses it only when needed (e.g. “according to my notes…”) and cites which file each fact comes from.
 
 ## Computer control and other apps
 
@@ -182,8 +198,17 @@ up when starting the model**, **Conversation memory (context)** (by default **Au
 supports out of the box, reduced if its memory doesn't fit on the computer; with **Compressed context** twice as much
 or more fits), **Stop the model if unused for**, and in
 **Engine settings**: CPU threads, GPU layers (automatic splits the model between GPU and RAM), Batch size,
-Compressed context, Flash attention, mmap, lock in RAM and the local port. Engine changes apply when the model
+Compressed context, Flash attention, Writing speed-up, mmap, lock in RAM and the local port. Engine changes apply when the model
 restarts (**Restart model**). The engine log is in **Settings › Model log**.
+
+- **Optimize for this computer** (Settings › Performance): instead of estimating, it actually measures with the active
+  model (a few minutes, with the model stopped meanwhile): it tests threads and flash attention with llama-bench and
+  the “Writing speed-up” (speculative decoding: **MTP**, for models that include those layers such as Qwen 3.5 and 3.8,
+  and **n-grams**, which speeds up rewriting code or text), and keeps the fastest. The result is shown below it
+  (“reads … tok/s · writes … tok/s”). “Writing speed-up” can also be chosen by hand in Engine settings.
+- **Memory:** when the model starts, Jayth warns if it doesn't fit on the computer (it will be very slow and a smaller
+  variant is better) or if other programs are using the memory at that moment. The memory llama.cpp keeps from earlier
+  conversations adjusts itself to what's left over, so it doesn't take it from the model.
 
 ## Settings
 
@@ -227,8 +252,10 @@ names):
   - **Services with your account:** cards to connect online services (**Connect**, **Disconnect**, **Set up
     Google…**).
   - **MCP connectors:** templates, add (**Add and test**), test and remove connectors.
+- **Knowledge:** search by meaning (**Install**), folders (**Add folder…**, **Remove**), index (**Update the index**)
+  and “Update the index when Jayth opens”.
 - **Images:** “Allow the agent to create images”.
-  - **Image model:** “Chosen model” (FLUX.2 [klein] 4B or Z-Image Turbo), its status and **Install**, **Cancel** or
+  - **Image model:** “Chosen model” (Automatic, FLUX.2 [klein] 4B, Z-Image Turbo or Segmind Vega RT), its status and **Install**, **Cancel** or
     **Remove**.
   - **Created images:** “Image size” (Automatic, 512, 768 or 1024 px) and “Folder where they're saved”.
 - **Data and privacy:** the data folder (**Open folder**).

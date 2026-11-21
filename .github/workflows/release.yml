@@ -83,7 +83,7 @@ jobs:
       - name: Paquete sin firmar (Windows)
         id: sin_firmar
         if: runner.os == 'Windows' && env.SIGNPATH_ON == 'true'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: jayth-windows-x64-sin-firmar
           if-no-files-found: error
@@ -112,7 +112,7 @@ jobs:
           Copy-Item dist-firmado\* dist\ -Force
           Get-AuthenticodeSignature dist\*.exe | Format-Table Status, SignerCertificate, Path -AutoSize
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: jayth-${{ matrix.name }}
           if-no-files-found: error
@@ -132,7 +132,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v7
         with:
           path: out
           merge-multiple: true

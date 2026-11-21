@@ -20,7 +20,9 @@ hidden = ["PySide6.QtSvg", "PySide6.QtSvgWidgets", "certifi", "pypdf",
           # imágenes (se importan al usarse y en el autodiagnóstico por su nombre)
           "jayth.imagegen", "jayth.imagen_ui",
           # servicios con la cuenta del usuario (conectores con inicio de sesión)
-          "jayth.conectores", "jayth.conectores_ui", "jayth.oauth", "jayth.boveda"]
+          "jayth.conectores", "jayth.conectores_ui", "jayth.oauth", "jayth.boveda",
+          # ajuste medido del motor y conocimiento local
+          "jayth.ajuste", "jayth.conocimiento", "sqlite3"]
 if MAC:
     # pynput elige su motor al importarse: se nombran explicitamente (el compilador no tiene pantalla)
     hidden += ["mss", "mss.darwin", "pynput", "pynput.keyboard._darwin", "pynput.mouse._darwin", "pynput._util.darwin",
@@ -74,7 +76,7 @@ a.datas = [d for d in a.datas if not any(x in d[0].lower().replace("\\", "/") fo
 a.datas = [d for d in a.datas if "devtools_resources" not in d[0].lower()]        # inspector del navegador: 83 MB que no se usan
 a.binaries = [b for b in a.binaries if "devtools_resources" not in b[0].lower()]
 a.datas = [d for d in a.datas if "qtwebengine_locales" not in d[0].lower().replace("\\", "/")
-           or os.path.basename(d[0]).lower() in ("es.pak", "es-419.pak", "en-us.pak", "pt-br.pak")]
+           or os.path.basename(d[0]).lower() in ("es.pak", "es-419.pak", "en-us.pak", "pt-br.pak", "fr.pak", "de.pak", "it.pak")]
 pyz = PYZ(a.pure)
 
 exe = EXE(

@@ -380,6 +380,7 @@ STEP = {  # herramienta: (infinitivo, pasado, objeto)
     "create_document": (tr("crear el documento"), tr("Creó el documento"), lambda a: _b(a.get("path"))),
     "run_python": (tr("analizar con Python"), tr("Analizó con Python"), lambda a: ""),
     "show_canvas": (tr("mostrar en el lienzo"), tr("Mostró en el lienzo"), lambda a: tr("«%s»") % _q(a.get("title"), 50)),
+    "search_knowledge": (tr("buscar en tu conocimiento"), tr("Buscó en tu conocimiento"), lambda a: tr("«%s»") % _q(a.get("query"), 50)),
     "edit_file": (tr("editar"), tr("Editó"), lambda a: _b(a.get("path"))),
     "list_dir": (tr("listar"), tr("Listó"), lambda a: _b(a.get("path")) or tr("la carpeta de trabajo")),
     "search_files": (tr("buscar"), tr("Buscó"), lambda a: tr("«%s»") % _q(a.get("pattern") or a.get("glob") or "*", 40)),
@@ -453,6 +454,7 @@ GERUND = {
     "ui_elements": tr("Leyendo la interfaz de"), "click_element": tr("Pulsando"), "drag": tr("Arrastrando"),
     "browser_open": tr("Abriendo"), "browser_read": tr("Leyendo la página"), "browser_click": tr("Pulsando"), "browser_type": tr("Escribiendo"),
     "browser_screenshot": tr("Capturando la página"), "generate_image": tr("Creando la imagen"), "connect_service": tr("Proponiendo conectar"),
+    "search_knowledge": tr("Buscando en tu conocimiento"),
 }
 
 
@@ -775,6 +777,7 @@ GROUP = {
     "browser_nav": (tr("navegó por la página"), tr("navegó %d veces")), "browser_screenshot": (tr("capturó la página"), tr("capturó %d veces la página")),
     "run_python": (tr("analizó los datos con Python"), tr("hizo %d análisis con Python")), "show_canvas": (tr("mostró algo en el lienzo"), tr("actualizó el lienzo %d veces")),
     "generate_image": (tr("creó una imagen"), tr("creó %d imágenes")),
+    "search_knowledge": (tr("buscó en tu conocimiento"), tr("hizo %d búsquedas en tu conocimiento")),
 }
 _GROUP_ALIAS = {"multi_edit": "edit_file", "click": "control", "move_mouse": "control", "scroll": "control", "type_text": "control",
                 "press_keys": "control", "list_windows": "control", "focus_window": "control", "ui_elements": "control",
@@ -4608,15 +4611,44 @@ class Main(QMainWindow):
         if not core.SET.ready():
             return self.fix_not_ready()
         if self.llm.get("state", "off") == "off":
+            cfg = core.SET.snapshot()
+            plan = core.memory_plan(cfg) if cfg.get("llm_mode") != "external" else None      # antes de cargar: la libre real
             err = core.LLM_MGR.start()
             if err:
                 return QMessageBox.warning(self, APP_NAME, err)
             self.llm = {"state": "loading"}
+            QTimer.singleShot(1500, lambda: self.memory_warning(plan))
         else:
             core.LLM_MGR.stop()
             self.llm = {"state": "off"}
         self.sync()
         QTimer.singleShot(800, self.poll)
+
+    def memory_warning(self, plan=None):
+        """Si el modelo activo no cabe bien en la memoria, lo dice y propone qué hacer: si no cabe en el equipo, una vez por
+        modelo; si cabe pero ahora otros programas ocupan la memoria, cada vez que pase."""
+        cfg = core.SET.snapshot()
+        m = core.active_model(cfg)
+        if not m or cfg.get("llm_mode") == "external":
+            return
+        plan = plan or core.memory_plan(cfg, m)
+        key = "%s|%s" % (m.get("id"), plan["level"])
+        if plan["level"] == "ok" or (plan["level"] != "busy" and key in (cfg.get("memory_warned") or [])):
+            return
+        if plan["level"] != "busy":
+            core.SET.update({"memory_warned": (cfg.get("memory_warned") or [])[-20:] + [key]})
+        gb = lambda n: "%.1f GB" % (n / (1 << 30))
+        if plan["level"] == "busy":
+            return self.toast(tr("«%s» necesita unos %s y ahora mismo hay %s libres: cierra programas pesados (navegador con muchas "
+                                 "pestañas, juegos…) para que no lea del disco y vaya lento.") % (
+                core.model_title(m) or m.get("name"), gb(plan["need"]), gb(plan["free"])), icon_name="est_aviso", ms=12000)
+        if plan["level"] == "no":
+            txt = tr("«%s» necesita unos %s y tu equipo tiene %s: no cabe en la memoria y escribirá muy despacio. Elige una "
+                     "variante más pequeña o un modelo con menos parámetros.") % (core.model_title(m) or m.get("name"), gb(plan["need"]), gb(plan["room"]))
+        else:
+            txt = tr("«%s» necesita unos %s de los %s de tu equipo: cierra otros programas pesados para que no vaya lento, o elige "
+                     "una variante más pequeña.") % (core.model_title(m) or m.get("name"), gb(plan["need"]), gb(plan["room"]))
+        self.toast(txt, tr("Ver modelos"), self.models, icon_name="est_aviso", ms=15000)
 
     def setup(self, start="welcome", repo=None):
         w = SetupWizard(self, start=start, repo=repo)
@@ -4790,6 +4822,14 @@ def selftest(app):
         BV.delete("autodiagnostico")
         return ("connect_service" in T.TOOLS and good) or "la bóveda de credenciales no funciona"
     ok("connectors", connectors)
+
+    def knowledge():                        # conocimiento local (SQLite) y ajuste medido del motor
+        import sqlite3
+        KN = importlib.import_module("jayth.conocimiento")
+        importlib.import_module("jayth.ajuste")
+        sqlite3.connect(":memory:").execute("SELECT 1")
+        return (len(KN.chunks_of("línea de prueba\n" * 400)) > 1 and "search_knowledge" in T.TOOLS) or "falta el conocimiento local"
+    ok("knowledge", knowledge)
     ok("tools", lambda: len(T.TOOLS) >= 25 or "faltan herramientas")
     ok("shell", lambda: "JAYTH_OK" in __import__("subprocess").run(osys.shell_argv("echo JAYTH_OK"), capture_output=True, text=True,
                                                                      timeout=60, **osys.popen_kwargs()).stdout or "la terminal no responde")
@@ -4904,4 +4944,11 @@ def main():
         core.LLM_MGR.start()
         w.llm = {"state": "loading"}
         w.sync()
+        QTimer.singleShot(3000, w.memory_warning)
+    if cfg.get("knowledge_auto", True) and cfg.get("knowledge_folders"):      # conocimiento: lee solo lo que cambió
+        def _knowledge():
+            from . import conocimiento as KN
+            if KN.installed() and KN.folders():
+                KN.start_index()
+        QTimer.singleShot(20000, _knowledge)
     sys.exit(app.exec())

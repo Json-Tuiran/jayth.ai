@@ -137,8 +137,10 @@ terminar, a imagem aparece grande no chat com **Abrir** e **Mostrar na pasta**. 
 pasta de trabalho (ou do projeto), ou na que for escolhida nas Configurações.
 
 - Funciona sem internet nem serviços externos, com stable-diffusion.cpp (MIT) e um modelo de imagem de licença livre
-  (Apache-2.0): **FLUX.2 [klein] 4B** (rápido e versátil, o recomendado) ou **Z-Image Turbo** (mais realista, melhor
-  com placa de vídeo).
+  (Apache-2.0 ou MIT): **FLUX.2 [klein] 4B** (versátil e com texto dentro da imagem, o recomendado com placa de
+  vídeo), **Z-Image Turbo** (mais realista, melhor com placa de vídeo) ou **Segmind Vega RT** (o mais rápido sem
+  placa de vídeo, em 4 passos, com menos detalhe). No “Automático”, o Jayth escolhe conforme o
+  computador. Sem placa de vídeo, o FLUX.2 leva cerca de 11 minutos por imagem (medido num notebook com um i5 de 4 núcleos).
 - Na primeira vez é preciso instalá-lo (cerca de 5 GB, uma única vez): com **Instalar** no cartão que aparece no chat
   quando o agente precisa (depois, **Continuar**), ou em **Configurações › Imagens**. Dá para ver o progresso,
   cancelar, e o download continua se for interrompido. **Remover** apaga os arquivos.
@@ -148,6 +150,20 @@ pasta de trabalho (ou do projeto), ou na que for escolhida nas Configurações.
   Desativa-se com “Permitir que o agente crie imagens”.
 - Cada imagem é uma ação de escrita: conforme o modo de permissão, é aprovada antes de ser criada e pode ser desfeita.
 - Para gráficos de dados o agente usa Python, e para diagramas, SVG na tela.
+
+## Conhecimento
+
+Em **Configurações › Conhecimento** você escolhe pastas (notas, documentos, projetos) e o agente pesquisa nelas pelo
+significado, não só por palavras exatas (“quanto custou consertar o carro?” encontra a nota da nota fiscal do carro),
+sem precisar lê-las inteiras: ideal com modelos locais, que têm pouca memória de conversa. Ele faz isso com um
+buscador pequeno que roda no computador (Qwen3-Embedding 0.6B, 640 MB, baixado uma vez) e entende espanhol, inglês,
+português e muitos outros idiomas. Aceita texto, código, Markdown, Word, PDF, PowerPoint e Excel.
+
+- **Busca por significado:** **Instalar** (uma vez).
+- **Pastas de conhecimento:** **Adicionar pasta…** e **Remover**.
+- **Índice:** quantos arquivos e fragmentos tem e quando foi atualizado; **Atualizar o índice** (só relê o que é novo
+  ou mudou) e “Atualizar o índice ao abrir o Jayth”.
+- O agente o usa só quando precisa (p. ex. “segundo as minhas notas…”) e cita de qual arquivo sai cada dado.
 
 ## Controle do computador e outros programas
 
@@ -185,8 +201,17 @@ Vulkan para AMD ou Intel Arc, ou CPU. Em **Configurações › Desempenho**: **T
 o modelo suporta de fábrica, reduzido se a memória dele não couber no computador; com **Contexto comprimido** cabe o
 dobro ou mais), **Desligar o modelo se não for usado por**, e em
 **Configurações do motor**: Threads da CPU, Camadas na GPU (o automático divide o modelo entre GPU e RAM), Tamanho do
-lote, Contexto comprimido, Flash attention, mmap, travar na RAM e a porta local. As alterações do motor são aplicadas
+lote, Contexto comprimido, Flash attention, Aceleração ao escrever, mmap, travar na RAM e a porta local. As alterações do motor são aplicadas
 ao reiniciar o modelo (**Reiniciar modelo**). O log do motor fica em **Configurações › Log do modelo**.
+
+- **Otimizar para este computador** (Configurações › Desempenho): em vez de estimar, mede de verdade com o modelo
+  ativo (alguns minutos, com o modelo desligado enquanto isso): testa threads e flash attention com o llama-bench e a
+  “Aceleração ao escrever” (decodificação especulativa: **MTP**, para modelos que trazem essas camadas, como Qwen 3.5 e
+  3.8, e **n-gramas**, que acelera ao reescrever código ou texto), e fica com o mais rápido. O resultado aparece embaixo
+  (“lê … tok/s · escreve … tok/s”). A “Aceleração ao escrever” também pode ser escolhida à mão em Configurações do motor.
+- **Memória:** ao ligar o modelo, o Jayth avisa se ele não cabe no computador (vai ficar muito lento e é melhor uma
+  variante menor) ou se naquele momento outros programas ocupam a memória. A memória que o llama.cpp guarda de conversas
+  anteriores se ajusta sozinha ao que sobra, para não tirá-la do modelo.
 
 ## Configurações
 
@@ -231,8 +256,10 @@ exato):
   - **Serviços com a sua conta:** cartões para conectar serviços online (**Conectar**, **Desconectar**, **Configurar
     Google…**).
   - **Conectores MCP:** predefinições, adicionar (**Adicionar e testar**), testar e remover conectores.
+- **Conhecimento:** busca por significado (**Instalar**), pastas (**Adicionar pasta…**, **Remover**), índice
+  (**Atualizar o índice**) e “Atualizar o índice ao abrir o Jayth”.
 - **Imagens:** “Permitir que o agente crie imagens”.
-  - **Modelo de imagem:** “Modelo escolhido” (FLUX.2 [klein] 4B ou Z-Image Turbo), o seu estado e **Instalar**,
+  - **Modelo de imagem:** “Modelo escolhido” (Automático, FLUX.2 [klein] 4B, Z-Image Turbo ou Segmind Vega RT), o seu estado e **Instalar**,
     **Cancelar** ou **Remover**.
   - **Imagens criadas:** “Tamanho das imagens” (Automático, 512, 768 ou 1024 px) e “Pasta onde são salvas”.
 - **Dados e privacidade:** a pasta de dados (**Abrir pasta**).

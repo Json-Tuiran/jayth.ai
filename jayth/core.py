@@ -38,6 +38,9 @@ DEFAULTS = {
     "cache_type": "f16",         # f16 | q8_0 | q4_0 (contexto comprimido: menos memoria)
     "mmap": True,
     "mlock": False,
+    "spec_type": "auto",         # decodificación especulativa: auto (lo que eligió el ajuste medido) | none | draft-mtp | ngram-mod | …
+    "tuning": {},                # último ajuste medido (ajuste.py): hilos, flash attention, velocidades y aceleración elegida
+    "engine_caps": {},           # qué admite el llama-server instalado (se lee de su ayuda una vez por versión)
     "warmup": True,              # precalentar instrucciones y herramientas al encender el modelo
     "autostart_llm": False,
     "idle_unload": 0,            # minutos sin uso para apagar el modelo (0 = nunca)
@@ -110,13 +113,18 @@ DEFAULTS = {
     "custom_instructions": "",
     # imágenes (imagegen.py: stable-diffusion.cpp en el propio equipo)
     "image_gen": True,           # ofrecer al agente la herramienta generate_image
-    "image_model": "flux2-klein-4b",
+    "image_model": "auto",        # auto: rápido (Segmind Vega RT) sin tarjeta gráfica y FLUX.2 [klein] con ella
     "image_size": "auto",        # auto (512 sin tarjeta gráfica, 1024 con ella) | 512 | 768 | 1024
     "image_dir": "",             # carpeta donde se guardan ("" = «imagenes» dentro de la carpeta de trabajo)
+    # conocimiento local (conocimiento.py): carpetas donde el agente busca por significado
+    "knowledge_folders": [],
+    "knowledge_auto": True,      # actualizar el índice al abrir Jayth (solo lee lo que cambió)
+    "knowledge_indexed": "",
 }
 
 # Ajustes que solo se aplican al reiniciar el motor
-RESTART_KEYS = {"threads", "n_ctx", "gpu_layers", "batch_size", "flash_attn", "cache_type", "mmap", "mlock", "llm_port", "vision", "backend", "llama_exe"}
+RESTART_KEYS = {"threads", "n_ctx", "gpu_layers", "batch_size", "flash_attn", "cache_type", "mmap", "mlock", "llm_port", "vision", "backend", "llama_exe",
+                "spec_type", "tuning"}
 LAST_USE = [time.time()]   # ultima actividad del agente (para apagar el modelo por inactividad)
 
 
@@ -401,6 +409,41 @@ def effective_ctx(cfg, m=None):
     fits = int(free / per_token) if free > 0 else 0
     ctx = min(native, max(min(native, CTX_FLOOR), fits))
     return max(2048, ctx // 1024 * 1024)
+
+
+def memory_plan(cfg, m=None):
+    """Memoria del modelo activo en este equipo: {'need', 'room', 'level', 'cache_mib'}.
+    need: pesos (+ proyector de visión) + caché del contexto + ~0,5 GB. level: 'ok'; 'tight' (cabe cerrando otros
+    programas) o 'no' (no cabe: lee del disco y escribe muy despacio). cache_mib: RAM que puede usar llama-server para
+    recordar conversaciones anteriores (--cache-ram, 8 GB por defecto) sin quitársela al propio modelo."""
+    m = m or active_model(cfg)
+    if not m or cfg.get("llm_mode") == "external":
+        return {"level": "ok", "cache_mib": None, "need": 0, "room": 0}
+    GB = 1 << 30
+    c = model_caps(m, compute=False) or {}
+    kv = int(c.get("kv") or 0) * _KV_BYTES.get(cfg.get("cache_type", "f16"), 2.0)
+    need = GB // 2 + (kv + 2048) * effective_ctx(cfg, m) if kv else GB
+    for p in (m.get("path"), m.get("mmproj") if cfg.get("vision", True) else None):
+        try:
+            need += os.path.getsize(p) if p else 0
+        except OSError:
+            pass
+    hw = _hardware()
+    ram = hw.get("ram", 0)
+    gpu = max(0, hw.get("vram", 0) - GB) if cfg.get("backend") in ("cuda", "vulkan", "metal") else 0
+    room = ram + gpu
+    reserve = max(4 * GB, ram * 0.2)
+    level = "ok" if need <= room - reserve else "tight" if need <= room - 1.5 * GB else "no"
+    try:                                            # memoria libre ahora mismo (con el modelo aún apagado)
+        from . import hardware as HW
+        free = HW.ram()[1] + gpu
+    except Exception:
+        free = 0
+    if level == "ok" and free and not LLM_MGR.mine() and need > free + GB // 2:
+        level = "busy"                              # cabe en el equipo, pero ahora otros programas ocupan la memoria
+    spare = (room - reserve - need) / (1 << 20)
+    return {"need": int(need), "room": int(room), "free": int(free), "level": level,
+            "cache_mib": int(min(8192, spare)) if spare >= 256 else 0}
 
 
 def model_caps(m, compute=True):
@@ -858,6 +901,18 @@ class LLM:
             cmd += ["--mlock"]
         if cfg["vision"] and m.get("mmproj") and os.path.isfile(m["mmproj"]):
             cmd += ["--mmproj", m["mmproj"]]
+        try:                                    # decodificación especulativa (MTP, n-gramas) si el ajuste medido la eligió
+            from . import ajuste
+            sp = ajuste.spec_for(cfg, m)
+            if sp:
+                cmd += ["--spec-type", sp]
+            # la caché de conversaciones anteriores (8 GB por defecto) no debe quitarle memoria al propio modelo
+            if ajuste.engine_caps(cfg["llama_exe"]).get("cram"):
+                cram = memory_plan(cfg, m).get("cache_mib")
+                if cram is not None:
+                    cmd += ["--cache-ram", str(cram)]
+        except Exception:
+            pass
         return cmd
 
     # --- precalentamiento: procesa una vez las instrucciones y herramientas fijas para que el primer mensaje sea rapido
