@@ -450,7 +450,10 @@ def discover(folders, models, ignored=(), depth=3):
         mm = _SPLIT.search(n)
         if mm and int(mm.group(1)) != 1:
             return
-        if os.path.basename(os.path.dirname(e.path)).lower().endswith("__original"):
+        parent = os.path.basename(os.path.dirname(e.path)).lower()
+        if parent.endswith("__original"):
+            return
+        if parent in ("conocimiento", "imagen") or "embedding" in n:   # modelos internos (búsqueda en tus archivos, imágenes)
             return
         try:
             size = e.stat().st_size

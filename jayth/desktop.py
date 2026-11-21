@@ -1358,6 +1358,11 @@ class AssistantBlock(QWidget):
         self.body = md_label()
         self.body.hide()
         v.addWidget(self.body)
+        self._read = None                        # avance real de la lectura (tokens leídos, total, velocidad, cuándo)
+        self.q_start = None                      # el modelo escribe pero no llega nada visible: se dice, con cuánto lleva
+        self.quiet_line = CV.ActivityLine()
+        self.quiet_line.hide()
+        v.addWidget(self.quiet_line)
         self.actions = QWidget()
         ah = QHBoxLayout(self.actions)
         ah.setContentsMargins(0, 0, 0, 0)
@@ -1388,11 +1393,52 @@ class AssistantBlock(QWidget):
 
     def tick(self, now):
         if self.act.live:
+            if self._read and self.r_start is None:
+                self.act.extra = self._read_text(now)
             self.act.tick(now)
         if self.prep.live:
             self.prep.tick(now)
+        if self.quiet_line.live:
+            self.quiet_line.tick(now)
+
+    def reading(self, done, total, tps, ts):
+        """El motor dice cuánto lleva leído: «Leyendo tu mensaje… 40 s · 45 % · queda ~1 min»."""
+        if self.r_start is not None or self.text or total < 200:      # lecturas cortas: no hace falta
+            return
+        self._read = (int(done), int(total), float(tps or 0), ts)
+        self.act.extra = self._read_text(time.time())
+        self.act.tick(time.time())
+
+    def _read_text(self, now):
+        done, total, tps, ts = self._read
+        if tps > 0:                               # entre aviso y aviso (llegan por tandas) se estima con la velocidad medida
+            done = min(total, done + tps * max(0.0, now - ts))
+        pct = int(min(99, 100.0 * done / max(1, total)))
+        left = (total - done) / tps if tps > 0 else 0
+        if pct <= 0 and not left:
+            return tr("%s tokens") % i18n.number(total, 0)
+        return "%d %%" % pct + ((" · " + tr("queda ~%s") % CV.fmt_secs(left if left < 60 else round(left / 60.0) * 60)) if left >= 5 else "")
+
+    def quiet(self, tokens, secs, ts):
+        """El modelo sigue escribiendo pero no llega texto, pensamiento ni acción: que se vea que trabaja y cuánto lleva."""
+        if self.q_start is None:
+            self.q_start = ts - secs
+            self.quiet_line.show()
+            self.quiet_line.run((tr("El modelo sigue escribiendo, pero aún no llega nada que mostrar"),), self.q_start, "est_info",
+                                live=ts > time.time() - 8)
+            self.quiet_line.setToolTip(tr("El motor confirma que el modelo sigue generando. Si no produce nada, Jayth lo interrumpe y le pide continuar."))
+        self.quiet_line.t_start = self.q_start = ts - secs     # el tiempo que lleva callado lo dice el vigilante
+        self.quiet_line.extra = (tr("%s tokens") % i18n.number(tokens, 0)) if tokens else ""
+        self.quiet_line.tick(time.time())
+
+    def _end_quiet(self):
+        if self.q_start is not None:
+            self.q_start = None
+            self.quiet_line.done("")
+            self.quiet_line.hide()
 
     def delta(self, kind, text, ts):
+        self._end_quiet()
         if kind == "reasoning":
             if self.r_start is None:
                 self.r_start = ts
@@ -1437,6 +1483,7 @@ class AssistantBlock(QWidget):
 
     def preparing(self, name, chars, ts):
         """El modelo está escribiendo una acción (el contenido de un archivo, un comando…): cuál y cuánto lleva."""
+        self._end_quiet()
         self._end_think(ts)
         if self.r_start is None:
             self.act.hide()                      # no está leyendo: ya escribe
@@ -1462,6 +1509,7 @@ class AssistantBlock(QWidget):
 
     def finish(self, text, ts):
         self._end_think(ts)
+        self._end_quiet()
         self.halt_prep()
         if self.r_start is None:
             self.act.done("")
@@ -2438,6 +2486,12 @@ class ChatPanel(QWidget):
         elif t == "tool_prep":                      # solo en directo: al reabrir una conversación ya no aporta nada
             if self.cur is not None and ev["ts"] > time.time() - 5:
                 self.cur.preparing(ev["name"], ev.get("chars", 0), ev["ts"])
+        elif t == "reading":                        # solo en directo: cuánto lleva leído el motor
+            if self.cur is not None and ev["ts"] > time.time() - 8:
+                self.cur.reading(ev.get("done", 0), ev.get("total", 0), ev.get("tps", 0), ev["ts"])
+        elif t == "quiet":                          # solo en directo: escribe sin que llegue nada visible
+            if self.cur is not None and ev["ts"] > time.time() - 8:
+                self.cur.quiet(ev.get("tokens", 0), ev.get("secs", 0), ev["ts"])
         elif t == "stats":
             if ev.get("ctx_used") and ev.get("ctx_max"):       # memoria de la conversación: en el anillo junto al cuadro de texto
                 self.ctx_ring.set_value(int(ev["ctx_used"]) + int(ev.get("gen_n") or 0), int(ev["ctx_max"]))
@@ -2519,7 +2573,9 @@ class ChatPanel(QWidget):
                              "permisos de siempre.") % T.TOOL_LABELS.get(ev["name"], ev["name"])))
             self._end_steps()
         elif t == "nudge":                          # el modelo anunció una acción y no la hizo: Jayth se lo recordó
-            if ev.get("empty"):                     # respondió vacío a mitad de la tarea
+            if ev.get("quiet"):                     # escribía sin producir nada visible: se cortó
+                self.add(note(tr("El modelo se quedó escribiendo sin producir texto ni acción; Jayth lo interrumpió y le pidió que continúe.")))
+            elif ev.get("empty"):                   # respondió vacío a mitad de la tarea
                 self.add(note(tr("El modelo dejó la respuesta vacía; Jayth le pidió que siga con la tarea.")))
             elif ev.get("offer"):                   # te propuso como comando una acción suya: no dijo haberla hecho
                 self.add(note(tr("El modelo te propuso usar «%s», que es una acción suya y no un comando que puedas "
@@ -4455,9 +4511,25 @@ class Main(QMainWindow):
         self.runs_t.start()
 
     def _show(self):
-        self.showMaximized()
+        if self.isMinimized() or not self.isVisible():
+            self.showMaximized()
         self.raise_()
         self.activateWindow()
+        if osys.WIN:                          # Windows no deja que una ventana de fondo se ponga delante sola: parpadea
+            QApplication.alert(self, 2000)
+
+    def _check_settings_saved(self):
+        """Si un guardado de ajustes falló (archivo bloqueado por otro programa), se reintenta y se avisa una vez:
+        los cambios siguen en memoria, no se pierden en silencio como antes."""
+        err = core.SET.save_error
+        if err and not core.SET.retry_save():
+            if not getattr(self, "_save_err_told", False):
+                self._save_err_told = True
+                self.toast(tr("No pude guardar tus ajustes (%s). Tus cambios siguen aquí y lo vuelvo a intentar solo.") % core.SET.save_error,
+                           ms=15000, icon_name="est_aviso", color=C["warn"])
+        elif err and getattr(self, "_save_err_told", False):
+            self._save_err_told = False
+            self.toast(tr("Ajustes guardados."), ms=3000)
 
     def quit_app(self):
         self._quitting = True
@@ -5252,6 +5324,7 @@ class Main(QMainWindow):
 
     def poll(self):
         self.refresh_lists()
+        self._check_settings_saved()
         if self._polling:
             return
         self._polling = True
@@ -5458,6 +5531,7 @@ class Main(QMainWindow):
         core.shutdown()
         self.tray.hide()
         e.accept()
+        close_single_instance()                      # un Jayth que se abra ahora (reinicio, actualización) ya no le pregunta a este
         reopen = getattr(self, "_restart", False)
         try:
             upd = updater.ready() if updater.can_update_in_background() else None
@@ -5476,6 +5550,82 @@ class Main(QMainWindow):
             argv = osys.launch_argv()
             QProcess.startDetached(argv[0], argv[1:])
         QApplication.quit()
+
+
+# ---------------------------------------------------------------- una sola ventana de Jayth
+_INSTANCE = {"server": None, "window": None}
+
+
+def _instance_name():
+    """Nombre del canal local: uno por usuario y carpeta de datos (las pruebas con otro JAYTH_HOME no chocan)."""
+    import hashlib, getpass
+    try:
+        user = getpass.getuser()
+    except Exception:
+        user = ""
+    key = "%s|%s" % (user, os.path.normcase(os.path.abspath(paths.HOME)))
+    return "jayth-" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+
+
+def single_instance(show=True, wait=4000):
+    """¿Ya hay un Jayth abierto con estos datos? Entonces le pide que se muestre y devuelve False: este debe cerrarse.
+    Si no, se queda escuchando para los siguientes y devuelve True.
+
+    Antes cada clic en el icono abría otra copia completa. Cada una llevaba sus propios ajustes en memoria y la última
+    en guardar borraba lo que hubieran cambiado las demás (así desaparecieron proyectos y modelos de un usuario).
+    Si el Jayth abierto no contesta (colgado o cerrándose), este arranca igualmente: los ajustes ya se mezclan al guardar."""
+    from PySide6.QtNetwork import QLocalServer, QLocalSocket
+    name = _instance_name()
+    s = QLocalSocket()
+    s.connectToServer(name)
+    if s.waitForConnected(700):
+        s.write(b"show\n" if show else b"ping\n")
+        s.flush()
+        s.waitForBytesWritten(700)
+        reply = b""
+        end = time.time() + wait / 1000.0
+        while time.time() < end and b"\n" not in reply:
+            if s.waitForReadyRead(200):
+                reply += bytes(s.readAll())
+            elif s.state() != QLocalSocket.ConnectedState:
+                break
+        s.disconnectFromServer()
+        if reply.startswith((b"ok", b"wait")):      # «wait»: el otro todavía está arrancando y se mostrará solo
+            return False
+    srv = QLocalServer()
+    srv.setSocketOptions(QLocalServer.UserAccessOption)
+    if not srv.listen(name):
+        QLocalServer.removeServer(name)          # restos de un cierre brusco (Linux/macOS dejan el archivo del canal)
+        if not srv.listen(name):
+            return True                          # sin canal: Jayth funciona igual, solo que sin esta protección
+
+    def on_conn():
+        while srv.hasPendingConnections():
+            c = srv.nextPendingConnection()
+
+            def answer(c=c):
+                msg = bytes(c.readAll())
+                w = _INSTANCE["window"]
+                if b"show" in msg and w is not None:
+                    w._show()
+                c.write(b"ok\n" if w is not None or b"ping" in msg else b"wait\n")
+                c.flush()
+                c.disconnectFromServer()
+            c.readyRead.connect(answer)
+    srv.newConnection.connect(on_conn)
+    _INSTANCE["server"] = srv
+    return True
+
+
+def close_single_instance():
+    srv = _INSTANCE["server"]
+    _INSTANCE["server"] = None
+    _INSTANCE["window"] = None
+    if srv is not None:
+        try:
+            srv.close()
+        except Exception:
+            pass
 
 
 def _dark_titlebar(w):
@@ -5610,6 +5760,11 @@ def selftest(app):
         w.news_t.stop()
     ok("window", window)
 
+    def instance_channel():                   # el canal que evita abrir dos copias de Jayth (QtNetwork en el paquete)
+        from PySide6.QtNetwork import QLocalServer
+        return _instance_name().startswith("jayth-") and QLocalServer is not None or "sin canal"
+    ok("single_instance", instance_channel)
+
     def voice_parts():                        # las piezas de Qt para la voz deben venir en el paquete
         import importlib
         bad = []
@@ -5650,6 +5805,9 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setDesktopFileName("jayth")        # Linux: enlaza la ventana con jayth.desktop (icono correcto en el dock/panel)
+    if "--selftest" not in sys.argv and "--allow-multiple" not in sys.argv:
+        if not single_instance(show="--minimized" not in sys.argv):
+            sys.exit(0)                    # ya estaba abierto: se trajo esa ventana al frente
     install_qt_language(app)
     from .widgets import install_screen_fit
     install_screen_fit(app)                  # ningún diálogo más grande que la pantalla
@@ -5662,8 +5820,15 @@ def main():
         sys.exit(selftest(app))
     from . import feedback as FB                # errores inesperados: se guardan y se ofrece enviarlos (nunca solos)
     FB.install_crash_capture(app, lambda d: QTimer.singleShot(0, lambda: getattr(app, "_main", None) and app._main.offer_crash_report(d)))
+    try:
+        recovered = core.recover_projects()      # proyectos que faltaban en la lista pero tienen conversaciones
+    except Exception:
+        recovered = []
     w = Main()
     app._main = w
+    _INSTANCE["window"] = w
+    if recovered:
+        QTimer.singleShot(2500, lambda: w.toast(tr("Recuperé estos proyectos que faltaban en la lista: %s.") % ", ".join(recovered), ms=10000))
     if FB.pending_crash():                       # el arranque anterior acabó con un error: se ofrece una vez
         QTimer.singleShot(4000, lambda: w.offer_crash_report(FB.pending_crash(), previous=True))
     _dark_titlebar(w)

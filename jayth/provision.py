@@ -363,8 +363,77 @@ def sha256_file(path, progress=None, stop=None):
     return h.hexdigest()
 
 
+OFFLINE = "sin conexión"         # fase: no hay salida a internet; la descarga espera y sigue sola al volver
+# servidores muy estables: por IP (sin depender del DNS) y por nombre (redes que filtran esas IP)
+NET_PROBES = (("1.1.1.1", 443), ("8.8.8.8", 53), ("208.67.222.222", 443), ("www.google.com", 443), ("huggingface.co", 443))
+_NET = {"t": 0.0, "ok": True}
+_NET_LOCK = threading.Lock()
+
+
+def online(url="", timeout=2.5, max_age=0.0):
+    """¿Hay salida a internet? Conexión TCP corta al servidor de `url` y, si no responde, a unos servidores muy estables
+    (si alguno contesta, hay internet y el problema es de ese servidor). Con max_age se reutiliza el último resultado."""
+    import socket
+    forced = (os.environ.get("JAYTH_NET") or "").lower()       # pruebas: JAYTH_NET=off simula un equipo sin internet
+    if forced in ("0", "off", "no"):
+        return False
+    if forced in ("1", "on", "si", "sí"):
+        return True
+    now = time.time()
+    with _NET_LOCK:
+        if max_age and now - _NET["t"] < max_age:
+            return _NET["ok"]
+    targets = []
+    for link in [url] + list(urllib.request.getproxies().values()):     # el servidor del archivo y, si lo hay, el proxy del sistema
+        try:
+            u = urllib.parse.urlparse(link) if link else None
+            if u and u.hostname:
+                targets.append((u.hostname, u.port or (443 if u.scheme == "https" else 80)))
+        except ValueError:
+            pass
+    targets += [t for t in NET_PROBES if t not in targets]
+    # todos a la vez: basta con que uno conteste (así una red que filtra unos destinos no parece «sin internet»,
+    # y sin conexión la espera es un solo plazo, no uno por destino)
+    done, hit, left = threading.Event(), [False], [len(targets)]
+
+    def probe(host, port):
+        try:
+            socket.create_connection((host, port), timeout=timeout).close()
+            hit[0] = True
+            done.set()
+        except OSError:
+            pass
+        finally:
+            with _NET_LOCK:
+                left[0] -= 1
+                if left[0] <= 0:
+                    done.set()            # ya contestaron o fallaron todos: no hay que esperar más
+
+    for host, port in targets:
+        threading.Thread(target=probe, args=(host, port), daemon=True).start()
+    done.wait(timeout + 0.5)
+    ok = hit[0]
+    with _NET_LOCK:
+        _NET["t"], _NET["ok"] = time.time(), ok
+    return ok
+
+
+def wait_online(url, stopped, every=3.0):
+    """Espera a que vuelva la conexión mirando cada pocos segundos. False si se canceló mientras tanto."""
+    while not stopped():
+        if online(url):
+            return True
+        end = time.time() + every
+        while time.time() < end:
+            if stopped():
+                return False
+            time.sleep(0.25)
+    return False
+
+
 PARALLEL_MIN = 48 << 20         # por debajo de este tamaño no compensa abrir varias conexiones
 DEFAULT_CONNECTIONS = 6
+STALL_AFTER = 8.0               # segundos sin recibir nada para dar la descarga por parada (velocidad 0)
 
 
 class _NoRanges(Exception):
@@ -407,6 +476,7 @@ def _download_parallel(url, part, size, progress, stop, n, retries):
     lock = threading.Lock()
     todo = [i for i, (s, e) in enumerate(pieces) if done[i] < e - s]
     err, quit_ = [], threading.Event()
+    waiting = [0]                            # conexiones que esperan a que vuelva internet
 
     def save():
         tmp = state_path + ".tmp"
@@ -452,6 +522,18 @@ def _download_parallel(url, part, size, progress, stop, n, retries):
                             err.append(RuntimeError(tr("No se puede descargar (%s): %s") % (ex.code, url)))
                             quit_.set()
                             return
+                        if not isinstance(ex, urllib.error.HTTPError) and not online(url, max_age=2.0):
+                            # se fue internet: no es un fallo de la descarga. Se espera lo que haga falta y se sigue sola
+                            with lock:
+                                waiting[0] += 1
+                            try:
+                                if not wait_online(url, quit_.is_set):
+                                    return
+                            finally:
+                                with lock:
+                                    waiting[0] -= 1
+                            attempt = 0
+                            continue
                         attempt += 1
                         if attempt > retries:
                             err.append(RuntimeError(tr("Falló la descarga tras %d intentos: %s") % (retries, ex)))
@@ -465,13 +547,23 @@ def _download_parallel(url, part, size, progress, stop, n, retries):
     for t in threads:
         t.start()
     last_save = time.time()
+    last_got, moved_at, probed, off = -1, time.time(), 0.0, False
     while any(t.is_alive() for t in threads):
         if stop is not None and stop.is_set():
             quit_.set()
         if progress and not quit_.is_set():
             with lock:
                 got = sum(done)
-            progress(got, size, "descargando")
+                held = waiting[0]
+            now = time.time()
+            if got != last_got:
+                last_got, moved_at, off = got, now, False
+            elif held:
+                off = True
+            elif now - moved_at > STALL_AFTER and now - probed > 5:   # no llega nada: ¿se fue internet? (las lecturas tardan en fallar)
+                probed = now
+                off = not online(url)
+            progress(got, size, OFFLINE if off else "descargando")
         if time.time() - last_save > 2:
             save()
             last_save = time.time()
@@ -551,6 +643,15 @@ def download(url, dest, size=0, sha256="", progress=None, stop=None, retries=8, 
                 raise RuntimeError(tr("No se puede descargar (%s): %s") % (e.code, url))
             if isinstance(e, urllib.error.HTTPError) and e.code == 416:   # rango invalido: ya estaba completo
                 break
+            if not isinstance(e, urllib.error.HTTPError) and not online(url):
+                # se fue internet: se espera sin contar intentos y se sigue donde iba al volver
+                have = os.path.getsize(part) if os.path.isfile(part) else 0
+                if progress:
+                    progress(have, size or have, OFFLINE)
+                if not wait_online(url, lambda: stop is not None and stop.is_set()):
+                    raise Cancelled()
+                attempt = 0
+                continue
             attempt += 1
             if attempt > retries:
                 raise RuntimeError(tr("Falló la descarga tras %d intentos: %s") % (retries, e))
@@ -644,6 +745,17 @@ def fmt_bytes(n):
     return size(n)
 
 
+ETA_MAX = 30 * 86400            # un tiempo restante mayor no dice nada: no se muestra
+
+
+def _eta(left, speed):
+    """Segundos que quedan, o None si no se puede saber (parada, o una cifra sin sentido)."""
+    if speed <= 0 or left <= 0:
+        return None
+    eta = left / speed
+    return eta if eta <= ETA_MAX else None
+
+
 DOWNLOAD_PHASES = ("descargando", "ya descargado")
 # las fases de download() se comparan (no se traducen): este es su texto en pantalla
 _PHASE_TXT = {"descargando": tr("descargando"), "verificando": tr("verificando"), "ya descargado": tr("ya descargado"),
@@ -691,7 +803,7 @@ class Job:
         got = sum((st["size"] or st["total"]) if st["status"] == "done" else st["got"] for st in self.steps)
         run = next((st for st in self.steps if st["status"] == "running"), None)
         speed = run["speed"] if run and run["phase"] in DOWNLOAD_PHASES else 0.0
-        eta = (total - got) / speed if speed > 0 and total > got else None
+        eta = _eta(total - got, speed) if total > got else None
         end = self.ended or time.time()
         return {"got": got, "total": total, "speed": speed, "eta": eta, "elapsed": end - self.started if self.started else 0,
                 "done_steps": sum(st["status"] == "done" for st in self.steps), "steps": len(self.steps)}
@@ -699,17 +811,28 @@ class Job:
     @staticmethod
     def _progress(st, done, total, phase):
         now = time.time()
+        if done != st.get("_seen"):                 # cuándo llegó el último dato
+            st["_seen"], st["_moved"] = done, now
         if phase != st["phase"]:                    # nueva fase (descarga, verificacion, reintento): se reinicia la medida
             st["_t"], st["_d"], st["speed"], st["eta"] = now, done, 0.0, None
             st["_t0"], st["_d0"] = now, done
+        elif now - st.get("_moved", now) >= STALL_AFTER:
+            # no llega nada: velocidad 0. Antes la media iba bajando sin llegar a cero y el tiempo restante crecía
+            # hasta cifras absurdas («quedan 630836075296866 d»)
+            st["speed"], st["_t"], st["_d"] = 0.0, now, done
+            st["_t0"], st["_d0"] = now, done        # al volver los datos, la velocidad se mide de nuevo desde ahí
         elif now - st["_t"] >= 0.5:
             if now - st["_t0"] < 4:                 # al empezar: media real desde el inicio de la fase (estable y sin picos)
                 st["speed"] = max(0, done - st["_d0"]) / (now - st["_t0"])
+            elif done == st["_d"]:
+                # un instante sin datos (pasa con cualquier conexión): se conserva la última velocidad; si dura,
+                # arriba se da por parada. Así el tiempo restante no se dispara justo antes de avisar
+                return
             else:                                   # despues: media movil, sigue los cambios de la conexion sin saltar
                 inst = max(0, done - st["_d"]) / (now - st["_t"])
                 st["speed"] = st["speed"] * 0.8 + inst * 0.2
             st["_t"], st["_d"] = now, done
-        if phase in DOWNLOAD_PHASES or phase.startswith("reintentando"):
+        if phase in DOWNLOAD_PHASES or phase == OFFLINE or phase.startswith("reintentando"):
             if st["base"] is None:
                 st["base"] = done                   # lo que ya habia de una descarga anterior (reanudada)
             st["got"] = max(st["got"], done)
@@ -718,7 +841,7 @@ class Job:
         st["done"], st["total"], st["phase"] = done, total or st["total"], phase
         if total and not st["size"]:
             st["size"] = total
-        st["eta"] = (total - done) / st["speed"] if st["speed"] > 0 and total > done else None
+        st["eta"] = _eta(total - done, st["speed"]) if total > done else None
 
     def _run(self):
         try:
@@ -772,6 +895,8 @@ def describe_step(st):
         head = tr("Verificando la integridad (SHA-256)")
     elif ph == "descomprimiendo":
         return tr("Descomprimiendo…")
+    elif ph == OFFLINE:
+        head = tr("Sin conexión a internet · se reanuda sola al volver")
     elif ph.startswith("reintentando"):
         head = tr("Conexión perdida · %s") % _phase_text(ph)
     elif ph == "descargando":
@@ -789,6 +914,8 @@ def describe_step(st):
             parts.append("%s/s" % fmt_bytes(st["speed"]))
             if st["eta"] is not None:
                 parts.append(tr("quedan %s") % fmt_duration(st["eta"]))
+        elif ph == "descargando" and time.time() - st.get("_moved", time.time()) >= STALL_AFTER:
+            parts.append(tr("esperando datos…"))
         else:
             parts.append(tr("calculando velocidad…"))
     return " · ".join(parts)

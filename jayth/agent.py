@@ -165,6 +165,21 @@ _INTENT = re.compile(
     r"(?:我(?:将|会|先|来)|让我|首先|接下来).{0,12}(?:检查|运行|执行|创建|打开|读取|写入|搜索|查找|安装|编辑|测试|保存|删除|移动|查看)", re.I)
 _OFFER = re.compile(r"(si quieres|si deseas|si prefieres|cuando quieras|if you want|if you'd like|whenever you|se quiser|si vous le|"
                     r"si tu veux|wenn du willst|wenn du möchtest|se vuoi|必要であれば|ご希望|如果你|需要的话)", re.I)
+# espera la decisión del usuario: «Una vez elijamos, instalaré…», «Cuando me digas, empiezo…», «Dime cuál prefieres y…»
+_WAITS = re.compile(r"(una vez (que )?(elij|decid|me (digas|confirmes|indiques)|lo (confirmes|decidas))|cuando (me )?(digas|elijas|"
+                    r"decidas|confirmes|indiques)|en cuanto (me )?(digas|elijas|confirmes)|dime (cu[aá]l|qu[eé]|si)|av[ií]same|"
+                    r"once you (choose|decide|confirm|tell)|when you (choose|decide|confirm|tell)|let me know|tell me (which|what|if)|"
+                    r"assim que (voc[eê] )?(escolher|decidir|confirmar)|me diga|dès que vous|dites-moi|sobald du|sag mir|"
+                    r"appena (mi )?(dici|scegli)|dimmi|決めたら|教えてください|告诉我|确定后)", re.I)
+
+
+def asks_user(text):
+    """¿Termina preguntándole algo al usuario o esperando su decisión? Entonces no hay acción pendiente que recordarle:
+    el turno acaba y la respuesta es del usuario (Gemma: «¿Prefieres 3D o 2D? … Una vez elijamos, instalaré…»)."""
+    prose = re.sub(r"```.*?(```|$)", " ", str(text or ""), flags=re.S).strip()
+    paras = [p for p in re.split(r"\n\s*\n", prose) if p.strip()]
+    tail = "\n".join(paras[-2:])[-700:]
+    return bool(re.search(r"[?？]", tail)) or bool(_WAITS.search(tail))
 
 
 NUDGE_WRITTEN = ("[Aviso automático de Jayth, no lo escribió el usuario] Escribiste la llamada a «%s» como texto, así que no se "
@@ -175,6 +190,10 @@ NUDGE_WRITTEN = ("[Aviso automático de Jayth, no lo escribió el usuario] Escri
 NUDGE_EMPTY = ("[Aviso automático de Jayth, no lo escribió el usuario] Tu última respuesta llegó vacía. Sigue con la tarea donde "
                "la dejaste, con las herramientas que hagan falta, o, si ya terminaste, da el resultado al usuario, en su idioma. "
                "No respondas a este aviso ni lo menciones.")
+NUDGE_QUIET = ("[Aviso automático de Jayth, no lo escribió el usuario] Tu respuesta anterior se quedó generando sin producir "
+               "texto ni acción, y Jayth la interrumpió. Continúa la tarea donde ibas: si toca usar una herramienta, llámala ahora "
+               "directamente, sin anunciarla; si ya terminaste, da el resultado al usuario, en su idioma. No respondas a este "
+               "aviso ni lo menciones.")
 STEER = ("[Mensaje nuevo del usuario, escrito mientras trabajabas. Tenlo en cuenta desde ahora: si cambia lo que pide, "
          "ajusta lo que queda de la tarea; si solo añade algo, sigue con ello incluido.]\n%s")
 NUDGE_OFFER = ("[Aviso automático de Jayth, no lo escribió el usuario] Le propusiste al usuario «%s» como si fuera un comando, "
@@ -347,7 +366,7 @@ def announced_action(text):
     """¿Termina anunciando una acción que no hizo? Con el comando escrito, o en la última frase con un verbo de acción
     (no si pregunta o lo ofrece: «¿Lo ejecuto?», «Si quieres, lo ejecutaré»)."""
     t = str(text or "").strip()
-    if not t or t.endswith(("?", "？")):
+    if not t or t.endswith(("?", "？")) or asks_user(t):
         return False
     tail = t[-600:]
     if _ANNOUNCE.search(tail) and _CMD_BLOCK.search(tail):
@@ -719,15 +738,25 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
     try:
         conn.connect()
         conn.sock.settimeout(None)
+        holder["sock"] = conn.sock        # con «Connection: close» http.client suelta conn.sock: se guarda para poder cortar
         conn.request("POST", u.path.rstrip("/") + "/chat/completions", json.dumps(payload).encode("utf-8"),
                      {"Content-Type": "application/json", "Authorization": "Bearer " + (api_key or "local"), "Accept": "text/event-stream"})
         resp = conn.getresponse()
         if resp.status != 200:
             raise LLMError("HTTP %d: %s" % (resp.status, resp.read(2000).decode("utf-8", "replace")))
         content, reasoning, tcs, finish, timings, usage = [], [], {}, None, None, None
+        holder["rx"], holder["rx_n"], holder["t_gen"] = time.time(), 0, None      # último trozo visible (lo mira el vigilante)
         while True:
-            line = resp.readline()
+            try:
+                line = resp.readline()
+            except Exception:
+                if holder.get("cut"):          # Jayth cortó a propósito una respuesta que no avanzaba: vale lo que llegó
+                    finish = "cut"
+                    break
+                raise
             if not line:
+                if holder.get("cut"):
+                    finish = "cut"
                 break
             line = line.decode("utf-8", "replace").strip()
             if not line.startswith("data:"):
@@ -743,8 +772,16 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
                 timings = ch["timings"]
             if ch.get("usage"):
                 usage = ch["usage"]
+            pp = ch.get("prompt_progress")
+            if isinstance(pp, dict) and pp.get("total"):       # llama.cpp: cuánto lleva leído del mensaje
+                on_delta("reading", "%d\t%d\t%d\t%d" % (int(pp.get("processed") or 0), int(pp["total"]), int(pp.get("cache") or 0),
+                                                        int(pp.get("time_ms") or 0)))
             for c in ch.get("choices") or []:
                 d = c.get("delta") or {}
+                if d.get("reasoning_content") or d.get("content") or d.get("tool_calls"):
+                    holder["rx"], holder["rx_n"] = time.time(), holder.get("rx_n", 0) + 1
+                    if holder.get("t_gen") is None:
+                        holder["t_gen"] = holder["rx"]
                 if d.get("reasoning_content"):
                     reasoning.append(d["reasoning_content"])
                     on_delta("reasoning", d["reasoning_content"])
@@ -772,6 +809,94 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
         except Exception:
             pass
         holder["conn"] = None
+        holder["sock"] = None
+
+
+def drop_connection(holder):
+    """Corta desde otro hilo la petición en curso (Parar, o una respuesta que no avanza)."""
+    c = holder.get("conn")          # se toma antes de cortar: al cortar, el otro hilo sigue y puede abrir la petición siguiente
+    for sock in (holder.get("sock"), getattr(c, "sock", None)):
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
+    if c is not None:
+        try:
+            c.close()
+        except Exception:
+            pass
+
+
+def slot_decoded(port):
+    """Tokens que lleva escritos el motor local en la respuesta en curso (0 = aún lee; None = no se sabe)."""
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", int(port), timeout=3)
+        try:
+            c.request("GET", "/slots")
+            r = c.getresponse()
+            if r.status != 200:
+                return None
+            best = None
+            for s in json.loads(r.read()):
+                if isinstance(s, dict) and s.get("is_processing"):
+                    nt = s.get("next_token") or {}
+                    if isinstance(nt, list):
+                        nt = nt[0] if nt else {}
+                    n = int(nt.get("n_decoded") or 0)
+                    best = n if best is None else max(best, n)
+            return best
+        finally:
+            c.close()
+    except Exception:
+        return None
+
+
+_SPLIT_CACHE = {}
+_GEMMA4 = re.compile(r"gemma[\s_-]*4", re.I)
+
+
+def text_then_call_apart(cfg):
+    """¿Hay que enviar en mensajes separados el texto y la acción de un mismo paso del modelo?
+
+    La plantilla de Gemma 4 escribe primero la acción y su resultado y DESPUÉS el texto que el modelo dijo antes de
+    actuar, y con eso da su turno por cerrado. En el paso siguiente el modelo se encuentra «ya terminé» seguido de un
+    pensamiento suelto y se desorienta: repite, anuncia sin hacer o se queda generando sin producir nada (un usuario
+    esperó 26 minutos así). Separando «texto» y «acción» en dos mensajes seguidos, la misma plantilla los deja en orden y
+    con el turno abierto. Se reconoce por su formato de acciones («<|tool_call>call:»); otras plantillas no se tocan."""
+    external = cfg.get("llm_mode") == "external"
+    name = (cfg.get("external_model") or "") if external else (cfg.get("_model_title") or "")
+    guess = bool(_GEMMA4.search(name))
+    if external:
+        return guess
+    key = (int(cfg.get("llm_port") or 0), name)
+    if key in _SPLIT_CACHE:
+        return _SPLIT_CACHE[key]
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", key[0], timeout=3)
+        try:
+            c.request("GET", "/props")
+            r = c.getresponse()
+            if r.status != 200:
+                return guess
+            tpl = json.loads(r.read()).get("chat_template") or ""
+        finally:
+            c.close()
+    except Exception:
+        return guess
+    _SPLIT_CACHE[key] = "<|tool_call>call:" in tpl if tpl else guess
+    return _SPLIT_CACHE[key]
+
+
+def split_text_and_calls(msgs):
+    """Cada mensaje del modelo con texto y acciones pasa a ser dos seguidos: el texto y, después, las acciones."""
+    out = []
+    for m in msgs:
+        if m.get("role") == "assistant" and m.get("tool_calls") and isinstance(m.get("content"), str) and m["content"].strip():
+            out.append({"role": "assistant", "content": m["content"]})
+            m = dict(m, content="")
+        out.append(m)
+    return out
 
 
 def _plain(c):
@@ -833,6 +958,9 @@ class Run:
         self.calls_seen = Counter()
         self.fails_seen = Counter()
         self.truncated = False
+        self._read_ev, self._ptps = 0.0, 0.0           # avance de lectura: último aviso y velocidad medida (tok/s)
+        self._cuts = 0                                 # respuestas cortadas por generar sin producir nada visible
+        self._split = None                             # ¿texto y acción en mensajes separados? (se averigua una vez)
         self.system = system_prompt(settings)          # fijo durante toda la tarea (cache de prompt)
         self.groups = list(self.s.get("tool_groups") or [])     # grupos de herramientas ya activos en esta conversación
         self.tools = tool_schemas(settings, self.groups)
@@ -879,16 +1007,7 @@ class Run:
     # ---- control externo
     def request_stop(self):
         self.stop.set()
-        c = self.holder.get("conn")
-        if c is not None:
-            try:
-                c.sock.shutdown(socket.SHUT_RDWR)
-            except Exception:
-                pass
-            try:
-                c.close()
-            except Exception:
-                pass
+        drop_connection(self.holder)
         for p in self.pending.values():
             p["event"].set()
 
@@ -902,6 +1021,18 @@ class Run:
 
     # ---- salida de texto con agrupacion de deltas
     def _delta(self, kind, text):
+        if kind == "reading":          # «leídos\ttotal\tde_caché\tms»: el motor va leyendo el mensaje (no se guarda en disco)
+            try:
+                done, total, cache, ms = (int(x) for x in text.split("\t"))
+            except ValueError:
+                return
+            if ms > 0 and done > cache:
+                self._ptps = (done - cache) * 1000.0 / ms
+            now = time.time()
+            if now - self._read_ev >= 2.0 or done >= total:
+                self._read_ev = now
+                self.emit({"t": "reading", "done": max(0, done - cache), "total": max(1, total - cache), "tps": round(self._ptps, 2)})
+            return
         if kind == "tool":             # «nombre\tcaracteres»: como mucho un aviso por segundo (también se guarda)
             name, _, n = text.partition("\t")
             now = time.time()
@@ -923,6 +1054,51 @@ class Run:
         if b["text"]:
             self.emit({"t": "delta", "kind": b["kind"], "text": b["text"]})
         b["kind"], b["text"], self._last = None, "", time.time()
+
+    # ---- vigilante: que nunca haya silencio mientras el modelo trabaja
+    QUIET_SHOW = (20, 15)        # tokens y segundos escritos sin que llegue nada visible para avisar en el chat
+    QUIET_CUT = (250, 90)        # …y para cortar la primera vez (lo normal son huecos de 10-30 tokens)
+    QUIET_CUT_AGAIN = (1500, 300)   # la segunda, mucho más margen (por si ese modelo entrega las acciones de golpe)
+    WATCH_EVERY = 2.0            # segundos entre miradas al motor
+
+    def _watch(self, external, done):
+        """Hilo que acompaña a cada petición al modelo. El motor local dice cuántos tokens lleva escritos (/slots) aunque
+        no entregue texto: si escribe y escribe sin que llegue nada (ni texto, ni pensamiento, ni acción), el chat lo
+        muestra y, pasado un límite, Jayth corta y le pide al modelo que continúe. Así no vuelve a pasar que el modelo se
+        quede media hora generando en vacío sin que se vea nada (plantilla confundida, bucle de espacios en blanco…)."""
+        h = self.holder
+        port = int(self.cfg.get("llm_port") or 0)
+        mark_n = mark_rx = None
+        t_mark = last_ev = 0.0
+        limit = None if self.s.get("_quiet_ok") else (self.QUIET_CUT if self._cuts == 0 else self.QUIET_CUT_AGAIN)
+        while not done.wait(self.WATCH_EVERY):
+            if self.stop.is_set():
+                return
+            rx, now = h.get("rx"), time.time()
+            if rx is None:                       # el servidor aún no ha empezado a contestar
+                continue
+            n = None if external else slot_decoded(port)
+            if n is None:
+                # sin dato del motor (servicio externo): solo se avisa si ya escribía y lleva un rato callado
+                if h.get("t_gen") and now - rx >= 30 and now - last_ev >= 5:
+                    last_ev = now
+                    self.emit({"t": "quiet", "tokens": 0, "secs": int(now - rx)})
+                continue
+            if n <= 0:                           # todavía lee el mensaje
+                mark_n = None
+                continue
+            if mark_n is None or mark_rx != h.get("rx_n") or n < mark_n:
+                mark_n, mark_rx, t_mark = n, h.get("rx_n"), now      # llegó algo visible (o empezó a escribir): se cuenta desde aquí
+                continue
+            tok, secs = n - mark_n, now - t_mark
+            h["quiet_max"] = max(h.get("quiet_max", 0), tok)
+            if tok >= self.QUIET_SHOW[0] and secs >= self.QUIET_SHOW[1] and now - last_ev >= 4:
+                last_ev = now
+                self.emit({"t": "quiet", "tokens": tok, "secs": int(secs)})
+            if limit and tok >= limit[0] and secs >= limit[1]:
+                h["cut"], h["cut_tokens"] = "quiet", tok
+                drop_connection(h)
+                return
 
     # ---- contexto
     def _estimate(self, msgs):
@@ -971,7 +1147,9 @@ class Run:
                                       "[imagen: el usuario la ve en el chat; tú no puedes ver imágenes]"})
                 m = dict(m, content=parts)
             out.append({k: v for k, v in m.items() if not k.startswith("_")})   # claves internas (_auto) no van al modelo
-        return out
+        if self._split is None:
+            self._split = text_then_call_apart(self.cfg)
+        return split_text_and_calls(out) if self._split else out
 
     # ---- memoria de la conversación (contexto): recortar y resumir antes de llegar al tope
     TRIM_AT = 0.70      # a partir de aquí se recortan las salidas antiguas de las herramientas (sin llamar al modelo)
@@ -1240,6 +1418,9 @@ class Run:
                 self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": tool["category"], "approval": "blocked"})
                 return False, "La herramienta %s no está disponible en esta sesión (está desactivada o no se permite en este modo)." % name, None, {}
             self._activate([group_of(name)])            # la conocía aunque no estaba cargada: se activa su grupo y se usa
+        # nombres de parámetros de otras herramientas (old_string, file_path…) se aceptan; lo que falta se dice claro
+        # (solo las herramientas propias: las de conectores tienen esquemas ajenos y más laxos)
+        args, missing_args, extra_args = T.normalize_args(tool, args) if name in T.TOOLS else (args if isinstance(args, dict) else {}, [], [])
         args = coerce(args, tool["parameters"])
         sig = name + json.dumps(args, sort_keys=True, ensure_ascii=False)[:2000]
         self.calls_seen[sig] += 1
@@ -1247,6 +1428,16 @@ class Run:
             self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": tool["category"], "approval": "auto"})
             return False, ("Ya intentaste exactamente esta misma acción varias veces. No la repitas: cambia de enfoque, revisa la causa del fallo "
                            "o pregunta al usuario con ask_user."), None, {}
+        if missing_args:
+            self.fails_seen[sig] += 1
+            self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": tool["category"], "approval": "auto"})
+            return False, ("Faltan parámetros obligatorios de %s: %s.%s Sus parámetros son: %s. Vuelve a llamarla con esos nombres exactos."
+                           % (name, ", ".join(missing_args), (" Recibí estos, que no existen en ella: %s." % ", ".join(extra_args)) if extra_args else "",
+                              T.describe_params(tool))), None, {}
+        note = ("\n[Nota de Jayth: %s no tiene %s (%s): se ignoró. Sus parámetros son: %s.]"
+                % (name, "el parámetro" if len(extra_args) == 1 else "los parámetros", ", ".join(extra_args), T.describe_params(tool))) if extra_args else ""
+        for k in extra_args:
+            args.pop(k, None)
         # --- herramientas del propio agente
         if name == "ask_user":
             q = str(args.get("question", ""))
@@ -1301,16 +1492,19 @@ class Run:
                 if r.get("ui"):                          # datos para la interfaz (lienzo, archivos creados…)
                     extra.update(r["ui"])
                 imgs = list(r.get("images") or ([r["image"]] if r.get("image") else []))
-                return True, T.clip(r["text"], self.ctx.max_out), (imgs or None), extra
-            return True, T.clip(str(r), self.ctx.max_out), None, extra
+                return True, T.clip(r["text"], self.ctx.max_out) + note, (imgs or None), extra
+            return True, T.clip(str(r), self.ctx.max_out) + note, None, extra
         except T.Abort:
             raise
         except T.ToolError as e:
             self.fails_seen[sig] += 1
-            return False, str(e), None, dict(getattr(e, "ui", None) or {})
+            return False, str(e) + note, None, dict(getattr(e, "ui", None) or {})
+        except KeyError as e:                        # la herramienta pidió un dato que no vino: se dice cuál y cómo llamarla
+            self.fails_seen[sig] += 1
+            return False, "Falta el parámetro %s de %s. Sus parámetros son: %s.%s" % (e, name, T.describe_params(tool), note), None, {}
         except Exception as e:
             self.fails_seen[sig] += 1
-            return False, "%s: %s" % (type(e).__name__, e), None, {}
+            return False, "%s: %s%s" % (type(e).__name__, e, note), None, {}
 
     def _repair(self):
         """Si se corto a mitad, toda llamada a herramienta debe tener su respuesta para que el historial sea valido."""
@@ -1339,12 +1533,17 @@ class Run:
             lang = guess_language(text)
             if lang and lang != "es":                   # en español ya están las instrucciones
                 body += "\n\n[Responde en %s, el idioma de este mensaje.]" % LANG_ES[lang]
+        no_net = T.offline(max_age=30)                  # ¿hay internet? (una comprobación corta; el modelo no puede saberlo solo)
+        if no_net:
+            body += "\n\n[Aviso de Jayth: " + T.OFFLINE_MSG + "]"
         content = body if not image_names else [{"type": "text", "text": body}] + [{"type": "image_ref", "name": n} for n in image_names]
         msgs.append({"role": "user", "content": content})
         uev = {"t": "user", "text": text, "images": list(image_names), "files": [l[4:].strip() for l in attachments.splitlines() if l.startswith("### ")]}
         if marker:                                      # p. ej. «plan»: el chat lo muestra como marca, no como mensaje tuyo
             uev["marker"] = marker
         self.emit(uev)
+        if no_net:
+            self.emit({"t": "info", "text": tr("Sin conexión a internet: el modelo lo sabe y trabajará con lo que hay en este equipo.")})
         external = self.cfg.get("llm_mode") == "external"
         base = self.cfg["external_url"].rstrip("/") if external else "http://127.0.0.1:%d/v1" % int(self.cfg["llm_port"])
         key = self.cfg.get("external_key") if external else ""
@@ -1373,10 +1572,16 @@ class Run:
                                     "chat_template_kwargs": {"enable_thinking": effort != "low", "reasoning_effort": effort}})
                     if int(self.cfg.get("seed", -1)) >= 0:
                         payload["seed"] = int(self.cfg["seed"])
+                    payload["return_progress"] = True       # cuánto lleva leído (el chat lo muestra mientras espera)
                 payload["tools"] = self.tools
+                for k in ("cut", "cut_tokens", "quiet_max", "rx", "rx_n", "t_gen"):
+                    self.holder.pop(k, None)
+                watched = threading.Event()
+                threading.Thread(target=self._watch, args=(external, watched), daemon=True).start()
                 try:
                     res = llm_stream(base, key, payload, self.holder, self._delta)
                 except (ConnectionRefusedError, socket.timeout, OSError) as e:
+                    watched.set()
                     self._flush()
                     if self.stop.is_set():
                         break
@@ -1391,18 +1596,36 @@ class Run:
                             base, e, tr("Comprueba que ese servidor esté encendido.") if external else tr("Enciéndelo con el botón «Encender modelo»."))})
                     break
                 except LLMError as e:
+                    watched.set()
                     self._flush()
                     self.emit({"t": "error", "text": tr("Error del modelo: %s") % e})
                     break
                 except Exception as e:
+                    watched.set()
                     self._flush()
                     if self.stop.is_set():
                         break
                     self.emit({"t": "error", "text": tr("Conexión con el modelo interrumpida: %s: %s") % (type(e).__name__, e)})
                     break
+                watched.set()
                 self._flush()
                 if self.stop.is_set():
                     break
+                if res["finish"] == "cut":              # escribía sin producir nada visible: se cortó y se le pide que siga
+                    self._cuts += 1
+                    text_out = res["content"]
+                    if text_out.strip():                # lo que sí llegó se conserva (una acción a medio escribir, no)
+                        msgs.append({"role": "assistant", "content": text_out})
+                    self.emit({"t": "assistant_end", "text": text_out})
+                    if self._cuts > 2:
+                        self.emit({"t": "error", "text": tr("El modelo se queda escribiendo sin producir respuesta ni acción. Pulsa "
+                                                            "«Reintentar»; si se repite, baja el nivel de razonamiento o prueba otro modelo.")})
+                        break
+                    msgs.append({"role": "user", "_auto": True, "content": NUDGE_QUIET})
+                    self.emit({"t": "nudge", "written": "", "quiet": True, "tokens": int(self.holder.get("cut_tokens") or 0)})
+                    continue
+                if int(self.holder.get("quiet_max") or 0) >= self.QUIET_CUT[0] and (res["tool_calls"] or res["content"].strip()):
+                    self.s["_quiet_ok"] = True          # este modelo entrega tramos largos de golpe y acaba bien: no cortarle
                 # calibrar la estimacion de tokens con lo que realmente conto el servidor
                 real = (res.get("usage") or {}).get("prompt_tokens")
                 if real:

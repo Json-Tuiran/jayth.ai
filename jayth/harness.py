@@ -291,7 +291,8 @@ def bg_output(pid, last=80):
     r = BG.get(pid)
     if not r:
         return None
-    state = "en ejecución" if r["proc"].poll() is None else "terminado (código %s)" % r["proc"].poll()
+    code = r["proc"].poll()
+    state = "en ejecución" if code is None else ("detenido" if r.get("stopped") else "terminado (código %s)" % code)
     return "[%s · %s · %ds]\n%s" % (pid, state, time.time() - r["started"], "\n".join(r["lines"][-last:]) or "(sin salida todavía)")
 
 
@@ -301,6 +302,11 @@ def bg_stop(pid):
         return False
     if r["proc"].poll() is None:
         osys.kill_tree(r["proc"].pid)
+        r["stopped"] = True
+        try:                       # que al consultarlo justo después ya conste como detenido (antes seguía «en ejecución»)
+            r["proc"].wait(timeout=4)
+        except Exception:
+            pass
     return True
 
 

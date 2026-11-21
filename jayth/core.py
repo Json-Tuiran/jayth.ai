@@ -55,6 +55,7 @@ DEFAULTS = {
     "mcp_servers": [],
     # proyectos del modo Code
     "projects": [],
+    "projects_removed": [],      # ids quitados de la lista a propósito: recover_projects() no los devuelve
     "active_project": "",
     "app_mode": "chat",          # chat | code (ultimo modo usado)
     "layout": {},                # distribucion de paneles: anchos, plegados, lados (la guarda la ventana sola)
@@ -131,17 +132,111 @@ LAST_USE = [time.time()]   # ultima actividad del agente (para apagar el modelo 
 
 
 # ---------------------------------------------------------------- ajustes
+def _plain(x):
+    """Copia independiente y comparable (como queda en el JSON): tuplas -> listas, sin referencias compartidas."""
+    return json.loads(json.dumps(x, ensure_ascii=False))
+
+
+def _id_list(x):
+    return isinstance(x, list) and all(isinstance(i, dict) and "id" in i for i in x)
+
+
+def _merge_ids(base, mine, disk):
+    """Mezcla una lista de elementos con «id» (proyectos, modelos…): lo que este proceso añadió, cambió o quitó desde
+    la última vez que leyó el archivo, aplicado encima de lo que hay ahora en el disco (lo que añadió otro se respeta)."""
+    b = {i["id"]: i for i in base}
+    m = {i["id"]: i for i in mine}
+    out = [i for i in disk if not (i["id"] in b and i["id"] not in m)]      # lo que se quitó aquí
+    pos = {i["id"]: n for n, i in enumerate(out)}
+    for i in mine:
+        k = i["id"]
+        if k not in b:                         # añadido aquí
+            if k in pos:
+                out[pos[k]] = i
+            else:
+                pos[k] = len(out)
+                out.append(i)
+        elif i != b[k] and k in pos:           # cambiado aquí (si otro lo quitó mientras tanto, se respeta)
+            out[pos[k]] = i
+    return out
+
+
+class _FileLock:
+    """Cerrojo entre procesos (otro Jayth, la ventana rápida, una tarea programada) para leer-mezclar-escribir los
+    ajustes de una vez. Si no se consigue en unos segundos se sigue sin él: mejor guardar que perder el cambio."""
+
+    def __init__(self, path, timeout=3.0):
+        self.path, self.timeout, self.f, self.held = path, timeout, None, False
+
+    def __enter__(self):
+        try:
+            self.f = open(self.path, "a+")
+        except OSError:
+            return self
+        end = time.time() + self.timeout
+        while True:
+            try:
+                if osys.WIN:
+                    import msvcrt
+                    self.f.seek(0)
+                    msvcrt.locking(self.f.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(self.f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.held = True
+                return self
+            except OSError:
+                if time.time() > end:
+                    return self
+                time.sleep(0.05)
+
+    def __exit__(self, *a):
+        if self.f:
+            try:
+                if self.held:
+                    if osys.WIN:
+                        import msvcrt
+                        self.f.seek(0)
+                        msvcrt.locking(self.f.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(self.f.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+            self.f.close()
+        return False
+
+
+BACKUPS_KEPT = 10        # copias diarias de los ajustes en data/respaldos
+
+
 class Settings:
+    """Ajustes en data/settings.json.
+
+    Varios procesos pueden tenerlos abiertos a la vez (dos ventanas de Jayth, la ventana rápida, una tarea programada).
+    Antes cada uno escribía su copia entera en memoria y el último en guardar borraba lo que hubieran cambiado los demás
+    (proyectos y modelos incluidos). Ahora cada guardado relee el archivo y aplica encima solo lo que cambió este proceso,
+    y si otro proceso lo cambió, snapshot() lo recoge. Además se guarda una copia por día en data/respaldos."""
+
     def __init__(self):
         self.path = os.path.join(paths.DATA, "settings.json")
         self.lock = threading.Lock()
         self.v = dict(DEFAULTS)
         self.load_error = ""
+        self.save_error = ""                   # último guardado fallido (la ventana lo avisa y se reintenta)
+        self._extra = {}                       # claves de una versión más nueva de Jayth: se conservan al guardar
+        self._base = _plain(self.v)            # lo que había en el disco la última vez que se leyó o se escribió
+        self._sig = None
+        self._checked = 0.0
         if os.path.isfile(self.path):
             for attempt in range(3):          # otro proceso podria estar escribiendolo en ese instante
                 try:
                     with open(self.path, "r", encoding="utf-8-sig") as f:
-                        self.v.update({k: x for k, x in json.load(f).items() if k in DEFAULTS})
+                        disk = json.load(f)
+                    self.v.update({k: x for k, x in disk.items() if k in DEFAULTS})
+                    self._extra = {k: x for k, x in disk.items() if k not in DEFAULTS}
+                    self._base = _plain(self.v)
+                    self._sig = self._stat()
                     break
                 except Exception as e:
                     if attempt == 2:
@@ -188,22 +283,137 @@ class Settings:
                 self.v[k] = x
             self._save()
 
-    def _save(self):
-        tmp = self.path + ".tmp"
+    # --- disco
+    def _stat(self):
+        try:
+            st = os.stat(self.path)
+            return (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return None
+
+    def _read_disk(self):
+        try:
+            with open(self.path, "r", encoding="utf-8-sig") as f:
+                d = json.load(f)
+            return d if isinstance(d, dict) else None
+        except (OSError, ValueError):
+            return None
+
+    def _mine(self):
+        """Claves que este proceso cambió desde la última lectura/escritura del archivo."""
+        return {k for k, x in self.v.items() if _plain(x) != self._base.get(k, object())}
+
+    def _refresh(self):
+        """Si otro proceso guardó los ajustes, recoger lo suyo (sin perder lo que este aún no guardó). Bajo self.lock."""
+        now = time.monotonic()
+        if now - self._checked < 1.0:
+            return
+        self._checked = now
+        sig = self._stat()
+        if sig is None or sig == self._sig:
+            return
+        disk = self._read_disk()
+        if disk is None:
+            return
+        mine = self._mine()
+        for k, x in disk.items():
+            if k in DEFAULTS:
+                if k not in mine:
+                    self.v[k] = x
+                    self._base[k] = _plain(x)
+            else:
+                self._extra[k] = x
+        self._sig = sig
+
+    def _backup(self):
+        """Una copia por día del archivo tal como estaba antes de cambiarlo (data/respaldos/settings-AAAAMMDD.json)."""
+        try:
+            d = os.path.join(paths.DATA, "respaldos")
+            dst = os.path.join(d, "settings-%s.json" % time.strftime("%Y%m%d"))
+            if os.path.exists(dst) or not os.path.isfile(self.path):
+                return
+            os.makedirs(d, exist_ok=True)
+            import shutil
+            shutil.copy2(self.path, dst)
+            old = sorted(f for f in os.listdir(d) if f.startswith("settings-") and f.endswith(".json"))
+            for f in old[:-BACKUPS_KEPT]:
+                os.remove(os.path.join(d, f))
+        except OSError:
+            pass
+
+    def _write(self, data):
+        text = json.dumps(data, indent=2, ensure_ascii=False)
+        tmp = "%s.%d.tmp" % (self.path, os.getpid())      # uno por proceso: dos Jayth no escriben el mismo temporal
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self.v, f, indent=2, ensure_ascii=False)
-        for attempt in range(20):
+            f.write(text)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        wait = 0.02
+        for attempt in range(15):              # algo más de 2 s en total (se guarda desde la ventana: que no se congele)
             try:
                 os.replace(tmp, self.path)
                 return
             except PermissionError:
-                # Windows: el antivirus o el indexador pueden tener el archivo abierto un instante tras escribirlo
-                if attempt == 19:
-                    raise
-                time.sleep(0.05)
+                # Windows: el antivirus, el indexador u otro programa pueden tener el archivo abierto un momento
+                time.sleep(wait)
+                wait = min(wait * 1.5, 0.2)
+        try:                                   # último recurso: escribir encima (no es atómico, pero no se pierde el cambio)
+            with open(self.path, "w", encoding="utf-8") as f:
+                f.write(text)
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+    def _save(self):
+        """Guarda bajo self.lock: relee el archivo, aplica encima lo que cambió este proceso y escribe el resultado.
+        Nunca lanza la excepción a quien llamó (antes, en Windows, un archivo bloqueado hacía que el cambio se quedara
+        solo en memoria sin avisar): si falla, queda en save_error, la ventana lo muestra y se reintenta solo."""
+        try:
+            with _FileLock(self.path + ".lock"):
+                disk = self._read_disk() if os.path.isfile(self.path) else None
+                cur = _plain(self.v)
+                if disk is None:
+                    merged = dict(self._extra, **cur)
+                else:
+                    merged = dict(disk)
+                    for k, x in cur.items():
+                        b = self._base.get(k, object())
+                        if x == b and k in merged:
+                            continue                       # no lo tocó este proceso: vale lo que haya en el disco
+                        if _id_list(x) and _id_list(b) and _id_list(merged.get(k)):
+                            merged[k] = _merge_ids(b, x, merged[k])
+                        else:
+                            merged[k] = x
+                self._backup()
+                self._write(merged)
+                self.v.update({k: x for k, x in merged.items() if k in DEFAULTS})
+                self._extra = {k: x for k, x in merged.items() if k not in DEFAULTS}
+                self._base = _plain(self.v)
+                self._sig = self._stat()
+                self.save_error = ""
+        except Exception as e:
+            self.save_error = "%s: %s" % (type(e).__name__, e)
+            try:
+                with open(os.path.join(paths.DATA, "ajustes_errores.log"), "a", encoding="utf-8") as f:
+                    f.write("%s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), self.save_error))
+            except OSError:
+                pass
+
+    def retry_save(self):
+        """Vuelve a intentar un guardado que falló. Devuelve True si ya no queda nada pendiente."""
+        with self.lock:
+            if self.save_error:
+                self._save()
+            return not self.save_error
 
     def snapshot(self):
         with self.lock:
+            self._refresh()
             v = dict(self.v)
         os.makedirs(v["workspace"], exist_ok=True)
         return v
@@ -248,6 +458,7 @@ class Settings:
         """Quita el proyecto de la lista (no borra su carpeta)."""
         with self.lock:
             self.v["projects"] = [p for p in self.v["projects"] if p["id"] != pid]
+            self.v["projects_removed"] = (self.v.get("projects_removed") or [])[-200:] + [pid]
             if self.v["active_project"] == pid:
                 self.v["active_project"] = self.v["projects"][0]["id"] if self.v["projects"] else ""
             self._save()
@@ -571,7 +782,8 @@ class Session:
             ev["ts"] = round(time.time(), 2)
             self.events.append(ev)
             try:
-                if not self.temp:                    # el chat temporal vive solo en memoria
+                # el chat temporal vive solo en memoria; los avisos de avance en directo tampoco se guardan
+                if not self.temp and ev["t"] not in ("reading", "quiet"):
                     with open(self.epath, "a", encoding="utf-8") as f:
                         f.write(json.dumps(ev, ensure_ascii=False) + "\n")
             except Exception:
@@ -647,6 +859,7 @@ class Session:
             cfg["mode"] = mode
         proj = project(cfg, self.data.get("project"))
         if proj:   # en un proyecto el agente trabaja dentro de su carpeta y sigue sus instrucciones
+            self.data["project_info"] = _project_info(proj)     # para recuperarlo si se pierde de la lista
             cfg["workspace"] = proj["path"]
             cfg["_project"] = True
             extra = "Trabajas en el proyecto «%s» (carpeta %s). Las rutas relativas son relativas a esa carpeta." % (proj["name"], proj["path"])
@@ -905,6 +1118,9 @@ def new_session(project_id=None, temp=False):
     s.temp = temp
     if project_id:
         s.data["project"] = project_id
+        p = project(SET.snapshot(), project_id)
+        if p:
+            s.data["project_info"] = _project_info(p)
     SESSIONS[s.id] = s
     s.save()
     return s
@@ -915,6 +1131,44 @@ def project(cfg, pid):
         if pid and p["id"] == pid:
             return p
     return None
+
+
+def _project_info(p):
+    return {"name": p.get("name", ""), "path": p.get("path", ""), "instructions": p.get("instructions", ""),
+            "created": p.get("created") or 0}
+
+
+def recover_projects():
+    """Proyectos que tienen conversaciones pero ya no están en la lista (p. ej. ajustes pisados por otra copia de Jayth
+    abierta a la vez): vuelven solos con su mismo id si su carpeta sigue existiendo. Los que el usuario quitó a propósito
+    no. Devuelve los nombres recuperados."""
+    cfg = SET.snapshot()
+    projs = {p["id"]: p for p in cfg["projects"]}
+    for s in list(SESSIONS.values()):        # conversaciones de antes de esto: se les anota su proyecto una vez
+        p = projs.get(s.data.get("project"))
+        if p and not s.temp and s.data.get("project_info") != _project_info(p):
+            s.data["project_info"] = _project_info(p)
+            s.save()
+    have = set(projs) | set(cfg.get("projects_removed") or [])
+    found = {}
+    for s in sorted(SESSIONS.values(), key=lambda s: s.created):
+        pid, info = s.data.get("project"), s.data.get("project_info") or {}
+        if not pid or pid in have or pid in found or s.temp:
+            continue
+        path = info.get("path") or ""
+        if path and os.path.isdir(path):
+            found[pid] = {"id": pid, "name": info.get("name") or os.path.basename(path), "path": os.path.normpath(path),
+                          "instructions": info.get("instructions", ""), "created": info.get("created") or s.created}
+    if found:
+        with SET.lock:
+            SET.v["projects"] = SET.v["projects"] + [p for k, p in found.items() if k not in {x["id"] for x in SET.v["projects"]}]
+            SET._save()
+        for s in list(SESSIONS.values()):    # las demás conversaciones de esos proyectos también quedan anotadas
+            p = found.get(s.data.get("project"))
+            if p and not s.temp and s.data.get("project_info") != _project_info(p):
+                s.data["project_info"] = _project_info(p)
+                s.save()
+    return [p["name"] for p in found.values()]
 
 
 def sessions_for(project_id=None):

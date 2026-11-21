@@ -101,6 +101,79 @@ def tool(name, category, desc, params, required=()):
     return deco
 
 
+# Nombres que los modelos traen aprendidos de otras herramientas (old_string, file_path, cmd…) -> el nuestro.
+# Solo se aplican si el parámetro nuestro falta y el nombre recibido no es un parámetro de esa herramienta.
+ARG_ALIASES = {
+    "old": ("old_string", "old_str", "old_text", "search", "find", "original", "antiguo"),
+    "new": ("new_string", "new_str", "new_text", "replace", "replacement", "replace_with", "nuevo"),
+    "path": ("file_path", "filepath", "filename", "file_name", "file", "target_file", "dir", "directory", "folder", "ruta", "archivo", "carpeta"),
+    "content": ("contents", "file_text", "text", "data", "body", "contenido"),
+    "command": ("cmd", "comando", "script", "shell_command"),
+    "offset": ("start_line", "line_start", "from_line", "start", "line"),
+    "limit": ("max_lines", "num_lines", "n_lines", "lines"),
+    "pattern": ("regex", "query", "search", "text", "patron"),
+    "query": ("q", "search", "search_query", "pattern", "text", "consulta"),
+    "url": ("uri", "link", "href", "address", "direccion"),
+    "source": ("src", "from", "from_path", "old_path", "origen"),
+    "dest": ("dst", "destination", "to", "to_path", "new_path", "target", "destino"),
+    "depth": ("max_depth", "levels"),
+    "timeout": ("timeout_seconds", "timeout_s", "timeout_sec"),
+    "background": ("run_in_background", "bg", "detach", "async"),
+    "replace_all": ("all", "global", "replaceall"),
+    "items": ("todos", "plan", "steps", "tasks"),
+    "question": ("prompt", "message", "pregunta"),
+    "fact": ("text", "content", "memory", "note", "dato", "hecho"),
+    "id": ("process_id", "command_id", "bg_id", "pid"),
+    "seconds": ("secs", "duration", "time", "segundos"),
+    "code": ("script", "source", "python", "codigo"),
+}
+
+
+def _alias_fill(args, props):
+    args = dict(args)
+    for want, names in ARG_ALIASES.items():
+        if want in props and want not in args:
+            for n in names:
+                if n in args and n not in props:
+                    args[want] = args.pop(n)
+                    break
+    return args
+
+
+def normalize_args(t, args):
+    """Deja los argumentos como los espera la herramienta. Devuelve (args, faltan, sobran)."""
+    schema = t.get("parameters") or {}
+    props = schema.get("properties") or {}
+    if not isinstance(args, dict):
+        return {}, list(schema.get("required") or []), []
+    args = _alias_fill(args, props)
+    # fin de línea en vez de cantidad («start_line=10, end_line=20»)
+    for end in ("end_line", "line_end", "to_line", "end"):
+        if end in args and end not in props and "limit" in props and "limit" not in args:
+            try:
+                args["limit"] = max(1, int(float(args.pop(end))) - int(float(args.get("offset") or 1)) + 1)
+            except (TypeError, ValueError):
+                pass
+            break
+    if "depth" in props and "depth" not in args and "recursive" in args and "recursive" not in props:
+        if str(args.pop("recursive")).strip().lower() in ("true", "1", "yes", "si", "sí"):
+            args["depth"] = 3
+    for k, sub in props.items():                      # listas de objetos (multi_edit: [{old, new}])
+        ip = ((sub.get("items") or {}).get("properties")) if isinstance(sub, dict) and sub.get("type") == "array" else None
+        if ip and isinstance(args.get(k), list):
+            args[k] = [_alias_fill(i, ip) if isinstance(i, dict) else i for i in args[k]]
+    missing = [k for k in (schema.get("required") or []) if args.get(k) is None]
+    extra = [k for k in args if k not in props]
+    return args, missing, extra
+
+
+def describe_params(t):
+    """«path (obligatorio), old (obligatorio), new (obligatorio), replace_all»: para decirle al modelo cómo llamarla."""
+    schema = t.get("parameters") or {}
+    req = set(schema.get("required") or [])
+    return ", ".join(k + (" (obligatorio)" if k in req else "") for k in (schema.get("properties") or {})) or "ninguno"
+
+
 def schemas(allowed_categories=None):
     out = []
     for t in TOOLS.values():
@@ -307,6 +380,11 @@ def list_dir(a, ctx):
     p = ctx.path(a.get("path") or ".")
     if not os.path.isdir(p):
         raise ToolError("No existe la carpeta: " + p)
+    try:
+        if not os.listdir(p):
+            return p + "\n  (carpeta vacía)"
+    except OSError:
+        pass
     depth = min(max(int(a.get("depth") or 1), 1), 4)
     out, cnt = [p], [0]
 
@@ -430,6 +508,34 @@ def cmd_env():
     return env
 
 
+_PIP = re.compile(r"(^|[;&|]\s*)pip3?(?:\.exe)?(?=\s)", re.I)
+
+
+def same_python_pip(cmd):
+    """«pip install x» -> «python -m pip install x». Con varios Python instalados, «pip» y «python» pueden ser distintos y el
+    paquete quedaba donde «python» no lo ve (visto con Gemma 4 12B: pip instaló ursina en Python 3.13 y «python main.py»
+    usó Python 3.10: ModuleNotFoundError justo después de instalarlo). Devuelve (comando, nota para el modelo)."""
+    import shutil
+    if not _PIP.search(cmd):
+        return cmd, ""
+    py = "python" if shutil.which("python") else ("python3" if shutil.which("python3") else "")
+    if not py:
+        return cmd, ""
+    return _PIP.sub(lambda m: m.group(1) + py + " -m pip", cmd), \
+        "[Jayth ejecutó «pip» como «%s -m pip» para que el paquete quede en el mismo Python que usa «%s».]" % (py, py)
+
+
+def pip_hint(out, cmd):
+    """Tras «No module named X»: cómo instalarlo en el Python que de verdad se está usando."""
+    m = re.search(r"No module named '([\w.]+)'", out or "")
+    if not m or "-m pip" in cmd:
+        return ""
+    mod = m.group(1).split(".")[0]
+    return ("\n[Pista de Jayth: falta el módulo «%s» en el Python que ejecutó el comando. Instálalo con «python -m pip install %s» "
+            "(si ya lo instalaste con «pip», pudo quedar en otro Python de este equipo); el nombre del paquete puede ser distinto "
+            "del módulo.]" % (mod, mod))
+
+
 def clixml_text(out):
     """PowerShell escribe sus errores como XML («#< CLIXML <Objs…>») cuando su salida va a otro programa: aquí, como
     texto normal (el modelo no entendía «_x000D__x000A_» ni las etiquetas)."""
@@ -463,6 +569,7 @@ def run_command(a, ctx):
     timeout = min(max(int(a.get("timeout") or (ctx.extras or {}).get("command_timeout") or 60), 1), 900)
     cwd = ctx.path(a["cwd"]) if a.get("cwd") else ctx.workspace
     os.makedirs(cwd, exist_ok=True)
+    cmd, pip_note = same_python_pip(cmd)
     if a.get("background"):
         from . import harness
         pid = harness.bg_start(cmd, cwd)
@@ -493,7 +600,7 @@ def run_command(a, ctx):
     # sin espacios de relleno al final de cada linea ni filas vacias repetidas (las tablas de PowerShell rellenan mucho):
     # menos tokens = el modelo local lee la salida antes
     out = re.sub(r"\n{3,}", "\n\n", "\n".join(l.rstrip() for l in out.splitlines()))
-    out = clip(out, ctx.max_out)
+    out = clip(out, ctx.max_out) + pip_hint(out, cmd) + net_hint(out) + (("\n" + pip_note) if pip_note else "")
     if why:
         return (out + "\n" if out else "") + "[Proceso terminado: %s]" % why
     return (out or "(sin salida)") + "\n[código de salida %d]" % p.returncode
@@ -615,6 +722,31 @@ def _flatten(h, main):
     return h.strip()
 
 
+OFFLINE_MSG = ("Este equipo no tiene conexión a internet ahora mismo. No insistas con herramientas que la necesitan (buscar en "
+               "la web, abrir páginas, descargar, instalar paquetes): fallarán. Sigue con lo que hay en el equipo y, si la tarea no "
+               "puede hacerse sin internet, díselo al usuario y propón una alternativa que no la necesite.")
+_NET_ERR = re.compile(r"(getaddrinfo failed|name or service not known|temporary failure in name resolution|could not resolve host|"
+                      r"network is unreachable|no route to host|failed to establish a new connection|max retries exceeded|"
+                      r"connection timed out|unable to access 'https?://|enotfound|eai_again|etimedout|"
+                      r"winerror 1100[14]|no such host is known|no se pudo resolver|host desconocido)", re.I)
+
+
+def offline(max_age=20):
+    """True solo si se acaba de comprobar que no hay salida a internet (nunca por un fallo de la comprobación)."""
+    try:
+        from . import provision as P
+        return not P.online(timeout=1.5, max_age=max_age)
+    except Exception:
+        return False
+
+
+def net_hint(out):
+    """Pista para el modelo cuando un comando falló por la red y de verdad no hay internet (pip, git, npm, curl…)."""
+    if out and _NET_ERR.search(out[-6000:]) and offline():
+        return "\n[Pista de Jayth: el comando falló por la red. " + OFFLINE_MSG + "]"
+    return ""
+
+
 def _http_get(url, timeout=20, data=None, max_bytes=2_500_000):
     req = urllib.request.Request(url, data=data, headers=UA)
     try:
@@ -630,7 +762,9 @@ def _http_get(url, timeout=20, data=None, max_bytes=2_500_000):
         reason = getattr(e, "reason", e)
         if _is_local(url):
             raise ToolError("No responde %s: %s. ¿Está en marcha el servidor? (revisa command_output si lo lanzaste en segundo plano)" % (url, reason))
-        raise ToolError("No se pudo acceder a %s (¿sin conexión o dirección incorrecta?): %s" % (url, reason))
+        if offline():
+            raise ToolError("Sin conexión a internet: no se pudo abrir %s. %s" % (url, OFFLINE_MSG))
+        raise ToolError("No se pudo acceder a %s (hay internet: revisa la dirección o prueba otra fuente): %s" % (url, reason))
     raw = r.read(max_bytes)
     ctype = r.headers.get("Content-Type", "")
     m = re.search(r"charset=([\w-]+)", ctype)
@@ -810,6 +944,8 @@ def web_search(a, ctx):
     prov = ex.get("search_provider", "auto")
     if prov == "searxng" and ex.get("searxng_url"):
         return _search_searxng(q, mx, ex["searxng_url"]) or "Sin resultados."
+    if offline():                    # sin internet no tiene sentido probar un buscador tras otro (cada uno tarda en fallar)
+        raise ToolError("Sin conexión a internet: no se puede buscar en la web. " + OFFLINE_MSG)
     key = ex.get("brave_key")
     if key and prov in ("auto", "brave"):
         return _search_brave(q, mx, key) or "Sin resultados."
@@ -855,7 +991,9 @@ def download_file(a, ctx):
     try:
         r = urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=30)
     except Exception as e:
-        raise ToolError("No se pudo descargar (¿sin conexión?): %s" % e)
+        if not _is_local(url) and offline():
+            raise ToolError("Sin conexión a internet: no se pudo descargar %s. %s" % (url, OFFLINE_MSG))
+        raise ToolError("No se pudo descargar (hay internet: revisa la dirección): %s" % e)
     total = 0
     with open(dest, "wb") as f:
         while True:
@@ -1700,7 +1838,10 @@ def _web(op, ctx, timeout=45, **args):
       "puede usar, numerado. Para webs que hay que usar, no solo leer: buscar dentro de un sitio, iniciar sesión, formularios, páginas con JavaScript.",
       {"url": S("Dirección (o lo que quieras buscar)")}, ["url"])
 def browser_open(a, ctx):
-    return _web("open", ctx, 60, url=str(a["url"]))
+    url = str(a["url"])
+    if re.match(r"(?i)https?://|www\.", url) and not _is_local(url if "//" in url else "http://" + url) and offline():
+        raise ToolError("Sin conexión a internet: no se puede abrir %s. %s" % (url, OFFLINE_MSG))
+    return _web("open", ctx, 60, url=url)
 
 
 @tool("browser_read", "net", "Lee la página abierta en el navegador integrado: what=all (resumen y lo que hay a la vista), text (todo el texto, por "
