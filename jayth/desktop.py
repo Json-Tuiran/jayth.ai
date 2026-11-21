@@ -520,6 +520,17 @@ def describe(name, args, phase):
     return join_step(*describe_parts(name, args, phase))[0]
 
 
+def about_to(name):
+    """«Va a escribir»: el modelo ya eligió la herramienta y está escribiendo sus datos (un archivo largo puede tardar)."""
+    if name.startswith("mcp__"):
+        parts = name.split("__")
+        inf = tr("usar %s") % (parts[1].replace("_", " ") if len(parts) > 1 else name)
+    else:
+        inf = {"browser_nav": tr("navegar"), "window_action": tr("manejar la ventana"), "clipboard": tr("usar el portapapeles"),
+               "use_tools": tr("cargar más herramientas")}.get(name) or STEP.get(name, (name,))[0]
+    return tr("Va a %s") % inf
+
+
 def diff_badge(name, a):
     if name == "write_file":
         return "+%d" % (str(a.get("content", "")).count("\n") + 1), ""
@@ -1163,6 +1174,10 @@ class AssistantBlock(QWidget):
         self.think_fold = Collapsible(self.think_view, limit=280, fade=C["bg"], slack=80)
         self.think_fold.hide()
         v.addWidget(self.think_fold)
+        self.p_start = None                      # el modelo escribe los datos de una acción: «Va a escribir · 2 KB»
+        self.prep = CV.ActivityLine()
+        self.prep.hide()
+        v.addWidget(self.prep)
         self.body = md_label()
         self.body.hide()
         v.addWidget(self.body)
@@ -1197,6 +1212,8 @@ class AssistantBlock(QWidget):
     def tick(self, now):
         if self.act.live:
             self.act.tick(now)
+        if self.prep.live:
+            self.prep.tick(now)
 
     def delta(self, kind, text, ts):
         if kind == "reasoning":
@@ -1241,6 +1258,25 @@ class AssistantBlock(QWidget):
         self.act.set_open(on)
         self.peek.setVisible(False if on else (self.act.live and bool(self.peek.text())))
 
+    def preparing(self, name, chars, ts):
+        """El modelo está escribiendo una acción (el contenido de un archivo, un comando…): cuál y cuánto lleva."""
+        self._end_think(ts)
+        if self.r_start is None:
+            self.act.hide()                      # no está leyendo: ya escribe
+        if self.p_start is None:
+            self.p_start = ts
+            self.prep.show()
+            self.prep.run((about_to(name),), ts, CV.tool_icon(name), live=ts > time.time() - 5)
+        else:
+            self.prep.phrases = (about_to(name),)
+        self.prep.extra = i18n.size(chars) if chars >= 400 else ""
+        self.prep.tick(time.time())
+
+    def halt_prep(self):
+        if self.p_start is not None:
+            self.prep.done("")
+            self.prep.hide()
+
     def _end_think(self, ts):
         if self.r_start and not self.r_end:
             self.r_end = ts
@@ -1249,6 +1285,7 @@ class AssistantBlock(QWidget):
 
     def finish(self, text, ts):
         self._end_think(ts)
+        self.halt_prep()
         if self.r_start is None:
             self.act.done("")
             self.act.hide()
@@ -2060,6 +2097,9 @@ class ChatPanel(QWidget):
             if self.cur is None:
                 self.cur = self.add(AssistantBlock(ev["ts"]))
             self.cur.delta(ev["kind"], ev["text"], ev["ts"])
+        elif t == "tool_prep":                      # solo en directo: al reabrir una conversación ya no aporta nada
+            if self.cur is not None and ev["ts"] > time.time() - 5:
+                self.cur.preparing(ev["name"], ev.get("chars", 0), ev["ts"])
         elif t == "stats":
             if self.cur is not None and ev.get("gen_n"):
                 tok = "%s tok" % ev["gen_n"]
@@ -2201,6 +2241,8 @@ class ChatPanel(QWidget):
                             0, Qt.AlignTop)
             self._end_steps()
         elif t == "turn_end":
+            if self.cur is not None:
+                self.cur.halt_prep()
             if self.cur is not None and self.cur.empty():
                 self.cur.hide()
                 self.cur.deleteLater()

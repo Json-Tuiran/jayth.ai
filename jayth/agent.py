@@ -483,6 +483,8 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
                         slot["name"] += f["name"]
                     if f.get("arguments"):
                         slot["args"] += f["arguments"]
+                    if slot["name"]:                # el modelo está escribiendo una acción: cuál y cuánto lleva
+                        on_delta("tool", "%s\t%d" % (slot["name"], len(slot["args"])))
                 if c.get("finish_reason"):
                     finish = c["finish_reason"]
         return {"content": "".join(content), "reasoning": "".join(reasoning), "tool_calls": [tcs[k] for k in sorted(tcs)],
@@ -550,6 +552,7 @@ class Run:
                          {"sid": self.sid, "brave_key": settings.get("brave_key"), "search_provider": settings.get("search_provider", "auto"),
                           "searxng_url": settings.get("searxng_url", ""), "command_timeout": int(settings.get("command_timeout", 60))})
         self._buf, self._last = {"kind": None, "text": ""}, 0.0
+        self._prep = ("", 0.0)
         self.calls_seen = Counter()
         self.fails_seen = Counter()
         self.truncated = False
@@ -593,6 +596,14 @@ class Run:
 
     # ---- salida de texto con agrupacion de deltas
     def _delta(self, kind, text):
+        if kind == "tool":             # «nombre\tcaracteres»: como mucho un aviso por segundo (también se guarda)
+            name, _, n = text.partition("\t")
+            now = time.time()
+            if name != self._prep[0] or now - self._prep[1] >= 1.0:
+                self._flush()
+                self._prep = (name, now)
+                self.emit({"t": "tool_prep", "name": name, "chars": int(n or 0)})
+            return
         b = self._buf
         if b["kind"] not in (None, kind):
             self._flush()

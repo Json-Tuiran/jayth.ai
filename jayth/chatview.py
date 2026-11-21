@@ -81,27 +81,25 @@ def activity_kind(tool):
     return _KIND.get(tool, "other")
 
 
-# frases mientras el modelo prepara el siguiente paso (todavía sin escribir nada)
+# Lo que se ve mientras el agente trabaja tiene que ser cierto: antes de escribir nada, el modelo está leyendo lo nuevo
+# (tu mensaje o lo que devolvió la última acción); mientras razona, «Pensando» con su razonamiento real debajo; y si
+# está escribiendo los datos de una acción, cuál (desktop.about_to). Sin frases inventadas que vayan rotando.
 WAIT = {
-    "start": (tr("Leyendo tu mensaje"), tr("Entendiendo lo que necesitas"), tr("Preparando la respuesta")),
-    "write": (tr("Repasando los cambios"), tr("Revisando el código"), tr("Pensando el siguiente paso")),
-    "run": (tr("Revisando la salida"), tr("Comprobando el resultado"), tr("Analizando lo que pasó")),
-    "read": (tr("Analizando el contenido"), tr("Revisando lo que encontré"), tr("Atando cabos")),
-    "web": (tr("Leyendo los resultados"), tr("Comparando fuentes"), tr("Sacando conclusiones")),
-    "look": (tr("Mirando la pantalla"), tr("Observando los detalles"), tr("Decidiendo dónde actuar")),
-    "other": (tr("Revisando los resultados"), tr("Pensando el siguiente paso")),
+    "start": (tr("Leyendo tu mensaje"),),
+    "write": (tr("Leyendo el resultado de los cambios"),),
+    "run": (tr("Leyendo la salida"),),
+    "read": (tr("Leyendo el contenido"),),
+    "web": (tr("Leyendo los resultados"),),
+    "look": (tr("Leyendo el resultado"),),
+    "other": (tr("Leyendo el resultado"),),
 }
 WAIT_ICON = {"start": "mat_comentario", "write": "pan_editor_codigo", "run": "cod_terminal", "read": "acc_examinar",
              "web": "herr_espacio_mundo", "look": "vista_captura", "other": "ia_controlador"}
-# frases mientras razona (la primera depende de lo último que hizo)
-THINK = (tr("Pensando"), tr("Razonando"), tr("Dándole vueltas"), tr("Atando cabos"), tr("Evaluando opciones"), tr("Planificando los pasos"))
-THINK_FIRST = {"start": tr("Pensando"), "write": tr("Repasando el código"), "run": tr("Analizando la salida"), "read": tr("Analizando lo que leí"),
-               "web": tr("Sacando conclusiones"), "look": tr("Interpretando la imagen"), "other": tr("Pensando")}
+THINK = (tr("Pensando"),)
 
 
-def think_phrases(kind):
-    first = THINK_FIRST.get(kind, tr("Pensando"))
-    return (first,) + tuple(p for p in THINK if p != first)
+def think_phrases(kind=None):
+    return THINK
 
 
 def thought_for(seconds):
@@ -274,6 +272,7 @@ class ActivityLine(QWidget):
         h.addWidget(self.chev)
         h.addStretch(1)
         self.phrases, self.t_start, self.live, self.expandable = (tr("Pensando"),), time.time(), False, False
+        self.extra = ""                      # dato real junto al tiempo (p. ej. cuánto lleva escrito de una acción)
         self.set_open(False)
 
     def run(self, phrases, t_start, icon_name="ia_controlador", live=True):
@@ -289,7 +288,7 @@ class ActivityLine(QWidget):
             return
         el = max(0.0, now - self.t_start)
         self.txt.setText(self.phrases[int(el // 4) % len(self.phrases)] + "…")
-        self.time.setText(fmt_secs(el) if el >= 1 else "")
+        self.time.setText(" · ".join(x for x in (fmt_secs(el) if el >= 1 else "", self.extra) if x))
 
     def done(self, text):
         self.live = False

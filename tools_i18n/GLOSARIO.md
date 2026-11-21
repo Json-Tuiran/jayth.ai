@@ -226,3 +226,9 @@ En japonés el infinitivo va en forma de diccionario («読み取る», «コマ
 Lo que el modelo hace mientras piensa: japonés «〜しています» («考えています»), chino «正在…» («正在思考»).
 Resúmenes: japonés en forma corta y con «、» («ファイルを 2 件編集、コマンドを 1 件実行»), chino con «了»
 («编辑了 2 个文件、运行了 1 个命令»).
+
+### Lo que el chat dice mientras el agente trabaja
+
+Solo estados que de verdad están pasando, sin frases de relleno que roten: «Leyendo tu mensaje» / «Leyendo la salida»
+(el modelo lee lo nuevo antes de escribir), «Pensando» (con su razonamiento real debajo) y «Va a %s» + infinitivo de la
+acción que está escribiendo (con lo que lleva escrito). Al traducir, no añadir matices que el modelo no esté haciendo.
