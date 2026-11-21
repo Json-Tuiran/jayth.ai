@@ -410,14 +410,14 @@ Einstellungen › Über › Neuigkeiten ab. Unterhaltungen, Einstellungen und Mo
   USB-Stick).
 - **Datenschutz:** Alles bleibt auf dem Computer; Jayth sendet keine Unterhaltungen oder Dateien an irgendeinen Server.
   Das Internet nutzt es nur, um Modelle und Engines herunterzuladen, nach Updates zu suchen und für die Web-Werkzeuge,
-  die der Nutzer erlaubt (oder bei Nutzung eines API-Modells, das die Nachrichten dieser Unterhaltung erhält).
+  die der Nutzer erlaubt (oder bei Nutzung eines API-Modells, das die Nachrichten dieser Unterhaltung erhält). Feedback und Berichte verlassen den Computer nur, wenn der Benutzer auf **Senden** drückt.
 - **Deinstallieren:** Windows: Einstellungen › Apps › Jayth › Deinstallieren; macOS: Jayth in den Papierkorb ziehen;
   Linux: das AppImage löschen. Daten und Modelle werden beim Deinstallieren nicht gelöscht.
 
 ## Feedback und Hilfe
 
 Profilmenü › **Feedback senden…** oder **Fehler melden…** (auch unter Einstellungen › Über): Der Nutzer prüft den Text,
-bevor er ihn sendet. Unter jeder Antwort: **Ein Problem mit dieser Antwort melden**. Das Projekt liegt auf
+bevor er ihn sendet. Unter jeder Antwort: **Ein Problem mit dieser Antwort melden**. Mit **Senden** geht das Feedback direkt und vertraulich an das Jayth-Team (es wird nicht veröffentlicht, und es braucht kein Konto); **Auf GitHub veröffentlichen** öffnet stattdessen ein öffentliches Issue auf GitHub. Hat Jayth einen unerwarteten Fehler, speichert es ihn auf dem Computer (ohne persönliche Pfade) und bietet **Bericht senden…** an; es sendet ihn nie von selbst. Das Projekt liegt auf
 https://github.com/Json-Tuiran/jayth.ai (Downloads unter Releases).
 
 ## Häufige Probleme

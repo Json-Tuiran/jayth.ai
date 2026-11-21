@@ -1,0 +1,8 @@
+# Puente de comentarios de Jayth en Cloudflare Workers (ver packaging/REPORTES.md).
+# Publicar:  npx wrangler deploy   ·   Clave de GitHub:  npx wrangler secret put GITHUB_TOKEN
+name = "jayth-reportes"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+
+[vars]
+REPO = "Json-Tuiran/jayth-reportes"

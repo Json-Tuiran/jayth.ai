@@ -4478,6 +4478,17 @@ class Main(QMainWindow):
             return QMessageBox.information(self, APP_NAME, tr("Espera a que el agente termine antes de actualizar."))
         self.restart_app()
 
+    def offer_crash_report(self, d, previous=False):
+        """Aviso discreto tras un error inesperado: «Enviar informe» abre el diálogo con el error ya escrito (se revisa antes)."""
+        from . import feedback as FB
+        if not d:
+            return
+        FB.mark_offered()
+        text = tr("La última vez %s tuvo un error inesperado. Si nos envías el informe, podremos corregirlo.") % APP_NAME if previous else \
+            tr("%s tuvo un error inesperado. Si nos envías el informe, podremos corregirlo.") % APP_NAME
+        self.toast(text, tr("Enviar informe…"), lambda: FeedbackDialog(self, "cierre", FB.crash_text(d), title=FB.crash_title(d)).exec(),
+                   ms=20000, icon_name="est_aviso", color=C["warn"])
+
     def notify_pending(self, text, ts, sid=None):
         if core.SET.snapshot().get("notifications", True) and not self.isActiveWindow() and ts > time.time() - 10:
             self._notify_sid = sid
@@ -5649,8 +5660,12 @@ def main():
     core.load_sessions()
     if "--selftest" in sys.argv:
         sys.exit(selftest(app))
+    from . import feedback as FB                # errores inesperados: se guardan y se ofrece enviarlos (nunca solos)
+    FB.install_crash_capture(app, lambda d: QTimer.singleShot(0, lambda: getattr(app, "_main", None) and app._main.offer_crash_report(d)))
     w = Main()
     app._main = w
+    if FB.pending_crash():                       # el arranque anterior acabó con un error: se ofrece una vez
+        QTimer.singleShot(4000, lambda: w.offer_crash_report(FB.pending_crash(), previous=True))
     _dark_titlebar(w)
     if "--minimized" in sys.argv and QSystemTrayIcon.isSystemTrayAvailable():   # arranque con el sistema: queda en la bandeja
         w.tray.showMessage(APP_NAME, tr("%s está listo en la bandeja del sistema.") % APP_NAME, QSystemTrayIcon.Information, 3000)

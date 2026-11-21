@@ -374,14 +374,14 @@ Settings › About › Updates. Conversations, settings and models are kept when
   drive).
 - **Privacy:** everything stays on the computer; Jayth doesn't send conversations or files to any server. It only
   uses the internet to download models and engines, check for updates, and for the web tools the user allows (or when
-  using an API model, which receives that conversation's messages).
+  using an API model, which receives that conversation's messages). Feedback and reports only leave the computer when the user presses **Send**.
 - **Uninstall:** Windows, Settings › Apps › Jayth › Uninstall; macOS, drag Jayth to the Trash; Linux, delete the
   AppImage. Data and models aren't deleted when uninstalling.
 
 ## Feedback and help
 
 Profile menu › **Send feedback…** or **Report a bug…** (also in Settings › About): the user reviews the text before
-sending it. Below each response, **Report a problem with this response**. The project is at
+sending it. Below each response, **Report a problem with this response**. With **Send**, the feedback goes straight to the Jayth team, privately (it isn't published and no account is needed); **Post on GitHub** opens a public GitHub issue instead. If Jayth has an unexpected error, it saves it on the computer (without personal paths) and offers **Send report…**; it never sends it on its own. The project is at
 https://github.com/Json-Tuiran/jayth.ai (downloads in Releases).
 
 ## Common problems

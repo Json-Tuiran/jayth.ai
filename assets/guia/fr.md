@@ -419,14 +419,14 @@ lors de la mise à jour.
   une clé USB).
 - **Confidentialité :** tout reste sur l'ordinateur ; Jayth n'envoie ni conversations ni fichiers à aucun serveur. Il
   n'utilise internet que pour télécharger des modèles et des moteurs, rechercher des mises à jour et pour les outils web
-  que l'utilisateur autorise (ou lorsqu'on utilise un modèle par API, qui reçoit les messages de cette conversation).
+  que l'utilisateur autorise (ou lorsqu'on utilise un modèle par API, qui reçoit les messages de cette conversation). Les commentaires et rapports ne quittent l'ordinateur que lorsque l'utilisateur appuie sur **Envoyer**.
 - **Désinstaller :** Windows, Paramètres › Applications › Jayth › Désinstaller ; macOS, faire glisser Jayth dans la
   Corbeille ; Linux, supprimer l'AppImage. Les données et les modèles ne sont pas supprimés lors de la désinstallation.
 
 ## Commentaires et aide
 
 Menu du profil › **Envoyer des commentaires…** ou **Signaler un bug…** (aussi dans Paramètres › À propos) :
-l'utilisateur relit le texte avant de l'envoyer. Sous chaque réponse, **Signaler un problème avec cette réponse**. Le
+l'utilisateur relit le texte avant de l'envoyer. Sous chaque réponse, **Signaler un problème avec cette réponse**. Avec **Envoyer**, le commentaire arrive directement et en privé à l'équipe de Jayth (il n'est pas publié et aucun compte n'est nécessaire) ; **Publier sur GitHub** ouvre plutôt un ticket public sur GitHub. Si Jayth a une erreur inattendue, il l'enregistre sur l'ordinateur (sans chemins personnels) et propose **Envoyer le rapport…** ; il ne l'envoie jamais tout seul. Le
 projet se trouve sur https://github.com/Json-Tuiran/jayth.ai (téléchargements dans Releases).
 
 ## Problèmes fréquents

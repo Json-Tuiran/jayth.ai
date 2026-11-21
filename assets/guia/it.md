@@ -388,14 +388,14 @@ l'aggiornamento.
   chiavetta USB).
 - **Privacy:** tutto resta sul computer; Jayth non invia conversazioni né file a nessun server. Usa internet solo per
   scaricare modelli e motori, cercare aggiornamenti e per gli strumenti web che l'utente consente (o quando si usa un
-  modello via API, che riceve i messaggi di quella conversazione).
+  modello via API, che riceve i messaggi di quella conversazione). Feedback e rapporti lasciano il computer solo quando l'utente preme **Invia**.
 - **Disinstallare:** Windows, Impostazioni › App › Jayth › Disinstalla; macOS, trascina Jayth nel Cestino; Linux,
   elimina l'AppImage. I dati e i modelli non vengono eliminati con la disinstallazione.
 
 ## Feedback e aiuto
 
 Menu del profilo › **Invia feedback…** o **Segnala un errore…** (anche in Impostazioni › Informazioni): l'utente
-rivede il testo prima di inviarlo. Sotto ogni risposta, **Segnala un problema con questa risposta**. Il progetto è su
+rivede il testo prima di inviarlo. Sotto ogni risposta, **Segnala un problema con questa risposta**. Con **Invia**, il feedback arriva direttamente e in privato al team di Jayth (non viene pubblicato e non serve un account); **Pubblica su GitHub** apre invece una segnalazione pubblica su GitHub. Se Jayth ha un errore imprevisto, lo salva sul computer (senza percorsi personali) e propone **Invia rapporto…**; non lo invia mai da solo. Il progetto è su
 https://github.com/Json-Tuiran/jayth.ai (download in Releases).
 
 ## Problemi frequenti

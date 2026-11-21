@@ -380,14 +380,14 @@ Configurações › Sobre › Novidades. Conversas, configurações e modelos s�
   pendrive USB).
 - **Privacidade:** tudo fica no computador; o Jayth não envia conversas nem arquivos a nenhum servidor. Ele só usa a
   internet para baixar modelos e motores, verificar atualizações e as ferramentas web que o usuário permitir (ou ao
-  usar um modelo por API, que recebe as mensagens dessa conversa).
+  usar um modelo por API, que recebe as mensagens dessa conversa). Comentários e relatórios só saem do computador quando o usuário clica em **Enviar**.
 - **Desinstalar:** Windows, Configurações › Aplicativos › Jayth › Desinstalar; macOS, arrastar o Jayth para a
   Lixeira; Linux, apagar o AppImage. Os dados e modelos não são apagados ao desinstalar.
 
 ## Feedback e ajuda
 
 Menu do perfil › **Enviar feedback…** ou **Relatar um erro…** (também em Configurações › Sobre): o usuário
-revisa o texto antes de enviá-lo. Abaixo de cada resposta, **Relatar um problema com esta resposta**. O
+revisa o texto antes de enviá-lo. Abaixo de cada resposta, **Relatar um problema com esta resposta**. Com **Enviar**, o comentário chega diretamente e de forma privada à equipe do Jayth (não é publicado e não precisa de conta); **Publicar no GitHub** abre, em vez disso, uma issue pública no GitHub. Se o Jayth tiver um erro inesperado, ele o guarda no computador (sem caminhos pessoais) e oferece **Enviar relatório…**; nunca o envia sozinho. O
 projeto está em https://github.com/Json-Tuiran/jayth.ai (downloads em Releases).
 
 ## Problemas frequentes

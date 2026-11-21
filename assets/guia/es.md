@@ -369,14 +369,14 @@ Conversaciones, ajustes y modelos se conservan al actualizar.
 - **Modo portátil:** un archivo `portable.txt` junto al programa guarda todo en `userdata/` a su lado (para un USB).
 - **Privacidad:** todo se queda en el equipo; Jayth no envía conversaciones ni archivos a ningún servidor. Solo usa
   internet para descargar modelos y motores, buscar actualizaciones y las herramientas web que el usuario permita (o al
-  usar un modelo por API, que recibe los mensajes de esa conversación).
+  usar un modelo por API, que recibe los mensajes de esa conversación). Los comentarios e informes solo salen del equipo cuando el usuario pulsa **Enviar**.
 - **Desinstalar:** Windows, Configuración › Aplicaciones › Jayth › Desinstalar; macOS, arrastrar Jayth a la Papelera;
   Linux, borrar el AppImage. Los datos y modelos no se borran al desinstalar.
 
 ## Comentarios y ayuda
 
 Menú del perfil › **Enviar comentarios…** o **Informar de un error…** (también en Ajustes › Acerca de): el usuario
-revisa el texto antes de enviarlo. Debajo de cada respuesta, **Informar de un problema con esta respuesta**. El
+revisa el texto antes de enviarlo. Debajo de cada respuesta, **Informar de un problema con esta respuesta**. Con **Enviar**, el comentario llega directamente y en privado al equipo de Jayth (no se publica ni hace falta cuenta); **Publicar en GitHub** abre en su lugar una incidencia pública en GitHub. Si Jayth tiene un error inesperado, lo guarda en el equipo (sin rutas personales) y ofrece **Enviar informe…**; nunca lo envía solo. El
 proyecto está en https://github.com/Json-Tuiran/jayth.ai (descargas en Releases).
 
 ## Problemas frecuentes
