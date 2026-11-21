@@ -28,6 +28,7 @@ Cómo trabajas:
 4. Cambia con precisión: edit_file o multi_edit para modificar (copia el fragmento exacto de read_file); write_file solo para archivos nuevos o reescrituras completas.
 5. Verifica: ejecuta las pruebas, el script o el comando que corresponda y lee los errores. Si algo falla, analiza la causa antes de reintentar; no repitas una acción que ya falló.
 6. Termina con un resumen breve: qué hiciste, dónde quedó y cómo comprobarlo.
+Para hacer algo, llama a la herramienta: escribir la llamada o el comando en tu respuesta no hace nada, y nunca digas que algo está hecho si no lo hiciste con una herramienta.
 
 Mantén al usuario al tanto mientras trabajas, como un compañero que narra lo que hace:
 - Antes de cada acción (o grupo de acciones seguidas) escribe una frase corta en el idioma del usuario: qué vas a hacer y para qué. Ej.: «Creo calculadora.py con la ventana y los botones.», «Lo ejecuto para comprobar que abre sin errores.»
@@ -133,6 +134,170 @@ def on_demand(cfg):
     return (cfg or {}).get("tools_mode", "auto") != "all"
 
 
+# El modelo anuncia una acción («Voy a ejecutarlo:» + el comando) y termina sin llamar a la herramienta: pasa con modelos
+# pequeños. Se le recuerda una vez por mensaje (y el usuario lo ve en el chat).
+_ANNOUNCE = re.compile(r"(voy a |vamos a |procedo a |a continuaci[oó]n |ahora (lo |la )?(ejecut|corr|lanz|prueb|abr)|i'?ll |i will |"
+                       r"let me |let's |now i |next,? i |vou |agora vou |je vais |ich werde |lass mich |jetzt |ora |adesso |vado a |"
+                       r"次に|実行します|試します|接下来|我将|我会|现在运行|现在执行)", re.I)
+_CMD_BLOCK = re.compile(r"```[ \t]*(?:bash|sh|shell|zsh|powershell|pwsh|ps1|cmd|bat|console|terminal)?[ \t]*\n[ \t]*[$>]?[ \t]*"
+                        r"(?:python3?|py|pip3?|npm|npx|node|git|dir|ls|cd|mkdir|copy|move|del|rm|cat|type|echo|start|\.\\|\./)\b", re.I)
+NUDGE = ("[Aviso automático de Jayth, no lo escribió el usuario] Anunciaste una acción pero no usaste ninguna herramienta, así que "
+         "no se hizo. Si hace falta, hazla ahora llamando a la herramienta adecuada; si ya está hecha, da el resultado al usuario y "
+         "termina, en el idioma del usuario. No respondas a este aviso ni lo menciones.")
+
+
+# o solo lo anuncia en la última frase («Primero revisaré la carpeta.», «I'll run it now.») con un verbo de acción
+_V_ES = r"(?:revis|ejecut|cre|comprob|verific|busc|abr|le|escrib|list|descarg|instal|edit|mir|consult|prob|analiz|lanz|guard|mov|borr|elimin)"
+_INTENT = re.compile(
+    r"\b" + _V_ES + r"(?:aré|eré|iré)\b|\b(?:voy|vamos) a " + _V_ES + r"\w*|"
+    r"\b(?:i'?ll|i will|let me|let's)\s+(?:now\s+|first\s+)?(?:run|check|create|open|read|write|list|search|look|install|edit|execute|"
+    r"verify|test|make|save|delete|move)\b|"
+    r"\b(?:vou|vamos)\s+(?:verificar|executar|criar|abrir|ler|escrever|listar|procurar|buscar|instalar|editar|testar|rodar|salvar|"
+    r"apagar|mover)\b|\b(?:verificar|executar|criar|abrir|escrever|listar|procurar|instalar|editar|testar|rodar|salvar)ei\b|"
+    r"\bje vais\s+(?:vérifier|exécuter|créer|ouvrir|lire|écrire|lister|chercher|installer|modifier|tester|lancer|enregistrer|"
+    r"supprimer|déplacer)\b|"
+    r"\bich werde\b.*\b(?:prüfen|ausführen|erstellen|öffnen|lesen|schreiben|auflisten|suchen|installieren|bearbeiten|testen|starten|"
+    r"speichern|löschen|verschieben)\b|"
+    r"\b(?:controllerò|eseguirò|creerò|aprirò|leggerò|scriverò|cercherò|installerò|modificherò|verificherò|proverò|avvierò|salverò|"
+    r"eliminerò|sposterò)\b|\b(?:vado a|ora)\s+(?:controllare|eseguire|creare|aprire|leggere|scrivere|cercare|installare|modificare|"
+    r"verificare|provare)\b|"
+    r"(?:確認|実行|作成|検索|インストール|編集|保存|削除|移動)します[。．]?$|(?:開き|読み|書き|調べ|試し)ます[。．]?$|"
+    r"(?:我(?:将|会|先|来)|让我|首先|接下来).{0,12}(?:检查|运行|执行|创建|打开|读取|写入|搜索|查找|安装|编辑|测试|保存|删除|移动|查看)", re.I)
+_OFFER = re.compile(r"(si quieres|si deseas|si prefieres|cuando quieras|if you want|if you'd like|whenever you|se quiser|si vous le|"
+                    r"si tu veux|wenn du willst|wenn du möchtest|se vuoi|必要であれば|ご希望|如果你|需要的话)", re.I)
+
+
+NUDGE_WRITTEN = ("[Aviso automático de Jayth, no lo escribió el usuario] Escribiste la llamada a «%s» como texto, así que no se "
+                 "ejecutó y lo que digas de su resultado no es cierto. Si hace falta, llámala de verdad como herramienta; si no, "
+                 "corrige lo que le dijiste al usuario y termina, en el idioma del usuario. No respondas a este aviso ni lo menciones.")
+
+
+def written_tool_call(text, names):
+    """La herramienta que el modelo escribió como texto en vez de llamarla («delete_path(path=…)», {"name": "delete_path"…}):
+    no se ejecutó, aunque el modelo pueda decir que sí."""
+    t = str(text or "")
+    code = "\n".join(re.findall(r"```[^\n]*\n(.*?)```", t, re.S))      # bloques de código
+    for n in sorted(set(names), key=len, reverse=True):
+        if len(n) <= 3:
+            continue
+        e = re.escape(n)
+        if re.search(r"(?<![\w.])" + e + r"\s*\(", t) or re.search(r'"name"\s*:\s*"' + e + '"', t) or \
+                re.search(r"(?m)^[ \t]*[$>]?[ \t]*" + e + (r"(?:[ \t]|$)" if "_" in n else r"(?:[ \t]+-|[ \t]*$|[ \t]+\w+=)"), code):
+            return n
+    return None
+
+
+_ARG = re.compile(r"""--([\w-]+)\s+("[^"]*"|'[^']*'|\S+)|(\w+)=("[^"]*"|'[^']*'|\S+)|("[^"]*"|'[^']*'|\S+)""")
+
+
+def _unq(v):
+    return v[1:-1] if len(v) > 1 and v[0] == v[-1] and v[0] in "\"'" else v
+
+
+def parse_written_call(text, schemas):
+    """Convierte la llamada que el modelo escribió como texto en una real, si se entienden sus datos:
+    «delete_path(path='x')», «delete_path "x"», «run_command --command dir», «run_command command="python a.py"».
+    Devuelve (nombre, argumentos) o None. Solo si están todos los obligatorios y cada dato tiene el tipo que pide."""
+    import ast
+    by = {s["function"]["name"]: s["function"] for s in schemas or []}
+    code = re.findall(r"```[^\n]*\n(.*?)```", str(text or ""), re.S)
+    lines = [l.strip().lstrip("$>").strip() for b in code for l in b.splitlines()] + [l.strip() for l in str(text or "").splitlines()]
+    for line in lines:
+        name = re.match(r"([A-Za-z_]\w+)", line)
+        if not name or name.group(1) not in by:
+            continue
+        fn = by[name.group(1)]
+        spec = (fn.get("parameters") or {}).get("properties") or {}
+        props = list(spec.keys())
+        req = list((fn.get("parameters") or {}).get("required") or props[:1])
+        args, pos = {}, []
+        rest = line[len(name.group(1)):].strip()
+        try:
+            if rest.startswith("("):                          # estilo Python
+                node = ast.parse(name.group(1) + rest, mode="eval").body
+                if not isinstance(node, ast.Call):
+                    continue
+                pos = [ast.literal_eval(x) for x in node.args]
+                args = {k.arg: ast.literal_eval(k.value) for k in node.keywords if k.arg}
+            else:                                             # estilo consola
+                for m in _ARG.finditer(rest):
+                    if m.group(1):
+                        args[m.group(1).replace("-", "_")] = _unq(m.group(2))
+                    elif m.group(3):
+                        args[m.group(3)] = _unq(m.group(4))
+                    else:
+                        pos.append(_unq(m.group(5)))
+        except (ValueError, SyntaxError):
+            continue
+        for k, v in zip([p for p in props if p not in args], pos):
+            args[k] = v
+        if not all(k in args for k in req) or not all(k in props for k in args):
+            continue
+        ok = True
+        for k, v in list(args.items()):                       # cada dato con el tipo que pide la herramienta
+            t = (spec.get(k) or {}).get("type")
+            if t in ("integer", "number"):
+                try:
+                    args[k] = int(v) if t == "integer" else float(v)
+                except (TypeError, ValueError):
+                    ok = False
+            elif t == "boolean" and not isinstance(v, bool):
+                if str(v).lower() in ("true", "false"):
+                    args[k] = str(v).lower() == "true"
+                else:
+                    ok = False
+            elif t == "string" and not isinstance(v, str):
+                ok = False
+        if ok:
+            return name.group(1), args
+    return None
+
+
+def announced_action(text):
+    """¿Termina anunciando una acción que no hizo? Con el comando escrito, o en la última frase con un verbo de acción
+    (no si pregunta o lo ofrece: «¿Lo ejecuto?», «Si quieres, lo ejecutaré»)."""
+    t = str(text or "").strip()
+    if not t or t.endswith(("?", "？")):
+        return False
+    tail = t[-600:]
+    if _ANNOUNCE.search(tail) and _CMD_BLOCK.search(tail):
+        return True
+    prose = re.sub(r"```.*?(```|$)", " ", tail, flags=re.S)     # la última frase fuera de los bloques de código
+    last = [x for x in re.split(r"(?<=[.!。！])\s+|\n+", prose.strip()) if x.strip()]
+    last = last[-1] if last else ""
+    return bool(_INTENT.search(last)) and not _OFFER.search(last)
+
+
+# Idioma del mensaje del usuario: los modelos pequeños tienden a contestar en el idioma de las instrucciones (español)
+_SCRIPTS = (("ja", r"[\u3040-\u30ff]"), ("ko", r"[\uac00-\ud7af]"), ("zh", r"[\u4e00-\u9fff]"), ("ru", r"[\u0400-\u04ff]"),
+            ("ar", r"[\u0600-\u06ff]"), ("he", r"[\u0590-\u05ff]"), ("el", r"[\u0370-\u03ff]"), ("th", r"[\u0e00-\u0e7f]"),
+            ("hi", r"[\u0900-\u097f]"))
+_WORDS = {"es": "el los las del que y en un una por para con no es se como más pero qué cómo dónde este esta mi mis puedes quiero",
+          "en": "the and of to in is that it for you with on this be are can what how please my your i do does",
+          "pt": "o os as do da que e em um uma para com não você é isso como mais meu minha pode quero está",
+          "fr": "le les des et est que pour pas vous qui dans sur avec ce cette je mon ma une peux veux comment",
+          "de": "der die das und ist nicht ich du ein eine zu den mit es auf für sie was wie bitte mein kannst",
+          "it": "il lo gli di che e un una per non è sono con del della come mi ti puoi voglio questo cosa"}
+_WORDS = {k: set(v.split()) for k, v in _WORDS.items()}
+LANG_ES = {"es": "español", "en": "inglés", "pt": "portugués", "fr": "francés", "de": "alemán", "it": "italiano", "ja": "japonés",
+           "zh": "chino", "ko": "coreano", "ru": "ruso (u otro idioma de alfabeto cirílico)", "ar": "árabe", "he": "hebreo",
+           "el": "griego", "th": "tailandés", "hi": "hindi"}
+
+
+def guess_language(text):
+    """Idioma del mensaje si se sabe con seguridad (por su escritura o por sus palabras más comunes), o None."""
+    t = str(text or "")
+    for code, pat in _SCRIPTS:
+        if len(re.findall(pat, t)) >= 2:
+            return code
+    words = re.findall(r"[a-záéíóúàèìòùâêîôûãõçñüöäß']+", t.lower())
+    if len(words) < 3:
+        return None
+    score = sorted(((sum(w in v for w in words), k) for k, v in _WORDS.items()), reverse=True)
+    (best, lang), (second, _) = score[0], score[1]
+    return lang if best >= 2 and best >= second + 2 else None
+
+
 def detect_groups(text, cfg=None, files=(), images=()):
     """Grupos que la tarea seguramente necesitará, por lo que pide el usuario (no hace falta acertar: el modelo puede
     pedir más con use_tools)."""
@@ -148,6 +313,10 @@ def detect_groups(text, cfg=None, files=(), images=()):
         if _fold(n) and _fold(n) in t:
             out.append("mcp:" + n)
     return [g for g in dict.fromkeys(out)]
+
+APPROVAL_MODE = """
+
+Algunas acciones necesitan la aprobación del usuario: llama a la herramienta igualmente; Jayth le muestra la acción con «Permitir» y «Denegar» y espera su respuesta. No pidas permiso en el chat ni escribas la llamada como texto. Si la deniega, no insistas con lo mismo: pregunta qué prefiere."""
 
 PLAN_MODE = """
 
@@ -245,6 +414,8 @@ def system_prompt(cfg):
              "zh": "chino mandarín (caracteres simplificados)"}.get(i18n.LANG, "inglés"))
     if not cfg.get("web_access", True):
         p += "\nNo tienes acceso a internet en esta sesión."
+    if cfg.get("mode") in ("ask", "edits"):
+        p += APPROVAL_MODE
     if cfg.get("mode") == "plan":
         p += PLAN_MODE
     elif cfg.get("mode") != "readonly":          # puede ejecutar: que compruebe lo visual mirándolo (si puede ver)
@@ -920,6 +1091,10 @@ class Run:
             guides = [group_guide(g) for g in new if group_guide(g)]
             if new:                                     # sus pautas van con el mensaje (no cambian las instrucciones fijas)
                 body += "\n\n[Herramientas activadas para esta tarea: %s]%s" % (", ".join(new), ("\n" + "\n".join(guides)) if guides else "")
+        if (self.cfg.get("response_language") or "auto") == "auto":
+            lang = guess_language(text)
+            if lang and lang != "es":                   # en español ya están las instrucciones
+                body += "\n\n[Responde en %s, el idioma de este mensaje.]" % LANG_ES[lang]
         content = body if not image_names else [{"type": "text", "text": body}] + [{"type": "image_ref", "name": n} for n in image_names]
         msgs.append({"role": "user", "content": content})
         self.emit({"t": "user", "text": text, "images": list(image_names), "files": [l[4:].strip() for l in attachments.splitlines() if l.startswith("### ")]})
@@ -928,6 +1103,7 @@ class Run:
         key = self.cfg.get("external_key") if external else ""
         e = self.cfg.get("effort") or ""
         effort = e if e in ("low", "medium", "high") else ("medium" if self.cfg.get("thinking") else "low")
+        nudged = False
         try:
             for step in range(int(self.cfg["max_steps"])):
                 if self.stop.is_set():
@@ -955,8 +1131,15 @@ class Run:
                     self._flush()
                     if self.stop.is_set():
                         break
-                    self.emit({"t": "error", "text": tr("No puedo conectar con el modelo en %s (%s). %s") % (
-                        base, e, tr("Comprueba que ese servidor esté encendido.") if external else tr("Enciéndelo con el botón «Encender modelo»."))})
+                    if isinstance(e, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)) or \
+                            getattr(e, "winerror", 0) in (10053, 10054):   # se cortó a mitad de la respuesta
+                        self.emit({"t": "error", "text": tr("Se cortó la conexión con el modelo mientras respondía (el servidor se cerró o se "
+                                                            "reinició). %s") % (
+                            tr("Comprueba que siga encendido y pulsa «Reintentar».") if external else
+                            tr("Si se apagó, enciéndelo con «Encender modelo» y pulsa «Reintentar»."))})
+                    else:
+                        self.emit({"t": "error", "text": tr("No puedo conectar con el modelo en %s (%s). %s") % (
+                            base, e, tr("Comprueba que ese servidor esté encendido.") if external else tr("Enciéndelo con el botón «Encender modelo»."))})
                     break
                 except LLMError as e:
                     self._flush()
@@ -993,6 +1176,21 @@ class Run:
                     am["tool_calls"] = calls
                 msgs.append(am)
                 self.emit({"t": "assistant_end", "text": text_out})
+                if not calls and nudged and self.cfg.get("mode") != "plan" and \
+                        written_tool_call(text_out, list(T.TOOLS) + [s["function"]["name"] for s in self.tools or []]):
+                    rec = parse_written_call(text_out, self.tools)
+                    if rec:
+                        calls = [{"id": "call_" + uuid.uuid4().hex[:12], "type": "function",
+                                  "function": {"name": rec[0], "arguments": json.dumps(rec[1], ensure_ascii=False)}}]
+                        am["tool_calls"] = calls                 # el mensaje ya está en el historial: que lleve la llamada
+                        self.emit({"t": "recovered", "name": rec[0]})
+                written = None if calls or nudged or self.cfg.get("mode") == "plan" else \
+                    written_tool_call(text_out, list(T.TOOLS) + [s["function"]["name"] for s in self.tools or []])
+                if written or (not calls and not nudged and self.cfg.get("mode") != "plan" and announced_action(text_out)):
+                    nudged = True                   # una sola vez por mensaje del usuario
+                    msgs.append({"role": "user", "content": (NUDGE_WRITTEN % written) if written else NUDGE})
+                    self.emit({"t": "nudge", "written": written or ""})
+                    continue
                 if not calls:
                     if not text_out.strip():
                         self.emit({"t": "info", "text": (tr("El modelo no escribió respuesta (se alcanzó el límite de tokens; sube «longitud máxima» o desactiva el pensamiento).")

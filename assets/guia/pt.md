@@ -251,7 +251,7 @@ exato):
   agente tem as básicas à mão e ativa os outros grupos —web, navegador, controle do PC, documentos, Python, imagens,
   agenda e cada conector— quando precisa; assim o modelo local tem mais memória e responde antes).
   - **Ferramentas disponíveis:** cada ferramenta do agente pode ser desligada separadamente.
-  - **Pesquisa na web:** “Buscador” (automático com DuckDuckGo e Wikipedia, Brave Search ou SearXNG), “Chave do Brave
+  - **Pesquisa na web:** “Buscador” (automático com DuckDuckGo e Bing, sem chave; Brave Search ou SearXNG), “Chave do Brave
     Search”, “URL do SearXNG”.
   - **Serviços com a sua conta:** cartões para conectar serviços online (**Conectar**, **Desconectar**, **Configurar
     Google…**).
@@ -319,8 +319,7 @@ do que estava na tela (Ctrl+S). Enter envia, Esc fecha.
 - Se uma tarefa precisar, o agente pode propor conectar um serviço: o cartão dele aparece no chat com **Conectar** e,
   ao terminar, **Continuar**. O que mudar algo na conta (enviar, publicar, gastar créditos) sempre pede aprovação,
   inclusive no modo Automático; ler, não.
-- **Pesquisa na web:** por padrão, DuckDuckGo; se ele pedir um captcha, o Jayth não o contorna e usa a Wikipedia.
-  Para pesquisas completas, é possível usar uma chave do Brave Search ou uma instância própria do SearXNG.
+- **Pesquisa na web:** funciona sem configurar nada: DuckDuckGo e, se ele pedir verificação (o Jayth não a contorna), o Bing pelo motor do navegador integrado, sem exibi-lo. A Wikipedia fica como último recurso. Uma chave do Brave Search ou uma instância própria do SearXNG são opcionais.
 
 ## Idioma da interface
 

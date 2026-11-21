@@ -323,9 +323,9 @@ def read_caps(m):
     instalado su proyector (mmproj). Tarda ~1-2 s por el vocabulario: el resultado se guarda en el modelo."""
     from . import gguf, provision as P
     path = m.get("path", "")
-    caps = {"sig": _file_sig(path), "vision": bool(m.get("mmproj") and os.path.isfile(m["mmproj"]))}
+    caps = {"sig": _file_sig(path), "v": CAPS_V, "vision": bool(m.get("mmproj") and os.path.isfile(m["mmproj"]))}
     try:
-        meta = gguf.read_meta(path, {"tokenizer.chat_template", "general.architecture"})
+        meta = gguf.read_meta(path)      # completo: los datos de capas compartidas o por ventana pueden ir tras la plantilla
         tpl = str(meta.get("tokenizer.chat_template") or "")
         caps.update(tools=bool(P._TOOLS_TPL.search(tpl)) if tpl else bool(P._TOOLS_NAME.search(m.get("repo") or path)),
                     think=bool(P._THINK_TPL.search(tpl)) if tpl else False, arch=str(meta.get("general.architecture") or ""),
@@ -337,9 +337,28 @@ def read_caps(m):
     return caps
 
 
+# capas con atención por ventana cuando el GGUF no trae el patrón: 1 de cada N tiene atención completa
+_SWA_EVERY = {"gemma2": 2, "gemma3": 6, "gpt-oss": 2, "cohere2": 4}
+
+
+def _swa_layers(meta, layers):
+    """[True si la capa usa atención por ventana] (esas capas guardan solo la ventana: no crecen con el contexto)."""
+    def g(suffix):
+        return next((v for k, v in meta.items() if k.endswith(suffix)), None)
+    win, pat = g(".attention.sliding_window"), g(".attention.sliding_window_pattern")
+    if not isinstance(win, int) or win <= 0:
+        return None
+    if isinstance(pat, list) and pat:
+        return [bool(x) for x in pat]
+    every = pat if isinstance(pat, int) and pat > 1 else _SWA_EVERY.get(str(meta.get("general.architecture") or ""))
+    return [(i + 1) % every != 0 for i in range(layers)] if every else None
+
+
 def _kv_elems(meta):
     """Valores de la caché de atención por cada token de contexto: capas × cabezas KV × (dim. de clave + de valor).
-    Con atención por ventana o capas sin atención el gasto real es menor: así se calcula por lo alto (sin sorpresas)."""
+    Solo cuentan las capas cuya caché crece con el contexto: las que reutilizan la caché de otras (Gemma 3n/4) no
+    guardan nada propio, y las de atención por ventana (Gemma, gpt-oss…) guardan solo su ventana. Medido con Gemma 4
+    E4B: 42 capas, pero solo 4 crecen con el contexto (~1 GB a 64k, no 11). Lo que no se sabe se calcula por lo alto."""
     def g(suffix):
         return next((v for k, v in meta.items() if k.endswith(suffix)), None)
     layers, heads, embd = g(".block_count"), g(".attention.head_count"), g(".embedding_length")
@@ -349,19 +368,28 @@ def _kv_elems(meta):
     extra = g(".nextn_predict_layers")              # capas de predicción múltiple (MTP): el motor no les reserva caché
     if isinstance(extra, int) and 0 < extra < layers:
         layers -= extra
+    shared = g(".attention.shared_kv_layers")       # las últimas capas reutilizan la caché de las anteriores
+    own = layers - shared if isinstance(shared, int) and 0 < shared < layers else layers
     if isinstance(heads, list):
         heads = max(heads) if heads else 0
     head_dim = (embd // heads) if isinstance(embd, int) and isinstance(heads, int) and heads else 128
     k, v = g(".attention.key_length") or head_dim, g(".attention.value_length") or head_dim
     if isinstance(kvh, list):                         # cabezas por capa (las capas sin atención llevan 0)
-        per_layer = sum(int(x) for x in kvh[:layers])
+        per_layer = [int(x) for x in kvh[:own]]
     else:
         # modelos híbridos (p. ej. Qwen3.5/Qwen3-Next): solo 1 de cada N capas tiene atención; las demás guardan un
         # estado fijo que no crece con el contexto
         every = g(".full_attention_interval")
-        attn_layers = -(-layers // every) if isinstance(every, int) and every > 1 else layers
-        per_layer = attn_layers * int(kvh or heads or 8)
-    return int(per_layer * (int(k) + int(v)))
+        if isinstance(every, int) and every > 1:
+            return int(-(-own // every) * int(kvh or heads or 8) * (int(k) + int(v)))
+        per_layer = [int(kvh or heads or 8)] * own
+    swa = _swa_layers(meta, layers)
+    if swa and not all(swa[:own]):                    # con al menos una capa completa, las de ventana no cuentan
+        per_layer = [h for i, h in enumerate(per_layer) if not (i < len(swa) and swa[i])]
+    return int(sum(per_layer) * (int(k) + int(v)))
+
+
+CAPS_V = 3                      # sube al cambiar cómo se calcula «kv»: las capacidades guardadas se vuelven a leer
 
 
 CTX_FLOOR = 16384               # lo que se usaba antes por defecto: el automático nunca baja de aquí (si el modelo llega)
@@ -444,7 +472,9 @@ def memory_plan(cfg, m=None):
         level = "busy"                              # cabe en el equipo, pero ahora otros programas ocupan la memoria
     spare = (room - reserve - need) / (1 << 20)
     return {"need": int(need), "room": int(room), "free": int(free), "level": level,
-            "cache_mib": int(min(8192, spare)) if spare >= 256 else 0}
+            # nunca 0: con modelos de atención por ventana (Gemma, gpt-oss) llama.cpp no reutiliza la caché entre pasos sin
+            # ella y relee toda la conversación cada vez. Es un tope, no una reserva: solo se usa si hace falta.
+            "cache_mib": int(min(8192, max(512, spare)))}
 
 
 def model_caps(m, compute=True):
@@ -452,7 +482,7 @@ def model_caps(m, compute=True):
     if not m:
         return None
     c = m.get("caps")
-    if c and c.get("sig") == _file_sig(m.get("path", "")) and ("kv" in c or not compute):
+    if c and c.get("sig") == _file_sig(m.get("path", "")) and c.get("v") == CAPS_V and ("kv" in c or not compute):
         c = dict(c)
         c["vision"] = bool(m.get("mmproj") and os.path.isfile(m["mmproj"]))     # el proyector se puede añadir o quitar luego
         return c

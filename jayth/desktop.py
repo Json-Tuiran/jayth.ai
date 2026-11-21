@@ -27,6 +27,11 @@ from . import chatview as CV
 from . import overlay as OV
 
 MODE_LABEL = {k: re.split("[:：]", v)[0] for k, v in A.MODES.items()}       # japonés y chino usan «：»
+HINT = {"readonly": tr("Se ejecuta en tu equipo. En Solo lectura no cambia nada"),
+        "plan": tr("Se ejecuta en tu equipo. Primero propone un plan; no cambia nada hasta que lo apruebes"),
+        "ask": tr("Se ejecuta en tu equipo. Revisa cada acción antes de permitirla"),
+        "edits": tr("Se ejecuta en tu equipo. Edita archivos sin preguntar; lo demás te lo pregunta"),
+        "auto": tr("Se ejecuta en tu equipo. En Automático actúa sin preguntar, salvo lo peligroso")}
 CODE_NAME = APP_NAME + " Code"
 SHOW_IN = tr("Mostrar en el Explorador") if osys.WIN else (tr("Mostrar en el Finder") if osys.MAC else tr("Abrir la carpeta"))
 
@@ -409,7 +414,7 @@ STEP = {  # herramienta: (infinitivo, pasado, objeto)
     "forget": (tr("olvidar"), tr("Olvidó"), lambda a: tr("«%s»") % _q(a.get("text"), 50)),
     "schedule_task": (tr("programar la tarea"), tr("Programó la tarea"), lambda a: tr("«%s»") % _q(a.get("name"), 50)),
     "list_tasks": (tr("ver las tareas programadas"), tr("Consultó las tareas programadas"), lambda a: ""),
-    "jayth_guide": (tr("consultar la guía de Jayth"), tr("Consultó la guía de Jayth"), lambda a: _q(a.get("topic"), 50) if a.get("topic") else ""),
+    "jayth_guide": (tr("consultar la guía de Jayth"), tr("Consultó la guía de Jayth"), lambda a: (tr("«%s»") % _q(a.get("topic"), 50)) if a.get("topic") else ""),
     "cancel_task": (tr("quitar la tarea"), tr("Quitó la tarea"), lambda a: tr("«%s»") % _q(a.get("task"), 50)),
     "use_skill": (tr("usar la habilidad"), tr("Usó la habilidad"), lambda a: tr("«%s»") % _q(a.get("name"), 50)),
     "ui_elements": (tr("leer la interfaz de"), tr("Leyó la interfaz de"), lambda a: tr("«%s»") % _q(a.get("window"), 40)),
@@ -467,12 +472,14 @@ def _lead(phase, inf, past, ger):
         return tr("Quiere %s") % inf
     if phase == "denied":
         return tr("No se permitió %s") % inf
+    if phase == "err":                          # falló: nunca en pasado, que diría que se hizo
+        return tr("No se pudo %s") % inf
     return ger if phase == "run" else past
 
 
 def describe_parts(name, args, phase):
     """(verbo, objeto): «Escribió» + «calculadora.py». El objeto se resalta en la interfaz.
-    phase: pending, denied, run o done."""
+    phase: pending, denied, run, done o err."""
     args = args or {}
     if name.startswith("mcp__"):           # herramienta de un conector MCP: «Usó servidor › herramienta»
         parts = name.split("__")
@@ -664,7 +671,7 @@ class StepRow(QWidget):
         live = phase == "run" and self.ev.get("ts", 0) > time.time() - 30
         self.st_icon.set_active(live)             # el arco gira mientras se ejecuta
         lead, obj = describe_parts(self.ev["name"], self.ev.get("args"),
-                                   {"pending": "pending", "run": "run", "denied": "denied"}.get(phase, "done"))
+                                   {"pending": "pending", "run": "run", "denied": "denied", "err": "err"}.get(phase, "done"))
         if phase == "blocked":
             obj = (tr("%s (bloqueado: solo lectura)") % obj).strip()
         text, at = join_step(lead, obj)
@@ -736,7 +743,7 @@ class StepRow(QWidget):
             self.live_w = None
         if self.ev["name"] == "generate_image":
             image = None                              # la imagen creada se muestra en grande en su tarjeta
-        self._set("ok" if ok else "err")
+        self._set("ok" if ok else ("denied" if self.phase == "denied" else "err"))    # denegada: sigue «No se permitió…»
         if ok and text and self.ev["name"] in ("browser_click", "click_element"):     # «Pulsó el elemento 7» -> «Pulsó «Iniciar sesión»»
             m = re.search(r"«([^»\n]{1,60})»", text.split("\n", 1)[0])
             if m:
@@ -1731,7 +1738,7 @@ class ChatPanel(QWidget):
         hl = QHBoxLayout(holder)
         hl.setSizeConstraint(QLayout.SetNoConstraint)
         m = 14 if compact else 24
-        hl.setContentsMargins(m, 12, m, 20)
+        hl.setContentsMargins(m, 12, m, 28 if compact else 40)      # aire entre el último mensaje y el cuadro de texto
         self.col = QWidget()
         if not compact:
             self.col.setMaximumWidth(780)
@@ -1893,8 +1900,9 @@ class ChatPanel(QWidget):
         row.addWidget(self.send_btn, 0, Qt.AlignBottom)
         bv.addLayout(row)
         iv.addWidget(self.box)
+        self.hint = None
         if not self.compact:
-            hint = QLabel(tr("Se ejecuta en tu equipo. Revisa cada acción antes de permitirla · ratón a la esquina superior izquierda = detener el control"))
+            self.hint = hint = QLabel()
             hint.setObjectName("faint")
             hint.setAlignment(Qt.AlignCenter)
             hint.setWordWrap(True)
@@ -2103,12 +2111,12 @@ class ChatPanel(QWidget):
         elif t == "stats":
             if self.cur is not None and ev.get("gen_n"):
                 tok = "%s tok" % ev["gen_n"]
-                tps = (" · %.1f tok/s" % ev["tps"]) if ev.get("tps") else ""
+                tps = (" · %s tok/s" % i18n.number(ev["tps"])) if ev.get("tps") else ""
                 cut = tr(" · cortado por límite") if ev.get("finish") == "length" else ""
                 ctx = ctx_s = ""
                 if ev.get("ctx_used") and ev.get("ctx_max"):
                     ctx = tr(" · contexto %sk de %dk") % (i18n.number(ev["ctx_used"] / 1000.0), ev["ctx_max"] // 1000)
-                    ctx_s = " · %.1fk/%dk" % (ev["ctx_used"] / 1000.0, ev["ctx_max"] // 1000)
+                    ctx_s = " · %sk/%dk" % (i18n.number(ev["ctx_used"] / 1000.0), ev["ctx_max"] // 1000)
                 self.cur.stats.set_options([tok + tps + cut + ctx, tok + tps + cut + ctx_s, (tps[3:] or tok) + cut + ctx_s,
                                             (cut[3:] or (ctx_s[3:] or tok))],
                                            tr("Memoria de la conversación usada por el modelo. Al acercarse al límite, Jayth resume lo antiguo."))
@@ -2155,6 +2163,18 @@ class ChatPanel(QWidget):
         elif t == "compacted":
             self.add(note(tr("Resumí la parte antigua de la conversación para que el modelo no la olvide ni se quede sin memoria.")))
             self._end_steps()
+        elif t == "recovered":                      # la volvió a escribir como texto: Jayth la convirtió en una acción real
+            self.add(note(tr("El modelo volvió a escribir la acción «%s» como texto; Jayth la convirtió en una acción real, con los "
+                             "permisos de siempre.") % T.TOOL_LABELS.get(ev["name"], ev["name"])))
+            self._end_steps()
+        elif t == "nudge":                          # el modelo anunció una acción y no la hizo: Jayth se lo recordó
+            if ev.get("written"):                   # la escribió como texto: lo que diga de su resultado no es verdad
+                self.add(note(tr("Atención: el modelo escribió la acción «%s» como texto en vez de hacerla, así que no se hizo "
+                                 "(aunque diga lo contrario). Jayth se lo indicó.") % T.TOOL_LABELS.get(ev["written"], ev["written"]), True))
+            else:
+                self.add(note(tr("El modelo anunció una acción sin hacerla; Jayth se lo recordó para que la haga o termine.")))
+            self._end_steps()
+            self.last_tool = "__nudge__"
         elif t == "plan_ready":
             if getattr(self, "_live", False):
                 self.add(self._plan_ready_card())
@@ -2869,6 +2889,8 @@ class ChatPanel(QWidget):
 
     def sync(self):
         cfg = core.SET.snapshot()
+        if self.hint is not None:                   # el pie dice lo que hace el modo elegido (no siempre pregunta)
+            self.hint.setText(HINT.get(cfg.get("mode"), HINT["ask"]) + " · " + tr("ratón a la esquina superior izquierda = detener el control"))
         llm = self.main.llm
         st = llm.get("state", "off")
         ext = cfg["llm_mode"] == "external"
@@ -3234,6 +3256,10 @@ class Main(QMainWindow):
         self.browser = None
         self.browser_bridge = BrowserBridge(self.browser_panel)
         T.BROWSER = self.browser_bridge
+        from .browser import HiddenSearch, _view_class
+        if _view_class():                       # búsquedas sin clave con el motor del navegador (si este equipo lo tiene)
+            self.searcher = HiddenSearch()
+            T.SEARCHER = self.searcher
         self._tray()
         self.chat.open_session(None)
         self.code.set_project(core.project(cfg, cfg["active_project"]))

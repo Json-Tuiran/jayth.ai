@@ -274,7 +274,7 @@ Du öffnest sie über das Profilmenü (**Einstellungen**). Änderungen werden au
   grundlegenden zur Hand und aktiviert die übrigen Gruppen – Web, Browser, PC-Steuerung, Dokumente, Python, Bilder,
   Kalender und jeden Connector –, wenn er sie braucht; so hat das lokale Modell mehr Gedächtnis und antwortet schneller).
   - **Verfügbare Werkzeuge:** Jedes Werkzeug des Agenten lässt sich einzeln abschalten.
-  - **Websuche:** „Suchmaschine“ (automatisch mit DuckDuckGo und Wikipedia, Brave Search oder SearXNG),
+  - **Websuche:** „Suchmaschine“ (automatisch mit DuckDuckGo und Bing, ohne Schlüssel; Brave Search oder SearXNG),
     „Brave-Search-Schlüssel“, „SearXNG-URL“.
   - **Dienste mit deinem Konto:** Karten, um Online-Dienste zu verbinden (**Verbinden**, **Trennen**, **Google
     einrichten…**).
@@ -345,8 +345,7 @@ sendet, Esc schließt.
 - Wenn eine Aufgabe es erfordert, kann der Agent vorschlagen, einen Dienst zu verbinden: Seine Karte erscheint im Chat
   mit **Verbinden** und danach **Weiter**. Alles, was etwas im Konto ändert (senden, veröffentlichen, Credits
   ausgeben), braucht immer eine Freigabe, auch im Modus Automatisch; Lesen nicht.
-- **Websuche:** standardmäßig DuckDuckGo; verlangt es ein Captcha, umgeht Jayth es nicht und nutzt Wikipedia. Für
-  vollständige Suchen kannst du einen Brave-Search-Schlüssel oder eine eigene SearXNG-Instanz eintragen.
+- **Websuche:** funktioniert ohne Einrichtung: DuckDuckGo und, falls es eine Überprüfung verlangt (Jayth umgeht sie nicht), Bing über die Engine des integrierten Browsers, ohne ihn anzuzeigen. Wikipedia ist der letzte Ausweg. Ein Brave-Search-Schlüssel oder eine eigene SearXNG-Instanz sind optional.
 
 ## Sprache der Oberfläche
 

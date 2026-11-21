@@ -247,7 +247,7 @@ names):
   and turns on the other groups —web, browser, computer control, documents, Python, images, schedule and each
   connector— when it needs them; this leaves a local model more memory and makes it answer sooner).
   - **Available tools:** each of the agent's tools can be turned off separately.
-  - **Web search:** “Search engine” (automatic with DuckDuckGo and Wikipedia, Brave Search or SearXNG), “Brave
+  - **Web search:** “Search engine” (automatic with DuckDuckGo and Bing, no key needed; Brave Search or SearXNG), “Brave
     Search key”, “SearXNG URL”.
   - **Services with your account:** cards to connect online services (**Connect**, **Disconnect**, **Set up
     Google…**).
@@ -313,8 +313,7 @@ window shortcut) or **Quick question** in the tray. **With screenshot** attaches
 - If a task needs it, the agent can suggest connecting a service: its card appears in the chat with **Connect** and,
   when done, **Continue**. Anything that changes something in the account (sending, publishing, spending credits)
   always asks for approval, even in Automatic mode; reading doesn't.
-- **Web search:** DuckDuckGo by default; if it asks for a captcha, Jayth doesn't bypass it and uses Wikipedia. For
-  full searches you can set a Brave Search key or your own SearXNG instance.
+- **Web search:** works without any setup: DuckDuckGo and, if it asks for verification (Jayth doesn't bypass it), Bing through the built-in browser's engine, without showing it. Wikipedia is the last resort. A Brave Search key or your own SearXNG instance are optional.
 
 ## Interface language
 

@@ -657,42 +657,130 @@ def _search_wikipedia(q, mx):
     return "\n".join(out[:mx])
 
 
-@tool("web_search", "net", "Busca en la web y devuelve títulos, enlaces y resúmenes (requiere internet).",
-      {"query": S("Texto de búsqueda"), "max_results": I("Resultados (por defecto 6)")}, ["query"])
-def web_search(a, ctx):
-    mx = int(a.get("max_results") or 6)
-    ex = ctx.extras or {}
-    prov = ex.get("search_provider", "auto")
-    if prov == "searxng" and ex.get("searxng_url"):
-        return _search_searxng(a["query"], mx, ex["searxng_url"]) or "Sin resultados."
-    key = ex.get("brave_key")
-    if key and prov in ("auto", "brave"):
-        return _search_brave(a["query"], mx, key) or "Sin resultados."
-    raw, _, _, _ = _http_get("https://html.duckduckgo.com/html/", data=urllib.parse.urlencode({"q": a["query"]}).encode())
+def _search_ddg(q, mx):
+    """DuckDuckGo (página HTML, por GET: por POST bloquea enseguida). None si pide un captcha (no se salta)."""
+    raw, _, _, _ = _http_get("https://html.duckduckgo.com/html/?" + urllib.parse.urlencode({"q": q}))
     page = raw.decode("utf-8", errors="replace")
-    if "anomaly" in page and "result__a" not in page:
-        # DuckDuckGo pide un captcha a clientes automaticos: no se salta. Alternativa legitima: API de Wikipedia.
-        wiki = _search_wikipedia(a["query"], mx)
-        note = ("[Aviso: sin una clave de búsqueda solo se puede buscar en Wikipedia (DuckDuckGo bloquea las búsquedas "
-                "automáticas). Si estos resultados no sirven, abre con web_fetch la página oficial que conozcas (documentación, "
-                "web del proyecto, GitHub…) y dile al usuario que con una clave gratuita de Brave Search en Ajustes > Herramientas "
-                "podrás buscar en toda la web.]\n")
-        return note + (wiki or "Sin resultados en Wikipedia.")
+    if 'class="result__a"' not in page:
+        return None if "anomaly" in page else ""
     out = []
     for blk in page.split('class="result__a"')[1:]:
         m = re.search(r'href="([^"]+)"[^>]*>(.*?)</a>', blk, re.S)
         if not m:
             continue
         link = html.unescape(m.group(1))
-        q = urllib.parse.urlparse(link)
-        if "uddg" in q.query:
-            link = urllib.parse.parse_qs(q.query)["uddg"][0]
+        qs = urllib.parse.urlparse(link)
+        if "uddg" in qs.query:
+            link = urllib.parse.parse_qs(qs.query)["uddg"][0]
+        if "duckduckgo.com/y.js" in link:              # anuncios
+            continue
         title = html_to_text(m.group(2))
         sn = re.search(r'class="result__snippet"[^>]*>(.*?)</a>', blk, re.S)
         out.append("%d. %s\n   %s\n   %s" % (len(out) + 1, title, link, html_to_text(sn.group(1)) if sn else ""))
         if len(out) >= mx:
             break
-    return "\n".join(out) or "Sin resultados."
+    return "\n".join(out)
+
+
+def _search_bing(q, mx):
+    """Bing en formato RSS (sin clave): títulos, enlaces y resúmenes. None si no responde como se espera."""
+    from . import i18n
+    raw, _, _, _ = _http_get("https://www.bing.com/search?" + urllib.parse.urlencode({"q": q, "format": "rss", "setlang": i18n.LANG}))
+    x = raw.decode("utf-8", errors="replace")
+    items = re.findall(r"<item>(.*?)</item>", x, re.S)
+    if not items:
+        return None if "<rss" not in x else ""
+    out = []
+    for it in items:
+        g = lambda tag: html.unescape(re.sub(r"<!\[CDATA\[|\]\]>", "", (re.search(r"<%s>(.*?)</%s>" % (tag, tag), it, re.S) or [None, ""])[1]))
+        link = g("link").strip()
+        if not link:
+            continue
+        out.append("%d. %s\n   %s\n   %s" % (len(out) + 1, html_to_text(g("title")), link, html_to_text(g("description"))))
+        if len(out) >= mx:
+            break
+    return "\n".join(out)
+
+
+_DDG_PAUSE = [0.0]          # si DuckDuckGo pide captcha, se deja descansar un rato (y se usa Bing)
+SEARCHER = None             # búsquedas con el motor del navegador integrado, sin mostrarlo (lo pone la ventana)
+
+
+def _bing_url(u):
+    """Los enlaces de Bing pasan por bing.com/ck/a?…&u=a1<base64>: el destino real."""
+    if "bing.com/ck/a" not in u:
+        return u
+    v = (urllib.parse.parse_qs(urllib.parse.urlparse(u).query).get("u") or [""])[0]
+    if v.startswith("a1"):
+        try:
+            return base64.urlsafe_b64decode(v[2:] + "=" * (-len(v[2:]) % 4)).decode("utf-8", "replace")
+        except Exception:
+            pass
+    return u
+
+
+def _search_browser(engine, q, mx, ctx):
+    """Con el navegador integrado (oculto): como un navegador normal, sin saltarse captchas. None si no se pudo."""
+    s = SEARCHER
+    if s is None:
+        return None
+    res = s.search(engine, q, getattr(ctx, "stop", None))
+    if res is None:
+        return None
+    out = []
+    for r in res:
+        link = str(r.get("u") or "")
+        if engine == "ddg" and "uddg=" in link:
+            link = urllib.parse.parse_qs(urllib.parse.urlparse(link).query).get("uddg", [link])[0]
+        link = _bing_url(link)
+        if not link.startswith("http") or "duckduckgo.com/y.js" in link:
+            continue
+        out.append("%d. %s\n   %s\n   %s" % (len(out) + 1, " ".join(str(r.get("t") or "").split()), link, " ".join(str(r.get("s") or "").split())))
+        if len(out) >= mx:
+            break
+    return "\n".join(out)
+
+
+@tool("web_search", "net", "Busca en la web y devuelve títulos, enlaces y resúmenes (requiere internet).",
+      {"query": S("Texto de búsqueda"), "max_results": I("Resultados (por defecto 6)")}, ["query"])
+def web_search(a, ctx):
+    mx = int(a.get("max_results") or 6)
+    q = str(a["query"])
+    ex = ctx.extras or {}
+    prov = ex.get("search_provider", "auto")
+    if prov == "searxng" and ex.get("searxng_url"):
+        return _search_searxng(q, mx, ex["searxng_url"]) or "Sin resultados."
+    key = ex.get("brave_key")
+    if key and prov in ("auto", "brave"):
+        return _search_brave(q, mx, key) or "Sin resultados."
+    # sin configurar nada: DuckDuckGo y, si bloquea o no responde, Bing; Wikipedia solo si ninguno contesta
+    errors = []
+    sources = (("DuckDuckGo", _search_ddg),
+               ("Bing (navegador)", lambda q_, mx_: _search_browser("bing", q_, mx_, ctx)),
+               ("DuckDuckGo (navegador)", lambda q_, mx_: _search_browser("ddg", q_, mx_, ctx)),
+               ("Bing", _search_bing))
+    empty = False
+    for name, fn in sources:
+        if fn is _search_ddg and time.time() < _DDG_PAUSE[0]:
+            continue
+        try:
+            res = fn(q, mx)
+        except ToolError as e:
+            errors.append("%s: %s" % (name, str(e)[:120]))
+            continue
+        if res is None:
+            if fn is _search_ddg:
+                _DDG_PAUSE[0] = time.time() + 600
+            errors.append("%s: pidió verificación o no respondió" % name)
+            continue
+        if res:
+            return res
+        empty = True                                  # sin resultados aquí: se prueba la siguiente fuente
+    if empty and not errors:
+        return "Sin resultados."
+    wiki = _search_wikipedia(q, mx)
+    return ("[Los buscadores no respondieron ahora mismo (%s); solo hay resultados de Wikipedia. Si no sirven, abre con "
+            "web_fetch una página que conozcas o vuelve a buscar en unos minutos.]\n" % "; ".join(errors)) + (wiki or "Sin resultados en Wikipedia.")
 
 
 @tool("download_file", "net", "Descarga un archivo de internet a disco.",

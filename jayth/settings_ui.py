@@ -822,7 +822,7 @@ class SettingsDialog(QDialog):
         v.addWidget(Columns(blocks))                         # dos columnas; una sola si los nombres no caben enteros
         self._section(v, tr("Búsqueda web"))
         self.field(v, "search_provider", tr("Buscador"), "choice",
-                   choices=[(tr("Automático (DuckDuckGo; si lo bloquea, Wikipedia)"), "auto"), (tr("Brave Search (necesita clave)"), "brave"), (tr("SearXNG (tu propio buscador)"), "searxng")])
+                   choices=[(tr("Automático (DuckDuckGo o Bing, sin clave)"), "auto"), (tr("Brave Search (necesita clave)"), "brave"), (tr("SearXNG (tu propio buscador)"), "searxng")])
         self.field(v, "brave_key", tr("Clave de Brave Search"), "secret", help=tr("Gratis en api.search.brave.com para uso personal."))
         self.field(v, "searxng_url", tr("URL de SearXNG"), "text", placeholder="http://127.0.0.1:8888")
         self._section(v, tr("Servicios con tu cuenta"))

@@ -279,7 +279,7 @@ options (avec leur nom exact) :
   documents, Python, images, agenda et chaque connecteur — quand il en a besoin ; ainsi, le modèle local a plus de
   mémoire et répond plus vite).
   - **Outils disponibles :** chaque outil de l'agent peut être désactivé séparément.
-  - **Recherche web :** « Moteur de recherche » (automatique avec DuckDuckGo et Wikipédia, Brave Search ou SearXNG),
+  - **Recherche web :** « Moteur de recherche » (automatique avec DuckDuckGo et Bing, sans clé ; Brave Search ou SearXNG),
     « Clé Brave Search », « URL de SearXNG ».
   - **Services avec votre compte :** des fiches pour connecter des services en ligne (**Connecter**, **Déconnecter**,
     **Configurer Google…**).
@@ -350,8 +350,7 @@ notification. **Avec capture** joint une image de ce qui était à l'écran (Ctr
 - Si une tâche le nécessite, l'agent peut proposer de connecter un service : sa fiche apparaît dans le chat avec
   **Connecter** et, une fois la connexion faite, **Continuer**. Tout ce qui modifie quelque chose dans le compte
   (envoyer, publier, dépenser des crédits) demande toujours une approbation, même en mode Automatique ; la lecture, non.
-- **Recherche web :** DuckDuckGo par défaut ; s'il demande un captcha, Jayth ne le contourne pas et utilise Wikipédia.
-  Pour des recherches complètes, on peut indiquer une clé Brave Search ou sa propre instance de SearXNG.
+- **Recherche web :** fonctionne sans rien configurer : DuckDuckGo et, s'il demande une vérification (Jayth ne la contourne pas), Bing via le moteur du navigateur intégré, sans l'afficher. Wikipédia reste le dernier recours. Une clé Brave Search ou votre propre instance de SearXNG sont facultatives.
 
 ## Langue de l'interface
 

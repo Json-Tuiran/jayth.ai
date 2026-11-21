@@ -78,6 +78,8 @@ def activity_kind(tool):
     """De qué tipo fue lo último que hizo el agente (para elegir qué decir mientras piensa el siguiente paso)."""
     if not tool:
         return "start"
+    if tool == "__nudge__":
+        return "nudge"
     return _KIND.get(tool, "other")
 
 
@@ -92,9 +94,10 @@ WAIT = {
     "web": (tr("Leyendo los resultados"),),
     "look": (tr("Leyendo el resultado"),),
     "other": (tr("Leyendo el resultado"),),
+    "nudge": (tr("Leyendo el recordatorio de Jayth"),),
 }
 WAIT_ICON = {"start": "mat_comentario", "write": "pan_editor_codigo", "run": "cod_terminal", "read": "acc_examinar",
-             "web": "herr_espacio_mundo", "look": "vista_captura", "other": "ia_controlador"}
+             "web": "herr_espacio_mundo", "look": "vista_captura", "other": "ia_controlador", "nudge": "est_info"}
 THINK = (tr("Pensando"),)
 
 

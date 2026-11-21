@@ -690,6 +690,87 @@ class BrowserPanel(QWidget):
 
 
 # ---------------------------------------------------------------- puente entre el hilo del agente y la interfaz
+# ---------------------------------------------------------------- búsquedas con el motor del navegador (sin mostrarlo)
+_SEARCH = {
+    "ddg": ("https://html.duckduckgo.com/html/?q={q}",
+            "document.querySelectorAll('.result').forEach(function(r){var a=r.querySelector('a.result__a');if(!a)return;"
+            "var s=r.querySelector('.result__snippet');o.push({t:a.innerText,u:a.href,s:s?s.innerText:''});});"),
+    "bing": ("https://www.bing.com/search?q={q}&setlang={lang}",
+             "document.querySelectorAll('li.b_algo').forEach(function(r){var a=r.querySelector('h2 a');if(!a)return;"
+             "var s=r.querySelector('.b_caption p, p.b_lineclamp2, p.b_lineclamp3, p.b_lineclamp4, .b_snippet');"
+             "o.push({t:a.innerText,u:a.href,s:s?s.innerText:''});});"),
+}
+
+
+class HiddenSearch(QObject):
+    """Busca en la web con el motor del navegador integrado (Chromium), en una página que no se muestra: la página de
+    resultados se abre como en cualquier navegador. Si el buscador pide verificación (captcha), no se toca: se devuelve
+    None y la búsqueda prueba otra fuente. Perfil propio y persistente (sus cookies), aparte del navegador visible."""
+    sig = Signal(object)
+
+    def __init__(self):
+        super().__init__()
+        self.page = self.profile = None
+        self.sig.connect(self._run, Qt.QueuedConnection)
+
+    def search(self, engine, query, stop=None, timeout=25):
+        """Desde cualquier hilo: [{'t', 'u', 's'}] con los resultados, o None si pidió verificación o no cargó."""
+        from . import i18n
+        url = _SEARCH[engine][0].format(q=urllib.parse.quote_plus(query), lang=i18n.LANG)
+        job = {"url": url, "js": _SEARCH[engine][1], "ev": threading.Event(), "res": None, "err": None}
+        self.sig.emit(job)
+        end = time.time() + timeout
+        while not job["ev"].wait(0.2):
+            if (stop is not None and stop.is_set()) or time.time() > end:
+                return None
+        if job["err"] or not isinstance(job["res"], dict):
+            return None
+        res = job["res"].get("res") or []
+        if not res:
+            low = (job["res"].get("title", "") + " " + job["res"].get("body", "")).lower()
+            return None if any(w in low for w in ("captcha", "anomaly", "unusual traffic", "verify", "robot", "challenge",
+                                                  "bots use", "are you human", "not a robot")) else []
+        return res
+
+    def _run(self, job):
+        try:
+            if self.page is None:
+                from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage
+                base = os.path.join(paths.DATA, "navegador", "busqueda")
+                self.profile = QWebEngineProfile("jayth-busqueda", self)
+                self.profile.setPersistentStoragePath(os.path.join(base, "datos"))
+                self.profile.setCachePath(os.path.join(base, "cache"))
+                self.profile.setPersistentCookiesPolicy(QWebEngineProfile.AllowPersistentCookies)
+                self.page = QWebEnginePage(self.profile, self)
+            page = self.page
+            code = ("(function(){var o=[];" + job["js"] + "return JSON.stringify({title:document.title,res:o,"
+                    "body:document.body?document.body.innerText.slice(0,400):''});})()")
+
+            def got(r, again=True):
+                try:
+                    job["res"] = json.loads(r) if r else None
+                except ValueError:
+                    job["res"] = None
+                if again and not (job["res"] or {}).get("res"):          # aún pintando (p. ej. la tarjeta del tiempo): otra vez
+                    from PySide6.QtWebEngineCore import QWebEngineScript
+                    return QTimer.singleShot(1500, lambda: page.runJavaScript(code, QWebEngineScript.ApplicationWorld,
+                                                                             lambda r2: got(r2, False)))
+                job["ev"].set()
+
+            def finished(ok):
+                try:
+                    page.loadFinished.disconnect(finished)
+                except (RuntimeError, TypeError):
+                    pass
+                from PySide6.QtWebEngineCore import QWebEngineScript
+                QTimer.singleShot(600, lambda: page.runJavaScript(code, QWebEngineScript.ApplicationWorld, got))
+            page.loadFinished.connect(finished)
+            page.load(QUrl(job["url"]))
+        except Exception as e:
+            job["err"] = "%s: %s" % (type(e).__name__, e)
+            job["ev"].set()
+
+
 class BrowserBridge(QObject):
     sig = Signal(object)
 
