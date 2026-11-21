@@ -12,6 +12,7 @@
 import os, re, sys, json, glob, time, shutil, platform, subprocess, threading
 from . import paths, osys
 from .provision import download, extract_archive, get_json, Cancelled, pretty_name
+from . import i18n
 from .i18n import tr
 
 TOOLS = os.path.join(paths.RUNTIME_DIR, "convert")
@@ -364,7 +365,7 @@ def convert_model(src_dir, out_dir, quant, llama_exe, vision=True, threads=0, pr
     need, _ = plan_space(info, quant)
     free = shutil.disk_usage(out_dir).free
     if free < need:
-        raise RuntimeError(tr("Hace falta ~%.0f GB libres en %s para convertir (hay %.0f GB).") % (need / 1024 ** 3, out_dir, free / 1024 ** 3))
+        raise RuntimeError(tr("Hace falta ~%s libres en %s para convertir (hay %s).") % (i18n.size(need), out_dir, i18n.size(free)))
     pr = progress or (lambda *a: None)
     if not os.path.isfile(final):
         convert_to_gguf(src_dir, inter, "bf16", False, pr, stop)

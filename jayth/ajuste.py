@@ -9,6 +9,7 @@
 Se elige lo que menos tarda en una tarea típica de agente: leer ~2000 tokens y escribir ~200."""
 import os, re, json, time, socket, subprocess, threading, urllib.request
 from . import osys, core, hardware as HW
+from . import i18n
 from .i18n import tr
 
 READ_TOK, WRITE_TOK = 2000, 200
@@ -236,10 +237,10 @@ def summary(rep):
     """Una línea para Ajustes: «4 hilos · flash attention sí · lee 31 tok/s · escribe 2,1 tok/s (2,9 con MTP)»."""
     if not rep:
         return ""
-    s = tr("%d hilos · flash attention %s · lee %.0f tok/s · escribe %.1f tok/s") % (
-        rep["threads"], tr("sí") if rep["fa"] == "on" else tr("no"), rep["pp"], rep["tg"])
+    s = tr("%d hilos · flash attention %s · lee %s tok/s · escribe %s tok/s") % (
+        rep["threads"], tr("sí") if rep["fa"] == "on" else tr("no"), i18n.number(rep["pp"], 0), i18n.number(rep["tg"]))
     if rep.get("spec"):
-        s += tr(" (%.1f con %s)") % (rep.get("tg_spec") or 0, {"draft-mtp": "MTP", "ngram-mod": tr("n-gramas")}.get(rep["spec"], rep["spec"]))
+        s += tr(" (%s con %s)") % (i18n.number(rep.get("tg_spec") or 0), {"draft-mtp": "MTP", "ngram-mod": tr("n-gramas")}.get(rep["spec"], rep["spec"]))
     return s
 
 

@@ -143,3 +143,21 @@ mayúsculas: en alemán los sustantivos van con mayúscula, como siempre en alem
 | Enviar comentarios | Envoyer des commentaires | Feedback senden | Invia feedback |
 | conocimiento (carpetas) | connaissances | Wissen | conoscenza |
 | servicios con tu cuenta | services avec votre compte | Dienste mit deinem Konto | servizi con il tuo account |
+
+### Lo que hace el agente (lista de pasos)
+
+Cada paso se muestra como acción + objeto resaltado («Leyó» + «main.py»). La acción sale de cuatro formas: pendiente
+(«Quiere %s» + infinitivo), no permitida («No se permitió %s» + infinitivo), en curso y hecha. El objeto se une con
+`tr("%s %s")`, así que cada idioma elige el orden:
+
+| | Pendiente | En curso | Hecha | Unión con el objeto |
+|---|---|---|---|---|
+| Français | Veut lire | Lit | A lu | `%s %s` → « A lu main.py » |
+| Deutsch | Möchte lesen | Wird gelesen | Gelesen | `%s: %s` → „Gelesen: main.py“ (verbo al final, como Windows) |
+| Italiano | Vuole leggere | Legge | Ha letto | `%s %s` → «Ha letto main.py» |
+
+Mientras el modelo piensa (sin herramienta): francés con sustantivo («Réflexion», «Analyse du contenu»), alemán e
+italiano en primera persona («Denke nach», «Sto pensando»). Los resúmenes («Editó 2 archivos y ejecutó un comando»)
+van en minúscula y en pasado: «a modifié 2 fichiers», «2 Dateien bearbeitet», «ha modificato 2 file».
+
+En francés, las sugerencias que el usuario le dice al agente también van con «vous» («Créez un script…»).

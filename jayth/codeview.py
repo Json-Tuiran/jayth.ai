@@ -488,10 +488,8 @@ def autosave_mode():
 
 
 def _human(n):
-    for u in ("B", "KB", "MB", "GB"):
-        if n < 1024 or u == "GB":
-            return ("%d %s" if u == "B" else "%.1f %s") % (n, u)
-        n /= 1024
+    from .i18n import size
+    return size(n)
 
 
 class EditorTabs(QTabWidget):

@@ -124,9 +124,9 @@ def extras():
     from . import agent as A, tools as T
     out = []
     try:
-        from .settings_ui import SHORTCUTS
+        from .settings_ui import SHORTCUTS, keys_text
         out.append("## " + tr("Atajos de teclado"))
-        out += ["- %s: %s" % (k, d) for k, d in SHORTCUTS]
+        out += ["- %s: %s" % (keys_text(k), d) for k, d in SHORTCUTS]
     except Exception:
         pass
     out.append("## " + tr("Modos de permiso"))

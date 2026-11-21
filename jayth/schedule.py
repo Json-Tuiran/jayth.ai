@@ -71,7 +71,9 @@ def describe(t):
         ds = [DAYS[int(x)] for x in (t.get("days") or [])] or ["?"]
         return tr("Cada %s a las %s") % (", ".join(ds[:-1]) + (tr(" y ") if len(ds) > 1 else "") + ds[-1], hm)
     n = max(5, int(t.get("every_min") or 60))
-    return tr("Cada %s") % (tr("%d minutos") % n if n < 60 or n % 60 else (tr("hora") if n == 60 else tr("%d horas") % (n // 60)))
+    if n == 60:
+        return tr("Cada hora")
+    return tr("Cada %s") % (tr("%d minutos") % n if n < 60 or n % 60 else tr("%d horas") % (n // 60))
 
 
 def when_text(ts):

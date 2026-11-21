@@ -4,7 +4,7 @@
 
   python tools_i18n/revisar_guia.py          sale con error si falta algo
 
-- Las tres guías (es, en, pt) existen y tienen los mismos temas («## »), en el mismo orden de cantidad.
+- Hay una guía por cada idioma de Jayth (i18n.LANGS) y todas tienen los mismos temas («## »), en el mismo orden de cantidad.
 - Cada guía nombra, tal como se ven en su idioma (catálogos de assets/i18n), las páginas, secciones y opciones de
   Ajustes y las entradas del menú del perfil. Así, si se añade o se cambia un ajuste, la publicación avisa de que hay
   que documentarlo (la guía va dentro de cada versión: el agente siempre consulta la de la versión instalada).
@@ -16,6 +16,8 @@ RAIZ = Path(__file__).resolve().parent.parent
 GUIA = RAIZ / "assets" / "guia"
 CAT = RAIZ / "assets" / "i18n"
 APP = "Jayth"
+sys.path.insert(0, str(RAIZ))
+from jayth import i18n  # noqa: E402  (la lista de idiomas)
 
 
 def _tr(n):
@@ -55,7 +57,7 @@ def _norm(s):
 def main():
     problemas = 0
     temas = {}
-    for lang in ("es", "en", "pt"):
+    for lang in i18n.LANGS:
         p = GUIA / (lang + ".md")
         if not p.is_file():
             print("FALTA la guía %s" % p)

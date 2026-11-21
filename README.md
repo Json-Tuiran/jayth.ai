@@ -49,7 +49,8 @@ Cada enlace baja directamente la última versión para ese sistema. Todas las ve
 - **Sin nube:** después de descargar el modelo funciona sin internet. Las herramientas web solo se usan si hay conexión.
 - **Contexto automático:** usa toda la memoria de conversación que admite el modelo de fábrica, ajustada a la memoria de
   tu equipo (también en modelos híbridos), sin que tengas que calcular nada.
-- **En tu idioma:** interfaz en español, inglés y portugués (Brasil); el agente responde en el idioma en que le escribas.
+- **En tu idioma:** interfaz en español, inglés, portugués (Brasil), francés, alemán e italiano; el agente responde en el
+  idioma en que le escribas.
 - **Conoce la propia app:** pregúntale dónde está un ajuste o cómo se hace algo en Jayth; consulta su guía integrada y
   los datos de tu instalación en lugar de inventar.
 - **Control total:** modos de permiso, botones Permitir/Denegar por acción, botón Detener y failsafe del ratón. Tus

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QGrid
 from . import core, paths, osys, hardware as HW, provision as P, agent as A, convert as CV
 from .theme import C, restyle, icon
 from .widgets import fit_to_screen, scrollable
+from . import i18n
 from .i18n import tr
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QColor
@@ -506,9 +507,9 @@ class SetupWizard(QDialog):
             name = e["name"] + (("   ★ " + tr("recomendado")) if e is rec else "")
             it = QTableWidgetItem(name)
             it.setData(Qt.UserRole, e["repo"])
-            tip = ["%s · %s" % (e["repo"], _lab_txt(e["lab"])), tr("%.1f mil millones de parámetros") % (e["params"] / 1e9)]
+            tip = ["%s · %s" % (e["repo"], _lab_txt(e["lab"])), tr("%s mil millones de parámetros") % i18n.number(e["params"] / 1e9)]
             if e["active"] < e["params"] * 0.6:
-                tip.append(tr("MoE: usa ~%.1f mil millones por palabra (por eso va más rápido de lo que su tamaño sugiere)") % (e["active"] / 1e9))
+                tip.append(tr("MoE: usa ~%s mil millones por palabra (por eso va más rápido de lo que su tamaño sugiere)") % i18n.number(e["active"] / 1e9))
             if e.get("ctx"):
                 tip.append(tr("Contexto máximo: %s tokens") % format(int(e["ctx"]), ",").replace(",", "."))
             if e.get("tools"):
@@ -602,9 +603,9 @@ class SetupWizard(QDialog):
             r["quants"], _ = self._targets(ci["params"])
             r["mmproj"] = []
             self.info = r
-            self.repo_desc.setText(tr("Formato original de Hugging Face (%s, %d archivos) · %s · ~%.1f mil millones de parámetros%s. "
+            self.repo_desc.setText(tr("Formato original de Hugging Face (%s, %d archivos) · %s · ~%s mil millones de parámetros%s. "
                                       "Jayth lo descarga y lo convierte a GGUF en tu equipo con las herramientas oficiales de llama.cpp.") % (
-                                       HW.human(orig["size"]), len(orig["files"]), ci["arch"], ci["params"] / 1e9,
+                                       HW.human(orig["size"]), len(orig["files"]), ci["arch"], i18n.number(ci["params"] / 1e9),
                                        (" · " + tr("con visión")) if ci["vision"] else ""))
             self.chk_mm.setEnabled(ci["vision"])
             self.chk_mm.setChecked(ci["vision"])
@@ -622,9 +623,9 @@ class SetupWizard(QDialog):
             run_bg(lambda repo=r["repo"]: P.base_model(repo), lambda b, repo=r["repo"]: self._got_base(repo, b))
         desc = ""
         if cat:
-            desc = tr("%s · %s · %.1f mil millones de parámetros%s.") % (
-                cat["name"], _lab_txt(cat["lab"]), cat["params"] / 1e9,
-                (" " + tr("(MoE, ~%.1f activos)") % (cat["active"] / 1e9)) if cat["active"] < cat["params"] * 0.6 else "") + " "
+            desc = tr("%s · %s · %s mil millones de parámetros%s.") % (
+                cat["name"], _lab_txt(cat["lab"]), i18n.number(cat["params"] / 1e9),
+                (" " + tr("(MoE, ~%s activos)") % i18n.number(cat["active"] / 1e9)) if cat["active"] < cat["params"] * 0.6 else "") + " "
             if cat is getattr(self, "rec_model", None):
                 desc += tr("Recomendado para tu equipo: el más capaz que cabe y va fluido.") + " "
         self.repo_desc.setText(desc + tr("%d variantes disponibles.") % len(r["quants"]))
@@ -718,8 +719,8 @@ class SetupWizard(QDialog):
         if fmt == "other" or self.local.get("why_not"):
             return self.f_info.setText("✗ " + self.local.get("why_not", tr("Formato no compatible.")))
         info = self.local
-        self.f_info.setText(tr("Formato original de Hugging Face (%s, %s) · %s · ~%.1f mil millones de parámetros%s.") % (
-            info["weights"], HW.human(info["size"]), info["arch"], info["params"] / 1e9, (" · " + tr("con visión")) if info["vision"] else ""))
+        self.f_info.setText(tr("Formato original de Hugging Face (%s, %s) · %s · ~%s mil millones de parámetros%s.") % (
+            info["weights"], HW.human(info["size"]), info["arch"], i18n.number(info["params"] / 1e9), (" · " + tr("con visión")) if info["vision"] else ""))
         self._fill_targets(self.f_quant, info["params"])
         self._local_space()
 

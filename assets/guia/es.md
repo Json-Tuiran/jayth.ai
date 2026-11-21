@@ -316,7 +316,8 @@ había en la pantalla (Ctrl+S). Enter envía, Esc cierra.
 
 ## Idioma de la interfaz
 
-Jayth está en español, inglés y portugués (Brasil). La primera vez usa el idioma del sistema; se cambia en **Ajustes ›
+Jayth está en español, inglés, portugués (Brasil), francés, alemán e italiano. La primera vez usa el idioma del
+sistema (si no es ninguno de estos, inglés); se cambia en **Ajustes ›
 General › Idioma de la interfaz** y Jayth ofrece reiniciarse para aplicarlo. El idioma en que responde el agente es
 aparte: por defecto, el del mensaje del usuario (Ajustes › Personalización › Idioma de las respuestas).
 

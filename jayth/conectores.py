@@ -31,7 +31,7 @@ CATALOG = [
      "desc": tr("Consulta tu agenda y crea o cambia eventos.")},
     {"id": "linear", "name": "Linear", "url": "https://mcp.linear.app/mcp", "color": "#5E6AD2",
      "desc": tr("Consulta y gestiona incidencias y proyectos de Linear.")},
-    {"id": "atlassian", "name": "Jira y Confluence", "url": "https://mcp.atlassian.com/v1/mcp", "color": "#2684FF",
+    {"id": "atlassian", "name": "Jira · Confluence", "url": "https://mcp.atlassian.com/v1/mcp", "color": "#2684FF",
      "desc": tr("Incidencias de Jira y páginas de Confluence de tu cuenta de Atlassian.")},
     {"id": "huggingface", "name": "Hugging Face", "url": "https://huggingface.co/mcp", "color": "#FFD21E", "login": False,
      "desc": tr("Busca modelos, conjuntos de datos, artículos y demos de Hugging Face (sin cuenta).")},

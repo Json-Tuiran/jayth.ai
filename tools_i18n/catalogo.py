@@ -6,6 +6,9 @@
   python tools_i18n/catalogo.py pendientes en               textos marcados que aún no tienen traducción en en.json
   python tools_i18n/catalogo.py combinar                    une tools_i18n/partes/*.<idioma>.json en assets/i18n/<idioma>.json
   python tools_i18n/catalogo.py revisar                     comprueba los catálogos: faltan, sobran, %s y etiquetas HTML
+  python tools_i18n/catalogo.py limpiar                     quita de catálogos y partes los textos que el código ya no usa
+  python tools_i18n/catalogo.py citas [idioma …]            frases que citan un botón u opción («…»): la cita debe ser
+                                                            igual que la traducción de ese botón
   python tools_i18n/catalogo.py plantilla NOMBRE jayth/a.py …   crea o completa partes/NOMBRE.en.json y .pt.json con las claves
                                                                 de esos módulos (lo ya traducido se conserva; lo nuevo, "")
   python tools_i18n/catalogo.py parte NOMBRE jayth/a.py …       comprueba esa parte: claves que faltan o vacías, sobrantes,
@@ -24,7 +27,7 @@ RAIZ = Path(__file__).resolve().parent.parent
 MODS = RAIZ / "jayth"
 CAT = RAIZ / "assets" / "i18n"
 PARTES = Path(__file__).resolve().parent / "partes"
-IDIOMAS = ("en", "pt")
+IDIOMAS = ("en", "pt", "fr", "de", "it")
 FMT = re.compile(r"%(?:\([^)]+\))?[-#0 +]*\d*(?:\.\d+)?[sdifrxX%]")
 TAG = re.compile(r"</?[a-zA-Z][^>]*>")
 
@@ -115,6 +118,24 @@ def main():
                     print("[%s] %s: %r" % (lang, pr, k[:100]))
         print("%s: %d claves, %d problemas" % (nombre, len(ks), mal))
         sys.exit(1 if mal else 0)
+    elif modo == "limpiar":
+        todas = claves()
+        for lang in IDIOMAS:
+            cat = leer(CAT / (lang + ".json"))
+            sobra = [k for k in cat if k not in todas]
+            for k in sobra:
+                del cat[k]
+            guardar(CAT / (lang + ".json"), cat)
+            n = 0
+            for p in sorted(PARTES.glob("*.%s.json" % lang)):
+                d = leer(p)
+                quitar = [k for k in d if k not in todas]
+                if quitar:
+                    for k in quitar:
+                        del d[k]
+                    guardar(p, d)
+                    n += len(quitar)
+            print("%s: %d quitados del catálogo, %d de las partes" % (lang, len(sobra), n))
     elif modo == "revisar":
         todas = claves()
         mal = 0
@@ -130,6 +151,22 @@ def main():
                 for p in problemas(k, v):
                     mal += 1
                     print("   %s → %s: %r" % (p, lang, k[:90]))
+        sys.exit(1 if mal else 0)
+    elif modo == "citas":
+        def norm(t):
+            return re.sub(r"[\s  «»“”„\"'‘’‚‹›]+", " ", t.replace("…", "")).strip().lower()
+        mal = 0
+        for lang in sys.argv[2:] or IDIOMAS:
+            cat = leer(CAT / (lang + ".json"))
+            n = 0
+            for k, v in sorted(cat.items()):
+                for q in re.findall(r"«([^«»]{2,80})»", k):
+                    t = cat.get(q) or cat.get(q + "…") or cat.get(q.rstrip("…"))
+                    if t and "%" not in q and norm(t) not in norm(v):
+                        n += 1
+                        print("[%s] %r cita «%s»; debería decir «%s»: %r" % (lang, k[:60], q, t, v[:90]))
+            print("%s: %d citas distintas de la traducción del botón u opción" % (lang, n))
+            mal += n
         sys.exit(1 if mal else 0)
 
 

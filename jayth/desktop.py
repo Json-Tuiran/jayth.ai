@@ -435,9 +435,12 @@ BROWSER_NAV = {"back": (tr("volver atrás"), tr("Volvió atrás"), tr("Volviendo
                "up": (tr("subir por la página"), tr("Subió por la página"), tr("Subiendo por la página…")),
                "top": (tr("ir al principio de la página"), tr("Fue al principio de la página"), tr("Yendo al principio…")),
                "bottom": (tr("ir al final de la página"), tr("Fue al final de la página"), tr("Yendo al final…"))}
-WINDOW_ACT = {"maximize": (tr("maximizar"), tr("Maximizó"), tr("Maximizando")), "minimize": (tr("minimizar"), tr("Minimizó"), tr("Minimizando")),
-              "restore": (tr("restaurar"), tr("Restauró"), tr("Restaurando")), "close": (tr("cerrar"), tr("Cerró"), tr("Cerrando")), "move": (tr("mover"), tr("Movió"), tr("Moviendo")),
-              "resize": (tr("cambiar el tamaño de"), tr("Cambió el tamaño de"), tr("Cambiando el tamaño de"))}
+WINDOW_ACT = {"maximize": (tr("maximizar la ventana"), tr("Maximizó la ventana"), tr("Maximizando la ventana")),
+              "minimize": (tr("minimizar la ventana"), tr("Minimizó la ventana"), tr("Minimizando la ventana")),
+              "restore": (tr("restaurar la ventana"), tr("Restauró la ventana"), tr("Restaurando la ventana")),
+              "close": (tr("cerrar la ventana"), tr("Cerró la ventana"), tr("Cerrando la ventana")),
+              "move": (tr("mover la ventana"), tr("Movió la ventana"), tr("Moviendo la ventana")),
+              "resize": (tr("cambiar el tamaño de la ventana"), tr("Cambió el tamaño de la ventana"), tr("Cambiando el tamaño de la ventana"))}
 
 
 # mientras se ejecuta: «Escribiendo calculadora.py…», «Ejecutando python app.py…»
@@ -458,50 +461,63 @@ GERUND = {
 }
 
 
+def _lead(phase, inf, past, ger):
+    """La acción según la fase: pendiente («Quiere leer»), denegada, en curso («Leyendo») o hecha («Leyó»)."""
+    if phase == "pending":
+        return tr("Quiere %s") % inf
+    if phase == "denied":
+        return tr("No se permitió %s") % inf
+    return ger if phase == "run" else past
+
+
 def describe_parts(name, args, phase):
-    """(verbo, objeto): «Escribió» + «calculadora.py». El objeto se resalta en la interfaz."""
+    """(verbo, objeto): «Escribió» + «calculadora.py». El objeto se resalta en la interfaz.
+    phase: pending, denied, run o done."""
     args = args or {}
     if name.startswith("mcp__"):           # herramienta de un conector MCP: «Usó servidor › herramienta»
         parts = name.split("__")
         srv, tool = (parts[1].replace("_", " "), parts[2].replace("_", " ")) if len(parts) > 2 else (name, "")
-        lead = {"pending": tr("Quiere usar"), "run": tr("Usando")}.get(phase, tr("Usó"))
-        return lead, "%s › %s%s" % (srv, tool, "…" if phase == "run" else "")
+        return _lead(phase, tr("usar"), tr("Usó"), tr("Usando")), "%s › %s%s" % (srv, tool, "…" if phase == "run" else "")
     if name == "browser_nav":
         inf, past, ger = BROWSER_NAV.get(str(args.get("action", "")).lower(), (tr("navegar"), tr("Navegó"), tr("Navegando…")))
-        return {"pending": tr("Quiere %s") % inf, "run": ger}.get(phase, past), ""
+        return _lead(phase, inf, past, ger), ""
     if name == "window_action":
-        inf, past, ger = WINDOW_ACT.get(str(args.get("action", "")).lower(), (tr("manejar"), tr("Manejó"), tr("Manejando")))
-        lead = {"pending": tr("Quiere %s") % inf, "run": ger}.get(phase, past)
-        return tr("%s la ventana") % lead, tr("«%s»%s") % (_q(args.get("window"), 40), "…" if phase == "run" else "")
+        inf, past, ger = WINDOW_ACT.get(str(args.get("action", "")).lower(),
+                                        (tr("manejar la ventana"), tr("Manejó la ventana"), tr("Manejando la ventana")))
+        return _lead(phase, inf, past, ger), tr("«%s»%s") % (_q(args.get("window"), 40), "…" if phase == "run" else "")
     if name == "clipboard":
         w = str(args.get("action", "")).lower() in ("write", "set", "copy")
-        inf, past, ger = (tr("copiar al portapapeles"), tr("Copió al portapapeles"), tr("Copiando al portapapeles")) if w else \
-                         (tr("leer el portapapeles"), tr("Leyó el portapapeles"), tr("Leyendo el portapapeles"))
-        lead = {"pending": tr("Quiere %s") % inf, "run": ger + ("" if w else "…")}.get(phase, past)
-        return lead, (tr("«%s»") % _q(args.get("text"), 40)) if w else ""
+        inf, past, ger = (tr("copiar al portapapeles"), tr("Copió al portapapeles"), tr("Copiando al portapapeles")) if w else                          (tr("leer el portapapeles"), tr("Leyó el portapapeles"), tr("Leyendo el portapapeles") + "…")
+        return _lead(phase, inf, past, ger), (tr("«%s»") % _q(args.get("text"), 40)) if w else ""
     if name == "screenshot" and args.get("zoom"):
-        return {"pending": tr("Quiere ampliar una zona de la pantalla"), "run": tr("Ampliando una zona de la pantalla…")}.get(phase, tr("Amplió una zona de la pantalla")), ""
+        return _lead(phase, tr("ampliar una zona de la pantalla"), tr("Amplió una zona de la pantalla"),
+                     tr("Ampliando una zona de la pantalla…")), ""
     if name == "screenshot" and args.get("window"):            # captura de una sola ventana
-        lead = {"pending": tr("Quiere capturar la ventana"), "run": tr("Capturando la ventana")}.get(phase, tr("Capturó la ventana"))
-        return lead, tr("«%s»%s") % (_q(args["window"], 40), "…" if phase == "run" else "")
-    if name == "run_command" and args.get("background") and phase != "pending":
+        return _lead(phase, tr("capturar la ventana"), tr("Capturó la ventana"), tr("Capturando la ventana")),             tr("«%s»%s") % (_q(args["window"], 40), "…" if phase == "run" else "")
+    if name == "run_command" and args.get("background") and phase in ("run", "done"):
         return (tr("Iniciando en segundo plano") if phase == "run" else tr("Inició en segundo plano")), _q(args.get("command", "")) + ("…" if phase == "run" else "")
     inf, past, obj = STEP.get(name, (name, name, lambda a: ""))
     try:
         o = obj(args)
     except Exception:
         o = ""
-    if phase == "pending":
-        return tr("Quiere %s") % inf, o
     if phase == "run":
         lead = GERUND.get(name, inf[:1].upper() + inf[1:])
         return (lead, o + "…") if o else (lead + "…", "")
-    return past, o
+    return _lead(phase, inf, past, ""), o
+
+
+def join_step(lead, obj):
+    """Une la acción y su objeto como lo escribe cada idioma («Leyó main.py»; en alemán «Gelesen: main.py»).
+    Devuelve el texto y dónde empieza el objeto (para resaltarlo), o -1 si no hay objeto."""
+    if not obj:
+        return lead.strip(), -1
+    fmt = tr("%s %s")
+    return fmt % (lead, obj), len(fmt % (lead, ""))
 
 
 def describe(name, args, phase):
-    lead, o = describe_parts(name, args, phase)
-    return ("%s %s" % (lead, o)).strip()
+    return join_step(*describe_parts(name, args, phase))[0]
 
 
 def diff_badge(name, a):
@@ -636,13 +652,12 @@ class StepRow(QWidget):
         self.st_icon.set_icon(ico, col)
         live = phase == "run" and self.ev.get("ts", 0) > time.time() - 30
         self.st_icon.set_active(live)             # el arco gira mientras se ejecuta
-        lead, obj = describe_parts(self.ev["name"], self.ev.get("args"), {"pending": "pending", "run": "run"}.get(phase, "done"))
-        if phase == "denied":
-            lead = describe_parts(self.ev["name"], self.ev.get("args"), "pending")[0].replace(tr("Quiere"), tr("No se permitió"), 1)
+        lead, obj = describe_parts(self.ev["name"], self.ev.get("args"),
+                                   {"pending": "pending", "run": "run", "denied": "denied"}.get(phase, "done"))
         if phase == "blocked":
             obj = (tr("%s (bloqueado: solo lectura)") % obj).strip()
-        text = ("%s %s" % (lead, obj)).strip()
-        self.title.setText(text, len(lead) + 1 if obj else -1)
+        text, at = join_step(lead, obj)
+        self.title.setText(text, at)
         self.title.set_active(live)
         self.title.set_color(C["bad"] if phase == "err" else C["mut"], C["tx"])
         self.head.setToolTip(text)
@@ -714,8 +729,8 @@ class StepRow(QWidget):
         if ok and text and self.ev["name"] in ("browser_click", "click_element"):     # «Pulsó el elemento 7» -> «Pulsó «Iniciar sesión»»
             m = re.search(r"«([^»\n]{1,60})»", text.split("\n", 1)[0])
             if m:
-                t = tr("Pulsó «%s»") % m.group(1)
-                self.title.setText(t, len(tr("Pulsó")) + 1)
+                t, at = join_step(tr("Pulsó"), tr("«%s»") % m.group(1))
+                self.title.setText(t, at)
                 self.head.setToolTip(t)
         if text:
             self.dl.addWidget(mono(text, max_h=300))
@@ -2042,7 +2057,7 @@ class ChatPanel(QWidget):
                 cut = tr(" · cortado por límite") if ev.get("finish") == "length" else ""
                 ctx = ctx_s = ""
                 if ev.get("ctx_used") and ev.get("ctx_max"):
-                    ctx = tr(" · contexto %.1fk de %dk") % (ev["ctx_used"] / 1000.0, ev["ctx_max"] // 1000)
+                    ctx = tr(" · contexto %sk de %dk") % (i18n.number(ev["ctx_used"] / 1000.0), ev["ctx_max"] // 1000)
                     ctx_s = " · %.1fk/%dk" % (ev["ctx_used"] / 1000.0, ev["ctx_max"] // 1000)
                 self.cur.stats.set_options([tok + tps + cut + ctx, tok + tps + cut + ctx_s, (tps[3:] or tok) + cut + ctx_s,
                                             (cut[3:] or (ctx_s[3:] or tok))],
@@ -4637,7 +4652,7 @@ class Main(QMainWindow):
             return
         if plan["level"] != "busy":
             core.SET.update({"memory_warned": (cfg.get("memory_warned") or [])[-20:] + [key]})
-        gb = lambda n: "%.1f GB" % (n / (1 << 30))
+        gb = lambda n: "%s %s" % (i18n.number(n / (1 << 30)), i18n.unit("GB"))
         if plan["level"] == "busy":
             return self.toast(tr("«%s» necesita unos %s y ahora mismo hay %s libres: cierra programas pesados (navegador con muchas "
                                  "pestañas, juegos…) para que no lea del disco y vaya lento.") % (

@@ -635,3 +635,42 @@ class ElideCombo(QComboBox):
         widest = max((fm.horizontalAdvance(self.itemText(i)) for i in range(self.count())), default=0)
         self.view().setMinimumWidth(min(620, max(self.width(), widest + 48)))
         super().showPopup()
+
+
+class Columns(QWidget):
+    """Bloques en dos columnas que pasan a una sola cuando no caben (idiomas con textos largos o letra grande)."""
+
+    def __init__(self, blocks, cols=2, hspace=24, vspace=14):
+        super().__init__()
+        from PySide6.QtWidgets import QGridLayout
+        self.blocks, self.cols, self.n = list(blocks), cols, 0
+        self.g = QGridLayout(self)
+        self.g.setContentsMargins(0, 0, 0, 0)
+        self.g.setHorizontalSpacing(hspace)
+        self.g.setVerticalSpacing(vspace)
+        self._place(cols)
+
+    def _need(self):
+        return max((b.sizeHint().width() for b in self.blocks), default=0)
+
+    def _place(self, n):
+        if n == self.n:
+            return
+        for b in self.blocks:
+            self.g.removeWidget(b)
+        for i, b in enumerate(self.blocks):
+            self.g.addWidget(b, i // n, i % n)
+        for c in range(self.cols):
+            self.g.setColumnStretch(c, 1 if c < n else 0)
+        self.n = n
+
+    def minimumSizeHint(self):
+        return QSize(self._need(), super().minimumSizeHint().height())
+
+    def resizeEvent(self, e):
+        need = self._need()
+        n = max(1, min(self.cols, (e.size().width() + self.g.horizontalSpacing()) // max(1, need + self.g.horizontalSpacing())))
+        if n != self.n:
+            self._place(n)
+            self.updateGeometry()
+        super().resizeEvent(e)

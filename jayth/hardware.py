@@ -310,11 +310,8 @@ def recommend_model(rated, min_speed=3.0):
 
 
 def human(n):
-    n = float(n)
-    for u in ("B", "KB", "MB", "GB", "TB"):
-        if n < 1024 or u == "TB":
-            return ("%.0f %s" if u in ("B", "KB") else "%.1f %s") % (n, u)
-        n /= 1024
+    from .i18n import size
+    return size(n)
 
 
 def summary(hw):

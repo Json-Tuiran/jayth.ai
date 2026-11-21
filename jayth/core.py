@@ -4,6 +4,7 @@
 import os, re, json, time, uuid, threading, subprocess, http.client
 from . import paths, osys
 from . import agent as A
+from . import i18n
 from .i18n import tr
 
 paths.ensure()
@@ -959,7 +960,7 @@ class LLM:
             return tr("No encuentro llama-server (%s). Abre el asistente de configuración.") % (cfg["llama_exe"] or tr("sin configurar"))
         have = os.path.getsize(m["path"])
         if m.get("size") and have < int(m["size"]) and not re.search(r"-\d{5}-of-\d{5}\.gguf$", m["path"]):
-            return tr("El archivo del modelo aún está incompleto (%.1f de %.1f GB). Espera a que termine la descarga.") % (have / 1024 ** 3, int(m["size"]) / 1024 ** 3)
+            return tr("El archivo del modelo aún está incompleto (%s de %s). Espera a que termine la descarga.") % (i18n.size(have), i18n.size(int(m["size"])))
         lf = open(self.log, "wb")
         bindir = os.path.dirname(cfg["llama_exe"])
         env = dict(os.environ)

@@ -13,8 +13,9 @@ Created by **Ing. Jeison Tuiran** · Free software under the [GPL-3.0](LICENSE) 
 
 [Español](README.md) · **English**
 
-> **Languages:** Jayth's interface is available in **English, Spanish and Portuguese (Brazil)**. It follows your system
-> language and can be changed in *Settings → General → Interface language*.
+> **Languages:** Jayth's interface is available in **English, Spanish, Portuguese (Brazil), French, German and Italian**.
+> It follows your system language (English if yours isn't one of these) and can be changed in
+> *Settings → General → Interface language*.
 
 <p align="center"><img src="docs/img/demo_en.gif" width="860"
   alt="Jayth builds a Python calculator: it thinks, says what it is doing, writes the file, runs it, checks it with a screenshot and answers"></p>

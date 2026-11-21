@@ -1,6 +1,6 @@
 # Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
 # SPDX-License-Identifier: GPL-3.0-only
-"""Idioma de la interfaz: español (el original), inglés y portugués.
+"""Idioma de la interfaz: español (el original), inglés, portugués, francés, alemán e italiano.
 
 - Los textos se escriben en español en el código y se envuelven con tr(): tr("Guardar"), tr("Descargando %s") % nombre.
 - Las traducciones están en assets/i18n/<idioma>.json ({"texto en español": "traducción"}). Lo que falte se ve en español.
@@ -11,13 +11,13 @@
 import os, json, atexit
 from . import paths
 
-LANGS = ("es", "en", "pt")
-NAMES = {"es": "Español", "en": "English", "pt": "Português"}
+LANGS = ("es", "en", "pt", "fr", "de", "it")
+NAMES = {"es": "Español", "en": "English", "pt": "Português", "fr": "Français", "de": "Deutsch", "it": "Italiano"}
 DEFAULT = "en"          # sistemas en otros idiomas: la interfaz en inglés
 
 
 def system_lang():
-    """Primer idioma del sistema que Jayth conoce (es, en o pt); si no hay ninguno, inglés."""
+    """Primer idioma del sistema que Jayth conoce (uno de LANGS); si no hay ninguno, inglés."""
     tags = []
     try:
         from PySide6.QtCore import QLocale
@@ -90,3 +90,29 @@ def _save_missing():
 
 
 atexit.register(_save_missing)
+
+
+# ------------------------------------------------------------ números y tamaños
+UNITS = {"fr": {"B": "o", "KB": "Ko", "MB": "Mo", "GB": "Go", "TB": "To"}}     # octets en francés
+COMMA = ("pt", "fr", "de", "it")            # idiomas con coma decimal (el español de Jayth usa punto)
+
+
+def number(x, decimals=1):
+    """Número con el separador decimal del idioma: 6.5 / 6,5."""
+    s = "%.*f" % (decimals, x)
+    return s.replace(".", ",") if LANG in COMMA else s
+
+
+def unit(u):
+    """Unidad de tamaño en el idioma de la interfaz: «GB»; en francés «Go»."""
+    return UNITS.get(LANG, {}).get(u, u)
+
+
+def size(n):
+    """Tamaño legible: «6.5 GB»; en alemán «6,5 GB», en francés «6,5 Go» (con espacio que no se separa)."""
+    n = float(n)
+    for u in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or u == "TB":
+            break
+        n /= 1024
+    return number(n, 0 if u in ("B", "KB") else 1) + (" " if LANG == "fr" else " ") + unit(u)

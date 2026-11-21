@@ -318,7 +318,8 @@ window shortcut) or **Quick question** in the tray. **With screenshot** attaches
 
 ## Interface language
 
-Jayth is available in Spanish, English and Portuguese (Brazil). The first time, it uses the system language; change it
+Jayth is available in Spanish, English, Portuguese (Brazil), French, German and Italian. The first time, it uses
+the system language (English if it isn't one of these); change it
 in **Settings › General › Interface language** and Jayth offers to restart to apply it. The language the agent
 responds in is separate: by default, the language of the user's message (Settings › Personalization › Response
 language).

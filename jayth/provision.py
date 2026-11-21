@@ -640,11 +640,8 @@ def fmt_duration(s):
 
 
 def fmt_bytes(n):
-    n = float(n)
-    for u in ("B", "KB", "MB", "GB", "TB"):
-        if n < 1024 or u == "TB":
-            return ("%.0f %s" if u in ("B", "KB") else "%.1f %s") % (n, u)
-        n /= 1024
+    from .i18n import size
+    return size(n)
 
 
 DOWNLOAD_PHASES = ("descargando", "ya descargado")

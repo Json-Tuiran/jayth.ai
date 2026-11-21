@@ -3,6 +3,7 @@
 """Ventana de Ajustes con secciones (los cambios se guardan al instante)."""
 import os, re, sys, json, subprocess, threading, webbrowser, urllib.request, datetime
 from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QPushButton, QListWidget, QListWidgetItem,
                                QStackedWidget, QScrollArea, QCheckBox, QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit, QPlainTextEdit,
                                QFrame, QFileDialog, QMessageBox, QGridLayout, QApplication)
@@ -10,7 +11,7 @@ from . import APP_NAME, __version__, core, paths, osys, i18n, hardware as HW, ag
 from .i18n import tr
 from .theme import C, icon, pix
 from .wizard import SetupWizard, ModelsDialog, btn, lbl, browse_row, run_bg
-from .widgets import Switch, ElideCombo
+from .widgets import Switch, ElideCombo, Columns
 import shutil
 from html import escape as html_escape
 
@@ -51,6 +52,29 @@ SHORTCUTS = [("Ctrl+N", tr("Nueva conversación")), ("Ctrl+K", tr("Buscar en tus
              ("Ctrl+L", tr("Mostrar u ocultar el panel del agente (Code)")), ("Ctrl+Shift+M", tr("Modo enfoque: solo el editor (Code)")),
              (tr("Doble clic en un divisor"), tr("Plegar o recuperar el panel de al lado")), ("Esc", tr("Cerrar el buscador")),
              (tr("Ratón a la esquina superior izquierda"), tr("Detener al instante el control del ratón"))]
+
+
+# nombres de las teclas en los atajos, como los escribe cada idioma en Windows y Linux (en macOS los pone Qt: ⌘ ⇧ ⏎)
+KEY_NAMES = {"de": {"Ctrl": "Strg", "Shift": "Umschalt", "Enter": "Eingabe"},
+             "fr": {"Shift": "Maj", "Enter": "Entrée", "Esc": "Échap"},
+             "it": {"Shift": "Maiusc", "Enter": "Invio"}}
+
+
+def keys_text(k):
+    """«Ctrl+Shift+S» como se escribe en el idioma de la interfaz (Strg+Umschalt+S en alemán; ⌘⇧S en macOS).
+    Lo que no es un atajo («Doble clic en un divisor») se deja tal cual."""
+    out = []
+    for part in k.split(" / "):
+        if osys.MAC:
+            from PySide6.QtGui import QKeySequence
+            s = QKeySequence(part, QKeySequence.PortableText)
+            if not s.isEmpty() and s.toString(QKeySequence.PortableText) == part:
+                part = s.toString(QKeySequence.NativeText)
+        else:
+            names = KEY_NAMES.get(i18n.LANG, {})
+            part = "+".join(names.get(x, x) for x in part.split("+"))
+        out.append(part)
+    return " / ".join(out)
 
 
 # ---------------------------------------------------------------- acciones del sistema
@@ -263,6 +287,12 @@ class SettingsDialog(QDialog):
             it.setData(Qt.UserRole, key)
             self.nav.addItem(it)
             self.pages.addWidget(self._scroll(label, build, SUBTITLES.get(key, "")))
+        # la barra lateral se ensancha si en este idioma algún nombre no cabe (la página elegida va en negrita)
+        self.nav.ensurePolished()                     # con la fuente del tema ya aplicada
+        bold = QFont(self.nav.font())
+        bold.setWeight(QFont.DemiBold)
+        need = max(QFontMetrics(bold).horizontalAdvance(self.nav.item(i).text()) for i in range(self.nav.count()))
+        side.setFixedWidth(max(224, need + 17 + 8 + 20 + 12 + 24))      # icono, separación, relleno, holgura y márgenes
         self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
         keys = [self.nav.item(i).data(Qt.UserRole) for i in range(self.nav.count())]
         labels = [self.nav.item(i).text() for i in range(self.nav.count())]
@@ -768,15 +798,14 @@ class SettingsDialog(QDialog):
                            "de contexto en cada conversación."))
         self._section(v, tr("Herramientas disponibles"))
         off = set(core.SET.snapshot()["tools_disabled"])
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(24)
-        grid.setVerticalSpacing(14)
         cats = {}
         for name, t in T.TOOLS.items():
             cats.setdefault(t["category"], []).append(name)
-        col = 0
+        blocks = []
         for cat, names in cats.items():
-            box = QVBoxLayout()
+            bw = QWidget()
+            box = QVBoxLayout(bw)
+            box.setContentsMargins(0, 0, 0, 0)
             box.setSpacing(5)
             h = QLabel(T.CATEGORIES.get(cat, cat))
             h.setStyleSheet("font-weight:600")
@@ -788,11 +817,8 @@ class SettingsDialog(QDialog):
                 cb.toggled.connect(lambda on, n=n: self._toggle_tool(n, on))
                 box.addWidget(cb)
             box.addStretch(1)
-            grid.addLayout(box, col // 2, col % 2)          # dos columnas: los nombres largos caben enteros
-            col += 1
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
-        v.addLayout(grid)
+            blocks.append(bw)
+        v.addWidget(Columns(blocks))                         # dos columnas; una sola si los nombres no caben enteros
         self._section(v, tr("Búsqueda web"))
         self.field(v, "search_provider", tr("Buscador"), "choice",
                    choices=[(tr("Automático (DuckDuckGo; si lo bloquea, Wikipedia)"), "auto"), (tr("Brave Search (necesita clave)"), "brave"), (tr("SearXNG (tu propio buscador)"), "searxng")])
@@ -1244,7 +1270,7 @@ class SettingsDialog(QDialog):
         g = QGridLayout()
         g.setHorizontalSpacing(24)
         for i, (k, d) in enumerate(SHORTCUTS):
-            kl = QLabel(k.replace("Ctrl+", "⌘ ") if osys.MAC else k)      # en macOS Qt asigna Ctrl a la tecla Comando
+            kl = QLabel(keys_text(k))
             kl.setStyleSheet("font-family: '%s'; color:%s" % (osys.mono_font(), C["acc"]))
             g.addWidget(kl, i, 0)
             g.addWidget(QLabel(d), i, 1)
