@@ -160,6 +160,10 @@ QToolButton#codeBtn:hover { background: %(hover)s; color: %(tx)s; }
 QFrame#cmdRow { background: %(acc_bg)s; border: 1px solid %(acc_bg)s; border-radius: 10px; }
 QFrame#cmdRow:hover { border-color: %(acc)s; }
 QFrame#approval { background: %(panel)s; border-radius: 8px; }
+QFrame#changesCard { background: transparent; border: 1px solid %(line)s; border-radius: 10px; }
+QWidget#changeRow { background: transparent; border-radius: 6px; }
+QWidget#changeRow:hover { background: %(hover)s; }
+QFrame#queueBox { background: %(panel)s; border: 1px solid %(line)s; border-radius: 12px; }
 QPlainTextEdit#mono { background: %(code)s; border: 1px solid %(line)s; border-radius: 8px; font-family: Consolas; font-size: 9.5pt; }
 QPlainTextEdit#mono[kind="add"] { border-left: 3px solid %(ok)s; } QPlainTextEdit#mono[kind="del"] { border-left: 3px solid %(bad)s; }
 QFrame#noteBox { background: %(panel)s; border-radius: 10px; }

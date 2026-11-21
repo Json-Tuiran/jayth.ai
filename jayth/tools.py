@@ -430,6 +430,23 @@ def cmd_env():
     return env
 
 
+def clixml_text(out):
+    """PowerShell escribe sus errores como XML («#< CLIXML <Objs…>») cuando su salida va a otro programa: aquí, como
+    texto normal (el modelo no entendía «_x000D__x000A_» ni las etiquetas)."""
+    if "#< CLIXML" not in out:
+        return out
+
+    def plain(m):
+        parts = re.findall(r'<S S="\w+">(.*?)</S>', m.group(0), re.S)     # errores, avisos…; el progreso no es texto
+        s = "".join(parts)
+        s = re.sub(r"_x([0-9A-Fa-f]{4})_", lambda x: chr(int(x.group(1), 16)), s)
+        return html.unescape(s).replace("\r\n", "\n")
+    out = re.sub(r"#< CLIXML\s*(<Objs\b.*?</Objs>)?", plain, out, flags=re.S)
+    # la posición del error («En línea: 1 Carácter: 126», «+ ... $ProgressPreference=…», «+ ~~~~») señala el prefijo que
+    # añade Jayth al comando, no el comando del modelo: fuera
+    return re.sub(r"[^\n]*\n[ \t]*\+ [^\n]*ProgressPreference='SilentlyContinue'[^\n]*\n(?:[ \t]*\+[ \t~]*\n)?", "", out)
+
+
 @tool("run_command", "exec", "Ejecuta un comando de la terminal del sistema (%s) en la carpeta de trabajo y devuelve su salida. "
       "Para scripts: `python archivo.py`. Con background=true lo deja corriendo (servidores, vigilantes) y devuelve un id "
       "para command_output/stop_command." % osys.shell_name(),
@@ -437,6 +454,12 @@ def cmd_env():
        "background": B("Dejarlo corriendo en segundo plano")}, ["command"])
 def run_command(a, ctx):
     cmd = str(a["command"])
+    first = re.match(r"\s*([A-Za-z]+_\w+)", cmd)
+    if first and first.group(1) in TOOLS:            # «open_target "calc.exe"» en la terminal: solo daría un error
+        import shutil
+        if not shutil.which(first.group(1)):
+            raise ToolError("«%s» es una de tus herramientas, no un comando de la terminal: llámala directamente como "
+                            "herramienta." % first.group(1))
     timeout = min(max(int(a.get("timeout") or (ctx.extras or {}).get("command_timeout") or 60), 1), 900)
     cwd = ctx.path(a["cwd"]) if a.get("cwd") else ctx.workspace
     os.makedirs(cwd, exist_ok=True)
@@ -466,7 +489,7 @@ def run_command(a, ctx):
     if why:
         _kill_tree(p.pid)
     th.join(2)
-    out = b"".join(chunks).decode("utf-8", errors="replace").strip()
+    out = clixml_text(b"".join(chunks).decode("utf-8", errors="replace")).strip()
     # sin espacios de relleno al final de cada linea ni filas vacias repetidas (las tablas de PowerShell rellenan mucho):
     # menos tokens = el modelo local lee la salida antes
     out = re.sub(r"\n{3,}", "\n\n", "\n".join(l.rstrip() for l in out.splitlines()))
@@ -538,22 +561,53 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 def html_to_text(h, main=False):
     """Texto legible de una pagina. main=True: solo el contenido principal (<main>/<article>), sin menus, barras
     laterales ni pies, para que un modelo local no gaste su contexto en navegacion."""
-    h = re.sub(r"(?is)<(script|style|noscript|svg|head|template)[^>]*>.*?</\1>", " ", h)
-    if main:
-        for tag in ("main", "article"):
-            m = re.search(r"(?is)<%s\b[^>]*>(.*)</%s>" % (tag, tag), h)
-            if m and len(m.group(1)) > 500:
-                h = m.group(1)
-                break
-        else:
-            m = re.search(r"(?is)<(div|section)\b[^>]*role=[\"']main[\"'][^>]*>(.*)", h)
-            if m:
-                h = m.group(2)
-        h = re.sub(r"(?is)<(nav|aside|footer|header|form|button|select)\b[^>]*>.*?</\1>", " ", h)
-        h = re.sub(r"(?is)<(div|ul|section)\b[^>]*(class|id)=[\"'][^\"']*(toc|sidebar|sphinxsidebar|navbar|menu|breadcrumb|cookie|related)[^\"']*[\"'][^>]*>.*?</\1>", " ", h)
+    return _flatten(main_html(h) if main else _drop_code(h), main)
+
+
+def _drop_code(h):
+    return re.sub(r"(?is)<(script|style|noscript|svg|head|template)[^>]*>.*?</\1>", " ", h)
+
+
+def main_html(h):
+    """El HTML del contenido principal de una página (<main>/<article>), sin menús, barras laterales ni pies."""
+    h = _drop_code(h)
+    for tag in ("main", "article"):
+        m = re.search(r"(?is)<%s\b[^>]*>(.*)</%s>" % (tag, tag), h)
+        if m and len(m.group(1)) > 500:
+            h = m.group(1)
+            break
+    else:
+        m = re.search(r"(?is)<(div|section)\b[^>]*role=[\"']main[\"'][^>]*>(.*)", h)
+        if m:
+            h = m.group(2)
+    h = re.sub(r"(?is)<(nav|aside|footer|header|form|button|select)\b[^>]*>.*?</\1>", " ", h)
+    # índices laterales, menús…; «toctree» no: en la documentación hecha con Sphinx es el contenido de las páginas índice
+    return re.sub(r"(?is)<(div|ul|section)\b[^>]*(class|id)=[\"'][^\"']*(toc(?!tree)|sidebar|sphinxsidebar|navbar|menu|breadcrumb|cookie|related)[^\"']*[\"'][^>]*>.*?</\1>", " ", h)
+
+
+def page_links(h, base, mx=20):
+    """Los primeros enlaces (texto y dirección completa) de un trozo de HTML, sin repetir ni anclas de la misma página:
+    sin ellos el modelo no puede seguir a otra página salvo adivinando la dirección."""
+    out, seen = [], {base.split("#")[0].rstrip("/")}
+    for m in re.finditer(r"(?is)<a\b[^>]*?\bhref=[\"']([^\"'#][^\"']*)[\"'][^>]*>(.*?)</a>", h):
+        url = urllib.parse.urljoin(base, html.unescape(m.group(1)).strip()).split("#")[0]
+        if not re.match(r"(?i)https?://", url) or url.rstrip("/") in seen:
+            continue
+        text = re.sub(r"\s+", " ", html.unescape(re.sub(r"(?s)<[^>]+>", " ", m.group(2)))).strip()
+        if len(text) < 3:
+            continue
+        seen.add(url.rstrip("/"))
+        out.append("- %s: %s" % (text[:80], url))
+        if len(out) >= mx:
+            break
+    return out
+
+
+def _flatten(h, main):
     h = re.sub(r"(?i)<br\s*/?>|</(p|div|li|tr|h[1-6]|section|article|ul|ol|table|pre|blockquote)>", "\n", h)
     h = re.sub(r"(?i)<(h[1-6])[^>]*>", "\n\n## ", h) if main else h
-    h = re.sub(r"(?s)<[^>]+>", " ", h)
+    # respetando las comillas: un atributo puede llevar «>» dentro (Wikipedia guarda JSON con «/>» en data-mw)
+    h = re.sub(r"<(?:[^>\"']|\"[^\"]*\"|'[^']*')*>|<[^>]+>", " ", h)
     h = html.unescape(h)
     h = re.sub(r"[ \t\r\f\v]+", " ", h)
     h = re.sub(r" *\n *", "\n", h)
@@ -588,7 +642,8 @@ def _is_local(url):
     return host in ("localhost", "::1", "0.0.0.0") or host.startswith("127.") or host.endswith((".localhost", ".test", ".local"))
 
 
-@tool("web_fetch", "net", "Descarga una página web y devuelve su texto principal (sin menús). Si sale cortada, vuelve a llamarla "
+@tool("web_fetch", "net", "Descarga una página web y devuelve su texto principal (sin menús) y, al final, sus enlaces principales "
+      "(para seguir leyendo otra página, llama de nuevo con esa dirección). Si sale cortada, vuelve a llamarla "
       "con start para seguir leyendo. Con raw=true devuelve el código HTML tal cual (útil para revisar tu propia web). "
       "Funciona también con servidores locales (http://127.0.0.1:puerto).",
       {"url": S("URL completa"), "max_chars": I("Máximo de caracteres (por defecto 6000)"),
@@ -606,8 +661,13 @@ def web_fetch(a, ctx):
         txt = raw.decode("utf-8", errors="replace")
     is_html = "html" in ctype.lower() or txt.lstrip()[:15].lower().startswith(("<!doctype", "<html"))
     if is_html and not a.get("raw"):
-        # webs de internet: solo el contenido principal; tu propia web en local: todo (botones, formularios…)
-        txt = html_to_text(txt, main=not _is_local(final))
+        # webs de internet: solo el contenido principal y sus enlaces; tu propia web en local: todo (botones, formularios…)
+        if _is_local(final):
+            txt = html_to_text(txt)
+        else:
+            body = main_html(txt)
+            links = page_links(body, final)
+            txt = _flatten(body, True) + ("\n\nEnlaces de la página:\n" + "\n".join(links) if links else "")
     mx = max(500, int(a.get("max_chars") or 6000))
     start = max(0, int(a.get("start") or 0))
     part = txt[start:start + mx]
@@ -944,10 +1004,20 @@ def _failsafe():
     x, y = _cursor()
     if x <= 0 and y <= 0:
         raise Abort(tr("Failsafe: el ratón está en la esquina superior izquierda; se detuvo el agente."))
+    if PAUSED.is_set():                              # el usuario pulsó «Pausar» en el aviso: espera a que pulse «Seguir»
+        run = CONTROL_RUN
+        _ui("paused")
+        while PAUSED.is_set():
+            if run is not None and run.stop.is_set():
+                raise Abort(tr("Detenido por ti."))
+            time.sleep(0.2)
 
 
 def _real(ctx, x, y):
     """Píxel de la última captura -> píxel real de la pantalla (si se capturó una ventana, relativo a ella)."""
+    if not ctx.scale:              # sin captura en esta tarea las coordenadas no señalan nada: el clic caería a ciegas
+        raise ToolError("Aún no hay ninguna captura en esta tarea, así que esas coordenadas no corresponden a nada de la "
+                        "pantalla. Haz antes una captura (screenshot) o usa ui_elements y click_element.")
     W, H = screen_size()
     sc = ctx.scale or (W / min(W, 1024))
     ox, oy = getattr(ctx, "origin", None) or (0, 0)
@@ -1075,6 +1145,9 @@ def _set_cursor(x, y):
 
 # la interfaz se suscribe aquí para mostrar que el agente tiene el control (brillo en los bordes, su puntero, ondas)
 UI_HOOK = None
+CONTROL_RUN = None              # la tarea que usa ahora el ratón y el teclado (el aviso en pantalla la pausa o la detiene)
+PAUSED = threading.Event()      # «Pausar» en el aviso: el agente espera antes de su siguiente acción con el ratón o el teclado
+NOTICE_RECT = None              # dónde está el aviso (píxeles reales): el agente no debe hacer clic encima
 
 
 def _ui(kind, x=-1, y=-1):
@@ -1095,6 +1168,10 @@ def _here():
 
 def _glide(x, y):
     """Lleva el ratón hasta (x, y) con un movimiento suave (~¼ s) en vez de un salto: se ve qué va a tocar el agente."""
+    r = NOTICE_RECT
+    if r and r[0] - 24 <= x <= r[2] + 24 and r[1] - 24 <= y <= r[3] + 24:
+        _ui("dodge", x, y)                           # el aviso estaba justo ahí: se aparta antes de que llegue el clic
+        time.sleep(0.15)
     _ui("move", x, y)
     sx, sy = _here()
     d = ((x - sx) ** 2 + (y - sy) ** 2) ** 0.5 if sx >= 0 else 0
@@ -1310,12 +1387,12 @@ def focus_window(a, ctx):
             if not osys.WIN:
                 _px(PX.focus, hwnd, t)
                 time.sleep(0.4)
-                return "Foco en: " + t
+                return "Foco en: " + t + unsaved_note(t)
             user32.ShowWindow(hwnd, 9)
             _key(0x12, False), _key(0x12, True)
             user32.SetForegroundWindow(hwnd)
             time.sleep(0.4)
-            return "Foco en: " + t
+            return "Foco en: " + t + unsaved_note(t)
     raise ToolError("No hay ventana con ese título.")
 
 
@@ -1363,22 +1440,26 @@ def _ui_read(hwnd, title, limit=150):
     try:
         r = subprocess.run(osys.shell_argv(script), capture_output=True, timeout=40, **osys.popen_kwargs())
     except subprocess.TimeoutExpired:
-        raise ToolError("La ventana tarda demasiado en describir su interfaz. Usa screenshot y click con coordenadas.")
+        raise ToolError("La ventana tarda demasiado en describir su interfaz. Si ves imágenes, usa screenshot y click con coordenadas; si no, el teclado (press_keys, type_text).")
     out = r.stdout.decode("utf-8", "replace").strip()
     if r.returncode != 0 or not out.startswith("["):
         raise ToolError("No pude leer la interfaz de «%s»: %s" % (title, (r.stderr.decode("utf-8", "replace").strip() or out)[:300]))
     return json.loads(out)
 
 
+def _ui_line(k, it):
+    name = " ".join(str(it.get("n") or "").split())[:80]
+    val = " ".join(str(it.get("v") or "").split())[:80]
+    return "%s%s%s%s%s" % (("[%d] " % k) if k else "", UI_ROLE.get(it.get("t"), it.get("t")), (" «%s»" % name) if name else "",
+                              (" = «%s»" % val) if val and val != name else "", "" if it.get("e", True) else " (desactivado)")
+
+
 def _ui_text(title, items):
     lines = ["Ventana «%s»: %d elementos (número · tipo · nombre%s):" % (title, len(items), " · valor" if any(i.get("v") for i in items) else "")]
     for k, it in enumerate(items, 1):
-        name = " ".join(str(it.get("n") or "").split())[:80]
-        val = " ".join(str(it.get("v") or "").split())[:80]
-        lines.append("[%d] %s%s%s%s" % (k, UI_ROLE.get(it.get("t"), it.get("t")), (" «%s»" % name) if name else "",
-                                       (" = «%s»" % val) if val and val != name else "", "" if it.get("e", True) else " (desactivado)"))
+        lines.append(_ui_line(k, it))
     if not items:
-        lines.append("(no expone elementos: usa screenshot y click con coordenadas)")
+        lines.append("(no expone elementos: si ves imágenes, usa screenshot y click con coordenadas; si no, el teclado: press_keys y type_text)")
     return "\n".join(lines)
 
 
@@ -1387,13 +1468,25 @@ def _ui_text(title, items):
       {"window": S("Parte del título de la ventana"), "filter": S("Mostrar solo los que contengan este texto (opcional)")}, ["window"])
 def ui_elements(a, ctx):
     hwnd, title = _win(str(a["window"]), ctx)
-    items = _ui_read(hwnd, title)
+    every = _ui_read(hwnd, title)
     f = str(a.get("filter") or "").strip().lower()
-    if f:
-        items = [i for i in items if f in str(i.get("n") or "").lower() or f in str(i.get("v") or "").lower()]
-    ctx.ui = {"window": title, "hwnd": hwnd, "items": items}
+    items = _ui_filter(every, f)
+    if f and every and not items:                    # no es que la ventana no tenga nada: es el filtro
+        raise ToolError("Ninguno de los %d elementos de «%s» encaja con «%s». Lista sin filtro o filtra por parte de su nombre "
+                        "(«Guardar») o por tipo (botón, texto, menú…)." % (len(every), title, a["filter"]))
+    ctx.ui = {"window": title, "hwnd": hwnd, "items": items, "all": every, "filter": f}
     _ui("look")
-    return _ui_text(title, items)
+    return _ui_text(title, items) + unsaved_note(title)
+
+
+def unsaved_note(title):
+    """Windows marca con «*» el título de un documento con cambios sin guardar. Si el agente no lo ha tocado aún, esos
+    cambios son del usuario (el Bloc de notas reabre las pestañas de la última vez): ni escribir ni guardar ahí."""
+    if not str(title or "").lstrip().startswith("*"):
+        return ""
+    return ("\nOjo: «%s» tiene cambios sin guardar (el «*» del título). Si no los hiciste tú, son del usuario: no escribas, "
+            "guardes ni cierres sin guardar ese documento sin que te lo pida. Para un texto nuevo, abre un documento nuevo "
+            "(p. ej. ctrl+n) o crea el archivo con write_file." % title.strip())
 
 
 @tool("click_element", "control", "Hace clic en un elemento de la interfaz por su número de ui_elements (o por su nombre): trae la ventana al "
@@ -1430,7 +1523,63 @@ def click_element(a, ctx):
     x, y = int(it["x"] + it["w"] / 2), int(it["y"] + it["h"] / 2)
     _press_at(x, y, a.get("button"), a.get("double"), a.get("keys"))
     name = " ".join(str(it.get("n") or "").split())[:60]
-    return "Clic en %s%s" % (UI_ROLE.get(it.get("t"), it.get("t")), (" «%s»" % name) if name else "")
+    return "Clic en %s%s" % (UI_ROLE.get(it.get("t"), it.get("t")), (" «%s»" % name) if name else "") + _after_click(ui, ctx)
+
+
+def _ui_filter(items, f):
+    """Los elementos cuyo nombre, valor o tipo («button», «botón», «texto»…) contienen f."""
+    if not f:
+        return items
+    return [i for i in items if f in str(i.get("n") or "").lower() or f in str(i.get("v") or "").lower()
+            or f in str(i.get("t") or "").lower() or f in UI_ROLE.get(i.get("t"), "").lower()]
+
+
+def _after_click(ui, ctx):
+    """Qué cambió en la ventana con el clic (la pantalla de la calculadora, un campo, un aviso…): sin ver la pantalla es
+    la única forma de saber si funcionó. Si la ventana cambió de forma, da la lista nueva: los números viejos ya no valen."""
+    try:
+        time.sleep(0.25)
+        full = _ui_read(ui["hwnd"], ui["window"])
+    except Exception:
+        return ""
+    new, old = _ui_filter(full, ui.get("filter") or ""), ui["items"]
+    old_all = ui.get("all") or old
+    if not full:
+        ctx.ui = None
+        return "\nLa ventana «%s» ya no muestra elementos (¿se cerró o cambió?)." % ui["window"]
+    if len(new) != len(old) or any(p.get("t") != q.get("t") for p, q in zip(old, new)):
+        # cambió de forma: con pocos cambios, solo cuáles (la lista entera son cientos de palabras que el modelo local
+        # tarda en leer; con gpt-oss en CPU, tras ella respondía vacío); con muchos, la lista nueva
+        import difflib
+        shape = lambda lst: [(i.get("t"), " ".join(str(i.get("n") or "").split())) for i in lst]
+        ops = [o for o in difflib.SequenceMatcher(None, shape(old), shape(new), autojunk=False).get_opcodes() if o[0] != "equal"]
+        added = [new[j] for tag, i1, i2, j1, j2 in ops for j in range(j1, j2)]
+        gone = [old[i] for tag, i1, i2, j1, j2 in ops for i in range(i1, i2)]
+        ctx.ui = dict(ui, items=new, all=full)
+        if len(added) + len(gone) > 8:
+            return "\nLa ventana cambió; usa esta lista nueva:\n" + _ui_text(ui["window"], new)
+        num = {id(q): k for k, q in enumerate(new, 1)}
+        parts = (["aparecieron: " + "; ".join(_ui_line(num[id(q)], q) for q in added)] if added else []) + \
+                (["desaparecieron: " + "; ".join(_ui_line(None, p) for p in gone)] if gone else [])
+        return ("\nLa ventana cambió (%s). Ahora tiene %d elementos y los números de los que van detrás se han movido: "
+                "pulsa por nombre o vuelve a listar con ui_elements." % (" · ".join(parts), len(new)))
+    key = lambda i: (" ".join(str(i.get("n") or "").split()), " ".join(str(i.get("v") or "").split()), i.get("e", True))
+    num = {id(q): k for k, q in enumerate(new, 1)}
+    # se compara la ventana entera: con la lista filtrada («Button») la pantalla de la calculadora quedaría fuera, y lo
+    # que aparece o desaparece fuera de la lista también cuenta («La expresión es 47 ×»)
+    import difflib
+    sig = lambda i: (i.get("t"), " ".join(str(i.get("n") or "").split()))
+    changed = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, [sig(i) for i in old_all], [sig(i) for i in full], autojunk=False).get_opcodes():
+        if tag == "equal" or (tag == "replace" and i2 - i1 == j2 - j1):
+            changed += [_ui_line(num.get(id(q)), q) for p, q in zip(old_all[i1:i2], full[j1:j2]) if key(p) != key(q)]
+        else:
+            changed += ["apareció " + _ui_line(num.get(id(q)), q) for q in full[j1:j2]]
+            changed += ["desapareció " + _ui_line(None, p) for p in old_all[i1:i2]]
+    ui["items"], ui["all"] = new, full               # mismos números, con los textos al día
+    if not changed:
+        return "\n(No cambió ningún texto de la ventana.)"
+    return "\nAhora en la ventana: " + "; ".join(changed[:5]) + (" (y %d cambios más)" % (len(changed) - 5) if len(changed) > 5 else "")
 
 
 # ---------------------------------------------------------------- ventanas y portapapeles
@@ -1651,7 +1800,7 @@ def create_document(a, ctx):
         detail = "; %d diapositivas" % info["diapositivas"]
     elif info.get("paginas"):
         detail = "; %d páginas" % info["paginas"]
-    return "%s documento %s %s (%s%s). Puedes comprobarlo con read_document o abrirlo al usuario con open_target." % (
+    return "%s documento %s %s (%s%s). Puedes comprobarlo con read_document; si el usuario quiere verlo, ábreselo tú con open_target (él no puede usar tus herramientas)." % (
         "Reemplazado" if existed else "Creado", kind, p, _human(os.path.getsize(p)), detail)
 
 

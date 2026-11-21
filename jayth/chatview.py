@@ -580,9 +580,19 @@ def clean_cmd(code):
     return "\n".join(_PROMPT.sub("", l).rstrip() for l in code.split("\n") if l.strip())
 
 
+def tool_call_text(code):
+    """¿Es una herramienta del agente escrita como texto («open_target "x"», «run_python{…}»)? No es un comando de la
+    terminal: «Ejecutar» solo daría un error."""
+    m = re.match(r"\s*(?:call:)?([A-Za-z]+_\w+)(?=[\s({]|$)", code or "")
+    if not m:
+        return False
+    from . import tools as T
+    return m.group(1) in T.TOOLS
+
+
 def _kind(lang, code):
     lines = [l for l in code.split("\n") if l.strip()]
-    shell = lang in SHELL_LANGS or (not lang and lines and all(_CMD_START.match(l) for l in lines))
+    shell = (lang in SHELL_LANGS or (not lang and lines and all(_CMD_START.match(l) for l in lines))) and not tool_call_text(code)
     if shell and 0 < len(lines) <= 4 and all(len(l) <= 240 for l in lines):
         return "cmd"
     return "code"
@@ -702,7 +712,7 @@ class CodeBlock(QFrame):
         if lang != self.lang:
             self.lang = lang
             self.lang_lbl.setText(LANG_NAME.get(ext) or (lang if lang else tr("Código")))
-            self.b_run.setVisible(lang in SHELL_LANGS)
+        self.b_run.setVisible(lang in SHELL_LANGS and not tool_call_text(code))
         if ext != self.ext:
             self.ext = ext
             from .codeview import Highlighter

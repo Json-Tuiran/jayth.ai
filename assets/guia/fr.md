@@ -76,10 +76,45 @@ instantanément le contrôle de la souris : amener le pointeur dans le coin sup
 
 ## Actions sur les réponses
 
-Sous chaque réponse : **Copier la réponse**, **Lire à voix haute**, **Régénérer la réponse**, **Signaler un problème
-avec cette réponse** et, si elle a modifié des fichiers, **Annuler les modifications** (restaure tous les fichiers
-modifiés dans cette réponse). Chaque action qui modifie des fichiers a aussi son propre bouton pour annuler uniquement
-cette modification. À droite, les tokens, la vitesse et la mémoire de la conversation utilisée.
+Sous chaque réponse : **Copier la réponse**, **Lire à voix haute**, **Régénérer la réponse** et **Signaler un problème avec cette réponse** ; à droite, les tokens écrits et leur vitesse.
+Si la réponse a modifié des fichiers, la carte **2 fichiers modifiés** apparaît en dessous avec chaque fichier, ses lignes ajoutées
+et supprimées et une note (« nouveau », « dans la Corbeille », « déplacé vers … ») : un clic l'ouvre et son bouton le remet comme il était
+avant cette réponse ; avec deux ou plus, **Tout annuler**. Chaque action qui modifie des fichiers a aussi son propre bouton
+pour annuler uniquement cette modification. Quand l'agent a utilisé des outils, la ligne « A travaillé pendant 3 min 12 s » sépare ce qu'il a
+fait de sa réponse.
+
+## Pendant qu'il travaille : lui écrire, autorisations et notifications
+
+- **Lui écrire sans l'arrêter :** pendant qu'il travaille, on peut écrire et envoyer (Entrée ou le bouton d'envoi qui
+  apparaît à côté de **Arrêter**). Le message attend dans une file au-dessus de la zone de texte (avec × pour le retirer)
+  et l'agent le voit à sa prochaine étape ; dans le chat, il porte la note « Écrit pendant qu'il travaillait ; il l'a vu ici ». S'il est arrêté avant, le texte
+  revient dans la zone.
+- **Étapes regroupées :** ce qu'il pense entre les actions (« A réfléchi un instant ») va dans le groupe d'actions ; à la fin, le
+  groupe se replie en une ligne qui se déplie d'un clic. En haut, l'état indique depuis combien de temps il travaille
+  (« En cours · local · 1:12 »).
+- **Autorisations :** en plus de **Autoriser** et **Refuser**, le champ « Ou dites-lui quoi faire à la place et appuyez sur Entrée… » refuse l'action et transmet
+  l'indication à l'agent ; sous l'action apparaît « Vous avez demandé : « … » ». « Toujours « … » ici » n'est pas proposé pour les actions sensibles
+  ni pour les actions sur des comptes connectés : elles sont confirmées à chaque fois.
+- **Plan :** en appuyant sur **Exécuter le plan**, le chat affiche la marque « Vous avez approuvé le plan : il s'exécute étape par étape ».
+- **Contrôle de l'ordinateur :** pendant qu'il utilise la souris et le clavier, un avis en haut de l'écran propose
+  **Pause** (l'agent attend et l'utilisateur peut se servir de la souris ; ensuite, **Reprendre**) et **Arrêter**. Si
+  l'agent va cliquer là où se trouve l'avis, celui-ci se déplace. Amener le pointeur dans le coin supérieur gauche
+  l'arrête aussi.
+- **Notifications hors de la fenêtre :** s'il attend une autorisation ou une réponse alors que Jayth est en arrière-plan,
+  l'icône de la barre des tâches clignote et une notification s'affiche ; si une tâche de plus de 15 secondes se termine
+  pendant que l'utilisateur regarde autre chose, il prévient aussi (cliquer sur la notification ouvre cette
+  conversation).
+
+## Mémoire de la conversation (contexte)
+
+À côté du micro de la zone de message, un anneau montre quelle part de la mémoire du modèle la conversation occupe :
+couleur d'accent s'il reste de la place, ambre à partir de 70 % (avec le pourcentage) et rouge à partir de 85 %. À 70 %,
+Jayth raccourcit les anciennes sorties des outils (il garde leur début ; les trois dernières restent entières). Si cela
+ne suffit pas, à 85 % le modèle résume l'ancien : ce qui précède le dernier message de l'utilisateur ou, dans une seule
+tâche très longue, ses premières étapes (les dernières restent telles quelles). La taille du résumé s'adapte à la
+mémoire du modèle. Un clic sur l'anneau montre l'occupation, ce que fera Jayth, **Résumer maintenant** et **Commencer une nouvelle conversation**. L'avis
+laissé par le résumé propose **Voir le résumé**. Sur un ordinateur sans carte graphique, résumer peut prendre quelques
+minutes.
 
 ## Actions sur vos messages
 
@@ -222,7 +257,7 @@ NVIDIA, Vulkan pour AMD ou Intel Arc, ou CPU. Dans **Paramètres › Performance
 moteur…**, **Préchauffer au démarrage du modèle**, **Mémoire de la conversation (contexte)** (par défaut
 **Automatique** : tout le contexte que le modèle accepte d'origine, réduit si sa mémoire ne tient pas sur l'ordinateur ;
 avec **Contexte compressé**, il en tient deux fois plus, voire davantage), **Arrêter le modèle s'il est inutilisé
-pendant**, et dans **Paramètres du moteur** : Threads CPU, Couches sur le GPU (l'automatique répartit le modèle entre le
+pendant**, et dans **Paramètres du moteur** : Threads CPU, Threads en lecture (automatique : sans carte graphique, lit avec tous les threads du processeur), Couches sur le GPU (l'automatique répartit le modèle entre le
 GPU et la RAM), Taille de lot, Contexte compressé, Flash attention, Accélération de l'écriture, mmap, verrouillage en
 RAM et le port local. Les changements du moteur s'appliquent au redémarrage du modèle (**Redémarrer le modèle**). Le
 journal du moteur se trouve dans **Paramètres › Journal du modèle**.
@@ -264,7 +299,7 @@ options (avec leur nom exact) :
     les valeurs recommandées**.
 - **Performances :** **Changer ou mettre à jour le moteur…**, « Préchauffer au démarrage du modèle », « Mémoire de la
   conversation (contexte) », « Arrêter le modèle s'il est inutilisé pendant ».
-  - **Paramètres du moteur :** « Threads CPU », « Couches sur le GPU », « Taille de lot », « Contexte compressé »,
+  - **Paramètres du moteur :** « Threads CPU », « Threads en lecture », « Couches sur le GPU », « Taille de lot », « Contexte compressé »,
     « Flash attention », « Charger le modèle avec mmap (démarrage plus rapide) », « Verrouiller le modèle en RAM
     (empêche le système de le déplacer sur le disque) », « Port local du moteur ».
   - **Téléchargements :** « Connexions simultanées lors du téléchargement des modèles ».

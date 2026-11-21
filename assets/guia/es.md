@@ -67,10 +67,39 @@ superior izquierda de la pantalla.
 
 ## Acciones sobre las respuestas
 
-Debajo de cada respuesta: **Copiar respuesta**, **Leer en voz alta**, **Regenerar respuesta**, **Informar de un
-problema con esta respuesta** y, si cambió archivos, **Deshacer cambios** (restaura todos los archivos que cambió en esa
-respuesta). Cada acción que cambia archivos también tiene su propio botón para deshacer solo ese cambio. A la derecha,
-los tokens, la velocidad y la memoria de la conversación usada.
+Debajo de cada respuesta: **Copiar respuesta**, **Leer en voz alta**, **Regenerar respuesta** e **Informar de un problema con esta respuesta**; a la derecha, los tokens que escribió y
+su velocidad. Si la respuesta cambió archivos, debajo aparece la tarjeta **Cambió 2 archivos** con cada archivo, sus líneas
+añadidas y quitadas y una nota («nuevo», «a la papelera», «movido a …»): un clic lo abre y su botón lo devuelve a como estaba antes
+de esa respuesta; con dos o más, **Deshacer todo**. Cada acción que cambia archivos tiene también su propio botón para
+deshacer solo ese cambio. Cuando el agente usó herramientas, la línea «Trabajó durante 3 min 12 s» separa lo que hizo de su respuesta.
+
+## Mientras trabaja: escribirle, permisos y avisos
+
+- **Escribirle sin detenerlo:** mientras trabaja se puede escribir y enviar (Intro o el botón de enviar que aparece junto
+  a **Detener**). El mensaje queda en cola sobre el cuadro de texto (con × para quitarlo) y el agente lo ve en su próximo
+  paso; en el chat sale con la nota «Lo escribiste mientras trabajaba; lo vio aquí». Si se le detiene antes, el texto vuelve al cuadro.
+- **Pasos agrupados:** lo que piensa entre acciones («Pensó un momento») va dentro del grupo de acciones; al terminar, el grupo
+  se pliega en una línea que se despliega con un clic. Arriba, el estado dice cuánto lleva trabajando («Trabajando · local · 1:12»).
+- **Permisos:** además de **Permitir** y **Denegar**, el campo «O dile qué hacer en su lugar y pulsa Intro…» deniega la acción y le pasa la indicación al
+  agente; bajo la acción queda «Le pediste: «…»». «Siempre «…» aquí» no se ofrece en acciones delicadas ni en acciones sobre cuentas
+  conectadas: esas se confirman cada vez.
+- **Plan:** al pulsar **Ejecutar el plan**, el chat muestra la marca «Aprobaste el plan: se ejecuta paso a paso».
+- **Control del ordenador:** mientras usa el ratón y el teclado, arriba en la pantalla hay un aviso con **Pausar** (el
+  agente espera y el usuario puede usar el ratón; después, **Seguir**) y **Parar**. Si el agente va a pulsar donde está
+  el aviso, este se aparta. También se detiene llevando el puntero a la esquina superior izquierda.
+- **Avisos fuera de la ventana:** si espera un permiso o una respuesta con Jayth en segundo plano, el icono de la barra
+  de tareas parpadea y sale un aviso; si una tarea de más de 15 segundos termina mientras el usuario mira otra cosa,
+  también avisa (al pulsar el aviso se abre esa conversación).
+
+## Memoria de la conversación (contexto)
+
+Junto al micrófono del cuadro de mensaje, un anillo muestra cuánta memoria del modelo ocupa la conversación: del color de
+acento si hay sitio, ámbar desde el 70 % (con el porcentaje) y rojo desde el 85 %. Al 70 % Jayth recorta las salidas
+antiguas de las herramientas (deja su principio; las tres últimas quedan enteras). Si no basta, al 85 % el modelo resume
+lo antiguo: lo anterior al último mensaje del usuario o, en una sola tarea muy larga, sus primeros pasos (los últimos
+quedan tal cual). El tamaño del resumen se adapta a la memoria del modelo. Al pulsar el anillo: cuánto ocupa, qué hará
+Jayth, **Resumir ahora** y **Empezar una conversación nueva**. El aviso que deja el resumen tiene **Ver el resumen**. En equipos sin gráfica, resumir
+puede tardar unos minutos.
 
 ## Acciones sobre tus mensajes
 
@@ -194,7 +223,7 @@ Vulkan para AMD o Intel Arc, o CPU. En **Ajustes › Rendimiento**: **Cambiar o 
 encender el modelo**, **Memoria de la conversación (contexto)** (por defecto **Automático**: todo el contexto que admite
 el modelo de fábrica, reducido si su memoria no cabe en el equipo; con **Contexto comprimido** cabe el doble o más),
 **Apagar el modelo si no se usa durante**, y en
-**Ajustes del motor**: Hilos de CPU, Capas en la GPU (automático reparte el modelo entre GPU y RAM), Tamaño de lote,
+**Ajustes del motor**: Hilos de CPU, Hilos al leer (automático: sin gráfica lee con todos los hilos del procesador), Capas en la GPU (automático reparte el modelo entre GPU y RAM), Tamaño de lote,
 Contexto comprimido, Flash attention, Aceleración al escribir, mmap, bloquear en la RAM y el puerto local. Los cambios del motor se aplican al
 reiniciar el modelo (**Reiniciar modelo**). El registro del motor está en **Ajustes › Registro del modelo**.
 
@@ -231,7 +260,7 @@ Se abren desde el menú del perfil (**Ajustes**). Los cambios se guardan solos. 
     recomendados**.
 - **Rendimiento:** **Cambiar o actualizar el motor…**, «Precalentar al encender el modelo», «Memoria de la conversación
   (contexto)», «Apagar el modelo si no se usa durante».
-  - **Ajustes del motor:** «Hilos de CPU», «Capas en la GPU», «Tamaño de lote», «Contexto comprimido», «Flash
+  - **Ajustes del motor:** «Hilos de CPU», «Hilos al leer», «Capas en la GPU», «Tamaño de lote», «Contexto comprimido», «Flash
     attention», «Cargar el modelo con mmap (arranque más rápido)», «Bloquear el modelo en la RAM (evita que el sistema lo
     mueva al disco)», «Puerto local del motor».
   - **Descargas:** «Conexiones simultáneas al descargar modelos».

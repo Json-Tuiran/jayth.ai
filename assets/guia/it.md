@@ -71,10 +71,39 @@ mouse: porta il puntatore nell'angolo in alto a sinistra dello schermo.
 
 ## Azioni sulle risposte
 
-Sotto ogni risposta: **Copia risposta**, **Leggi ad alta voce**, **Rigenera risposta**, **Segnala un problema con
-questa risposta** e, se ha modificato dei file, **Annulla modifiche** (ripristina tutti i file che ha modificato in
-quella risposta). Ogni azione che modifica file ha anche un proprio pulsante per annullare solo quella modifica. A
-destra, i token, la velocità e la memoria della conversazione usata.
+Sotto ogni risposta: **Copia risposta**, **Leggi ad alta voce**, **Rigenera risposta** e **Segnala un problema con questa risposta**; a destra, i token scritti e la loro velocità. Se
+la risposta ha modificato dei file, sotto compare la scheda **Ha cambiato 2 file** con ogni file, le righe aggiunte e tolte e una
+nota («nuovo», «nel Cestino», «spostato in …»): un clic lo apre e il suo pulsante lo riporta com'era prima di quella risposta; con
+due o più, **Annulla tutto**. Ogni azione che modifica file ha anche un proprio pulsante per annullare solo quella modifica.
+Quando l'agente ha usato strumenti, la riga «Ha lavorato per 3 min 12 s» separa quello che ha fatto dalla risposta.
+
+## Mentre lavora: scrivergli, permessi e avvisi
+
+- **Scrivergli senza fermarlo:** mentre lavora si può scrivere e inviare (Invio o il pulsante di invio che compare
+  accanto a **Interrompi**). Il messaggio resta in coda sopra la casella di testo (con × per toglierlo) e l'agente lo vede al
+  passo successivo; nella chat compare con la nota «L'hai scritto mentre lavorava; l'ha visto qui». Se viene fermato prima, il testo torna nella casella.
+- **Passi raggruppati:** ciò che pensa tra un'azione e l'altra («Ha ragionato un attimo») sta dentro il gruppo di azioni; alla fine, il
+  gruppo si chiude in una riga che si apre con un clic. In alto, lo stato dice da quanto sta lavorando («Al lavoro · locale · 1:12»).
+- **Permessi:** oltre a **Consenti** e **Nega**, il campo «Oppure digli cosa fare invece e premi Invio…» nega l'azione e passa l'indicazione all'agente;
+  sotto l'azione resta «Gli hai chiesto: «…»». «Sempre «…» qui» non viene offerto per le azioni delicate né per le azioni su account
+  collegati: quelle si confermano ogni volta.
+- **Piano:** premendo **Esegui il piano**, la chat mostra il segno «Hai approvato il piano: viene eseguito passo per passo».
+- **Controllo del computer:** mentre usa mouse e tastiera, in alto sullo schermo c'è un avviso con **Pausa** (l'agente
+  aspetta e l'utente può usare il mouse; poi, **Riprendi**) e **Ferma**. Se l'agente sta per cliccare dove si trova
+  l'avviso, questo si sposta. Si ferma anche portando il puntatore nell'angolo in alto a sinistra.
+- **Avvisi fuori dalla finestra:** se aspetta un permesso o una risposta mentre Jayth è in secondo piano, l'icona della
+  barra delle applicazioni lampeggia e compare un avviso; se un'attività di più di 15 secondi finisce mentre l'utente
+  guarda altro, avvisa anche (cliccando l'avviso si apre quella conversazione).
+
+## Memoria della conversazione (contesto)
+
+Accanto al microfono della casella del messaggio, un anello mostra quanta memoria del modello occupa la conversazione:
+del colore di accento se c'è spazio, ambra dal 70 % (con la percentuale) e rosso dall'85 %. Al 70 % Jayth accorcia i
+vecchi output degli strumenti (ne lascia l'inizio; gli ultimi tre restano interi). Se non basta, all'85 % il modello
+riassume la parte vecchia: ciò che precede l'ultimo messaggio dell'utente o, in un'unica attività molto lunga, i suoi
+primi passi (gli ultimi restano com'erano). La lunghezza del riassunto si adatta alla memoria del modello. Cliccando
+l'anello: quanto occupa, cosa farà Jayth, **Riassumi ora** e **Inizia una nuova conversazione**. L'avviso lasciato dal riassunto ha
+**Vedi il riassunto**. Sui computer senza scheda grafica, riassumere può richiedere qualche minuto.
 
 ## Azioni sui tuoi messaggi
 
@@ -205,7 +234,7 @@ Vulkan per AMD o Intel Arc, oppure CPU. In **Impostazioni › Prestazioni**: **C
 **Preriscalda all'avvio del modello**, **Memoria della conversazione (contesto)** (di default **Automatico**: tutto il
 contesto che il modello supporta di fabbrica, ridotto se la sua memoria non entra nel computer; con **Contesto
 compresso** ne entra il doppio o più), **Arresta il modello se non viene usato per**, e in
-**Impostazioni del motore**: Thread della CPU, Layer sulla GPU (in automatico il modello viene ripartito tra GPU e RAM),
+**Impostazioni del motore**: Thread della CPU, Thread in lettura (automatico: senza scheda grafica legge con tutti i thread del processore), Layer sulla GPU (in automatico il modello viene ripartito tra GPU e RAM),
 Dimensione del batch, Contesto compresso, Flash attention, Accelerazione in scrittura, mmap, blocco nella RAM e la porta
 locale. Le modifiche del motore si applicano al riavvio del modello (**Riavvia modello**). Il registro del motore è in
 **Impostazioni › Registro del modello**.
@@ -245,7 +274,7 @@ esatto):
     consigliati**.
 - **Prestazioni:** **Cambia o aggiorna il motore…**, «Preriscalda all'avvio del modello», «Memoria della conversazione
   (contesto)», «Arresta il modello se non viene usato per».
-  - **Impostazioni del motore:** «Thread della CPU», «Layer sulla GPU», «Dimensione del batch», «Contesto compresso»,
+  - **Impostazioni del motore:** «Thread della CPU», «Thread in lettura», «Layer sulla GPU», «Dimensione del batch», «Contesto compresso»,
     «Flash attention», «Carica il modello con mmap (avvio più rapido)», «Blocca il modello nella RAM (evita che il
     sistema lo sposti su disco)», «Porta locale del motore».
   - **Download:** «Connessioni simultanee per scaricare i modelli».

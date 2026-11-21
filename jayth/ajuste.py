@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Ajuste medido del motor: en vez de estimar, prueba configuraciones reales en este equipo y deja la más rápida.
 
-1. llama-bench (viene junto a llama-server): hilos y flash attention -> velocidad al leer (pp) y al escribir (tg).
+1. llama-bench (viene junto a llama-server): hilos y flash attention -> velocidad al leer (pp) y al escribir (tg). Los hilos
+   se eligen por separado para leer y para escribir: leer es cálculo y suele ganar con todos los hilos lógicos; escribir
+   depende de la memoria y suele ir mejor con los núcleos físicos (llama-server: -t para escribir, -tb para leer).
 2. llama-server en un puerto aparte: decodificación especulativa -> velocidad al escribir con cada tipo:
    - draft-mtp: las capas de predicción múltiple que traen algunos modelos (p. ej. Qwen 3.5 y 3.8);
    - ngram-mod: adelanta texto que ya apareció (muy útil al reescribir código o documentos).
@@ -150,7 +152,7 @@ PROBE = [{"role": "user", "content": "Reescribe esta función cambiando el nombr
 def run_spec(cfg, m, spec, threads, fa, progress=None, stop=None):
     """Velocidad al escribir (tok/s) con un tipo de decodificación especulativa ('' = ninguna), con llama-server aparte."""
     port = _free_port()
-    c = dict(cfg, threads=threads, flash_attn=fa, llm_port=port, n_ctx=4096, spec_type=spec or "none")
+    c = dict(cfg, threads=threads, flash_attn=fa, llm_port=port, n_ctx=4096, spec_type=spec or "none", threads_batch=0)
     cmd = core.LLM_MGR.command(c)                  # la misma orden que usará Jayth (con --spec-type si toca)
     exe = cfg["llama_exe"]
     env = dict(os.environ)
@@ -205,9 +207,10 @@ def tune(cfg=None, progress=None, stop=None, specs=True):
     rows = [r for r in rows if r["pp"] and r["tg"]]
     if not rows:
         raise RuntimeError(tr("La medición no dio resultados."))
-    best = min(rows, key=lambda r: score(r["pp"], r["tg"]))
+    best = pick(rows)
     report = {"model_sig": _sig(m["path"]), "model": core.model_title(m) or m.get("name"), "date": time.strftime("%Y-%m-%d %H:%M"),
-              "rows": rows, "threads": best["threads"], "fa": best["fa"], "pp": best["pp"], "tg": best["tg"], "spec": "", "spec_rows": {}}
+              "rows": rows, "threads": best["threads"], "threads_batch": best["threads_batch"], "fa": best["fa"], "pp": best["pp"],
+              "tg": best["tg"], "spec": "", "spec_rows": {}}
     caps = engine_caps(cfg.get("llama_exe") or "")
     tries = []
     if specs and cfg.get("llm_mode", "local") == "local":
@@ -229,16 +232,38 @@ def tune(cfg=None, progress=None, stop=None, specs=True):
         if good:
             report["spec"] = max(good, key=lambda s: report["spec_rows"][s])
             report["tg_spec"] = report["spec_rows"][report["spec"]]
-    core.SET.update({"threads": best["threads"], "flash_attn": best["fa"], "tuning": report})
+    core.SET.update({"threads": best["threads"], "threads_batch": best["threads_batch"], "flash_attn": best["fa"], "tuning": report})
     return report
+
+
+def pick(rows):
+    """La mejor combinación: para cada flash attention, los hilos más rápidos al leer y los más rápidos al escribir (pueden
+    ser distintos); gana la que menos tarda en una tarea típica. {'threads', 'threads_batch', 'fa', 'pp', 'tg'}."""
+    best = None
+    for fa in sorted({r["fa"] for r in rows}):
+        rs = [r for r in rows if r["fa"] == fa and r["pp"] and r["tg"]]
+        if not rs:
+            continue
+        rd = max(rs, key=lambda r: r["pp"])
+        wr = max(rs, key=lambda r: r["tg"])
+        if wr["threads"] != rd["threads"] and rd["pp"] < wr["pp"] * 1.03:
+            rd = wr                                 # por menos de un 3 % no compensa separar los hilos
+        cand = {"threads": wr["threads"], "threads_batch": rd["threads"], "fa": fa, "pp": rd["pp"], "tg": wr["tg"]}
+        if best is None or score(cand["pp"], cand["tg"]) < score(best["pp"], best["tg"]):
+            best = cand
+    return best
 
 
 def summary(rep):
     """Una línea para Ajustes: «4 hilos · flash attention sí · lee 31 tok/s · escribe 2,1 tok/s (2,9 con MTP)»."""
     if not rep:
         return ""
-    s = tr("%d hilos · flash attention %s · lee %s tok/s · escribe %s tok/s") % (
-        rep["threads"], tr("sí") if rep["fa"] == "on" else tr("no"), i18n.number(rep["pp"], 0), i18n.number(rep["tg"]))
+    if rep.get("threads_batch") and rep["threads_batch"] != rep["threads"]:
+        s = tr("%d hilos al escribir y %d al leer · flash attention %s · lee %s tok/s · escribe %s tok/s") % (
+            rep["threads"], rep["threads_batch"], tr("sí") if rep["fa"] == "on" else tr("no"), i18n.number(rep["pp"], 0), i18n.number(rep["tg"]))
+    else:
+        s = tr("%d hilos · flash attention %s · lee %s tok/s · escribe %s tok/s") % (
+            rep["threads"], tr("sí") if rep["fa"] == "on" else tr("no"), i18n.number(rep["pp"], 0), i18n.number(rep["tg"]))
     if rep.get("spec"):
         s += tr(" (%s con %s)") % (i18n.number(rep.get("tg_spec") or 0), {"draft-mtp": "MTP", "ngram-mod": tr("n-gramas")}.get(rep["spec"], rep["spec"]))
     return s

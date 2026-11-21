@@ -161,7 +161,9 @@ PRESETS = [   # (patron, sin pensar, pensando) — valores publicados por cada l
     (r"gemma", dict(temperature=1.0, top_p=0.95, top_k=64, min_p=0.0), dict(temperature=1.0, top_p=0.95, top_k=64, min_p=0.0)),
     (r"llama", dict(temperature=0.6, top_p=0.9, top_k=40, min_p=0.0), dict(temperature=0.6, top_p=0.9, top_k=40, min_p=0.0)),
     (r"mistral|devstral|magistral|ministral", dict(temperature=0.15, top_p=0.95, top_k=40, min_p=0.0), dict(temperature=0.7, top_p=0.95, top_k=40, min_p=0.0)),
-    (r"gpt.?oss", dict(temperature=1.0, top_p=1.0, top_k=0, min_p=0.0), dict(temperature=1.0, top_p=1.0, top_k=0, min_p=0.0)),
+    # gpt-oss: lo de OpenAI (1.0, 1.0, sin top-k) más min-p 0.05 (lo de llama.cpp por defecto). Sin ningún recorte, al
+    # rehacer un token que no encaja con el JSON de una llamada elegía entre todos los permitidos y se desbocaba («?……»)
+    (r"gpt.?oss", dict(temperature=1.0, top_p=1.0, top_k=0, min_p=0.05), dict(temperature=1.0, top_p=1.0, top_k=0, min_p=0.05)),
     (r"phi", dict(temperature=0.7, top_p=0.95, top_k=40, min_p=0.0), dict(temperature=0.8, top_p=0.95, top_k=50, min_p=0.0)),
     (r"glm", dict(temperature=0.7, top_p=0.95, top_k=40, min_p=0.0), dict(temperature=0.6, top_p=0.95, top_k=40, min_p=0.0)),
 ]
@@ -214,6 +216,51 @@ def undo(sid, cid):
             done.append(p)
     shutil.rmtree(d, ignore_errors=True)
     return done
+
+
+def undo_file(sid, cids, path):
+    """Devuelve un solo archivo a su estado de antes de la primera de esas acciones (en orden); las demás dejan de poder
+    deshacerlo. Devuelve (ruta restaurada o None, ids de las acciones que ya no tienen nada que deshacer)."""
+    key = os.path.normcase(os.path.normpath(path))
+    first, emptied, seen = None, [], False
+    for cid in cids:
+        d = os.path.join(CK_DIR, sid, cid)
+        try:
+            meta = json.load(open(os.path.join(d, "meta.json"), encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        mine = [e for e in meta["files"] if os.path.normcase(os.path.normpath(e["path"])) == key]
+        if not mine:
+            continue
+        if not seen:                               # el estado más antiguo: el de antes de la respuesta
+            seen = True
+            e = mine[0]
+            p = e["path"]
+            if e.get("copy"):
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                shutil.copy2(os.path.join(d, e["copy"]), p)
+                first = p
+            elif not e["existed"]:
+                if os.path.exists(p):
+                    (shutil.rmtree if os.path.isdir(p) else os.remove)(p)
+                first = p
+        rest = [e for e in meta["files"] if e not in mine]
+        if rest:
+            meta["files"] = rest
+            with open(os.path.join(d, "meta.json"), "w", encoding="utf-8") as f:
+                json.dump(meta, f)
+        else:
+            shutil.rmtree(d, ignore_errors=True)
+            emptied.append(cid)
+    return first, emptied
+
+
+def snapshot_files(sid, cid):
+    """Archivos que guarda la copia de una acción ({path, existed, copy…}); [] si ya no hay copia."""
+    try:
+        return json.load(open(os.path.join(CK_DIR, sid, cid, "meta.json"), encoding="utf-8")).get("files") or []
+    except (OSError, ValueError):
+        return []
 
 
 def has_snapshot(sid, cid):
@@ -270,11 +317,26 @@ def _xml_text(data, para_tag):
     return html.unescape(t)
 
 
+def _docx_tables(x):
+    """Las tablas de un documento de Word como filas «| a | b |» (si no, cada celda saldría en su línea y no se vería
+    qué va con qué)."""
+    def table(m):
+        rows = []
+        for tr in re.findall(r"<w:tr\b.*?</w:tr>", m.group(0), re.S):
+            cells = [" ".join(re.sub(r"<[^>]+>", " ", re.sub(r"</w:p>", " ", tc)).split()).replace("|", "/")
+                     for tc in re.findall(r"<w:tc\b.*?</w:tc>", tr, re.S)]
+            rows.append("| " + " | ".join(cells) + " |")
+            if len(rows) == 1:
+                rows.append("|" + " --- |" * len(cells))
+        return "<w:p>" + "\n".join(rows) + "</w:p>"
+    return re.sub(r"<w:tbl>.*?</w:tbl>", table, x, flags=re.S)
+
+
 def read_document(path, limit=60000):
     ext = os.path.splitext(path)[1].lower()
     if ext in (".docx", ".docm"):
         with zipfile.ZipFile(path) as z:
-            return _xml_text(z.read("word/document.xml").decode("utf-8", "replace"), "w:p")[:limit]
+            return _xml_text(_docx_tables(z.read("word/document.xml").decode("utf-8", "replace")), "w:p")[:limit]
     if ext in (".pptx",):
         with zipfile.ZipFile(path) as z:
             slides = sorted((n for n in z.namelist() if re.match(r"ppt/slides/slide\d+\.xml$", n)), key=lambda n: int(re.findall(r"\d+", n)[-1]))

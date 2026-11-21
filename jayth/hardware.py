@@ -196,6 +196,9 @@ def recommend_backend(hw):
         return "cpu"
     if hw["nvidia"]:
         return "cuda"
+    # las gráficas integradas no ayudan: medido en un i5-8250U con Intel UHD 620 (Vulkan, llama.cpp b12549), leer fue un
+    # 20-80 % más lento y escribir hasta 7 veces más lento que con el procesador; con modelos de más de ~8 GB ni siquiera
+    # pudo reservar memoria. Solo se usa Vulkan con una gráfica dedicada (Radeon, Intel Arc)
     discrete = [g for g in hw["gpus"] if re.search(r"radeon rx|arc a|arc b|radeon pro|navi|vega", g, re.I)]
     return "vulkan" if discrete else "cpu"
 

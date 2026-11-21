@@ -172,6 +172,30 @@ NUDGE_WRITTEN = ("[Aviso automático de Jayth, no lo escribió el usuario] Escri
                  "corrige lo que le dijiste al usuario y termina, en el idioma del usuario. No respondas a este aviso ni lo menciones.")
 
 
+NUDGE_EMPTY = ("[Aviso automático de Jayth, no lo escribió el usuario] Tu última respuesta llegó vacía. Sigue con la tarea donde "
+               "la dejaste, con las herramientas que hagan falta, o, si ya terminaste, da el resultado al usuario, en su idioma. "
+               "No respondas a este aviso ni lo menciones.")
+STEER = ("[Mensaje nuevo del usuario, escrito mientras trabajabas. Tenlo en cuenta desde ahora: si cambia lo que pide, "
+         "ajusta lo que queda de la tarea; si solo añade algo, sigue con ello incluido.]\n%s")
+NUDGE_OFFER = ("[Aviso automático de Jayth, no lo escribió el usuario] Le propusiste al usuario «%s» como si fuera un comando, "
+               "pero es una de tus herramientas: él no puede usarla. Si conviene hacerlo, llámala tú; si no, quítala de la "
+               "respuesta y termina, en el idioma del usuario. No respondas a este aviso ni lo menciones.")
+_OFFER_CALL = re.compile(r"(puedes|podr[ií]as|si (lo )?prefieres|si quieres|si deseas|you can|you could|if you (want|prefer|like)|"
+                         r"voc[eê] pode|se preferir|vous pouvez|si vous|du kannst|sie k[oö]nnen|puoi|se preferisci|できます|可以)", re.I)
+
+
+def offered_call(text, name):
+    """¿Le propone al usuario la herramienta como si fuera un comando suyo («Puedes abrirlo con: open_target "x"»)? No
+    dice haberla hecho: ni se avisa de que «no se hizo» ni se convierte en una llamada real (nadie la pidió)."""
+    t = str(text or "")
+    m = re.search(r"(?<![\w.])" + re.escape(name) + r"(?!\w)", t)
+    if not m:
+        return False
+    before = re.sub(r"```[^\n]*\n?", " ", t[:m.start()]).strip()
+    last = [x for x in re.split(r"(?<=[.!?。！])\s+|\n\s*\n", before) if x.strip()]
+    return bool(last and _OFFER_CALL.search(last[-1]))
+
+
 def written_tool_call(text, names):
     """La herramienta que el modelo escribió como texto en vez de llamarla («delete_path(path=…)», {"name": "delete_path"…}):
     no se ejecutó, aunque el modelo pueda decir que sí."""
@@ -181,7 +205,8 @@ def written_tool_call(text, names):
         if len(n) <= 3:
             continue
         e = re.escape(n)
-        if re.search(r"(?<![\w.])" + e + r"\s*\(", t) or re.search(r'"name"\s*:\s*"' + e + '"', t) or \
+        # «nombre(…)», «nombre{clave: …}» / «call:nombre{…}» (el formato propio de Gemma, sin sus marcas), {"name": "nombre"…}
+        if re.search(r"(?<![\w.])" + e + r"\s*[({]", t) or re.search(r'"name"\s*:\s*"' + e + '"', t) or \
                 re.search(r"(?m)^[ \t]*[$>]?[ \t]*" + e + (r"(?:[ \t]|$)" if "_" in n else r"(?:[ \t]+-|[ \t]*$|[ \t]+\w+=)"), code):
             return n
     return None
@@ -194,22 +219,105 @@ def _unq(v):
     return v[1:-1] if len(v) > 1 and v[0] == v[-1] and v[0] in "\"'" else v
 
 
+_BQ = '<|"|>'                                                          # comillas del formato de Gemma
+_BKEY = re.compile(r"""["']?([A-Za-z_]\w*)["']?\s*[:=]\s*""")
+_BEND = re.compile(r"""\s*(?:\}|,\s*["']?[A-Za-z_]\w*["']?\s*[:=])""")   # tras un valor: «}» o la siguiente clave
+
+
+def _brace_args(s, i):
+    """Los datos de una llamada escrita al estilo de Gemma, «nombre{clave: "valor", n: 3}», desde la llave s[i].
+    Un texto termina en la comilla que va seguida de «}» o de otra clave (así sirven comillas sin escapar dentro de un
+    código de varias líneas). Devuelve el diccionario o None si no se entiende."""
+    args, i, n = {}, i + 1, len(s)
+    while i < n:
+        while i < n and s[i] in " \t\r\n,":
+            i += 1
+        if i < n and s[i] == "}":
+            return args
+        m = _BKEY.match(s, i)
+        if not m:
+            return None
+        key, i = m.group(1), m.end()
+        if s.startswith(_BQ, i):
+            j = s.find(_BQ, i + len(_BQ))
+            if j < 0:
+                return None
+            args[key], i = s[i + len(_BQ):j], j + len(_BQ)
+        elif i < n and s[i] in "\"'":
+            q, j = s[i], i + 1
+            while True:
+                j = s.find(q, j)
+                if j < 0:
+                    return None
+                if s[j - 1] != "\\" and _BEND.match(s, j + 1):
+                    break
+                j += 1
+            raw, i = s[i + 1:j], j + 1
+            val = raw.replace("\\" + q, q)
+            if q == '"' and "\\" in raw and "\n" not in raw:   # en una sola línea con escapes al estilo JSON («\n», «\"»)
+                try:
+                    val = json.loads('"' + raw + '"')
+                except ValueError:
+                    pass
+            args[key] = val
+        elif i < n and s[i] in "[{":
+            try:
+                args[key], i = json.JSONDecoder().raw_decode(s, i)
+            except ValueError:
+                return None
+        else:
+            m = re.compile(r"[^,}\n]*").match(s, i)
+            args[key], i = m.group(0).strip(), m.end()
+    return None
+
+
+def _typed_args(fn, args, pos=()):
+    """Los datos de una llamada escrita, completados con los posicionales y con el tipo que pide la herramienta; None si
+    falta algún obligatorio, sobra alguno o no tiene su tipo."""
+    spec = (fn.get("parameters") or {}).get("properties") or {}
+    props = list(spec.keys())
+    req = list((fn.get("parameters") or {}).get("required") or props[:1])
+    args = dict(args)
+    for k, v in zip([p for p in props if p not in args], pos):
+        args[k] = v
+    if not all(k in args for k in req) or not all(k in props for k in args):
+        return None
+    for k, v in list(args.items()):
+        t = (spec.get(k) or {}).get("type")
+        if t in ("integer", "number"):
+            try:
+                args[k] = int(v) if t == "integer" else float(v)
+            except (TypeError, ValueError):
+                return None
+        elif t == "boolean" and not isinstance(v, bool):
+            if str(v).lower() not in ("true", "false"):
+                return None
+            args[k] = str(v).lower() == "true"
+        elif t == "string" and not isinstance(v, str):
+            return None
+    return args
+
+
 def parse_written_call(text, schemas):
     """Convierte la llamada que el modelo escribió como texto en una real, si se entienden sus datos:
-    «delete_path(path='x')», «delete_path "x"», «run_command --command dir», «run_command command="python a.py"».
-    Devuelve (nombre, argumentos) o None. Solo si están todos los obligatorios y cada dato tiene el tipo que pide."""
+    «delete_path(path='x')», «delete_path "x"», «run_command --command dir», «run_command command="python a.py"»,
+    «run_python{code: "…"}» (Gemma). Devuelve (nombre, argumentos) o None. Solo si están todos los obligatorios y cada
+    dato tiene el tipo que pide."""
     import ast
     by = {s["function"]["name"]: s["function"] for s in schemas or []}
+    for m in re.finditer(r"(?<![\w.])([A-Za-z_]\w+)\s*\{", str(text or "")):     # estilo Gemma, puede ocupar varias líneas
+        if m.group(1) in by:
+            args = _brace_args(str(text), m.end() - 1)
+            args = _typed_args(by[m.group(1)], args) if args is not None else None
+            if args is not None:
+                return m.group(1), args
     code = re.findall(r"```[^\n]*\n(.*?)```", str(text or ""), re.S)
     lines = [l.strip().lstrip("$>").strip() for b in code for l in b.splitlines()] + [l.strip() for l in str(text or "").splitlines()]
     for line in lines:
-        name = re.match(r"([A-Za-z_]\w+)", line)
+        name = re.match(r"([A-Za-z_]\w+)(?!\s*\{)", line)            # «nombre{…}» ya se miró arriba, entero
         if not name or name.group(1) not in by:
             continue
         fn = by[name.group(1)]
-        spec = (fn.get("parameters") or {}).get("properties") or {}
-        props = list(spec.keys())
-        req = list((fn.get("parameters") or {}).get("required") or props[:1])
         args, pos = {}, []
         rest = line[len(name.group(1)):].strip()
         try:
@@ -229,26 +337,8 @@ def parse_written_call(text, schemas):
                         pos.append(_unq(m.group(5)))
         except (ValueError, SyntaxError):
             continue
-        for k, v in zip([p for p in props if p not in args], pos):
-            args[k] = v
-        if not all(k in args for k in req) or not all(k in props for k in args):
-            continue
-        ok = True
-        for k, v in list(args.items()):                       # cada dato con el tipo que pide la herramienta
-            t = (spec.get(k) or {}).get("type")
-            if t in ("integer", "number"):
-                try:
-                    args[k] = int(v) if t == "integer" else float(v)
-                except (TypeError, ValueError):
-                    ok = False
-            elif t == "boolean" and not isinstance(v, bool):
-                if str(v).lower() in ("true", "false"):
-                    args[k] = str(v).lower() == "true"
-                else:
-                    ok = False
-            elif t == "string" and not isinstance(v, str):
-                ok = False
-        if ok:
+        args = _typed_args(fn, args, pos)
+        if args is not None:
             return name.group(1), args
     return None
 
@@ -262,7 +352,12 @@ def announced_action(text):
     tail = t[-600:]
     if _ANNOUNCE.search(tail) and _CMD_BLOCK.search(tail):
         return True
-    prose = re.sub(r"```.*?(```|$)", " ", tail, flags=re.S)     # la última frase fuera de los bloques de código
+    blocks = list(re.finditer(r"```[^\n]*\n.*?(?:```|$)", t, re.S))
+    if blocks and not t[blocks[-1].end():].strip():              # acaba en un bloque largo: lo anunciado va justo antes
+        lead = re.sub(r"```.*?(```|$)", " ", t[:blocks[-1].start()], flags=re.S)[-300:]
+        if _ANNOUNCE.search(lead) and _CMD_BLOCK.search(blocks[-1].group(0)):
+            return True
+    prose = re.sub(r"```.*?(```|$)", " ", t, flags=re.S)        # la última frase fuera de los bloques de código
     last = [x for x in re.split(r"(?<=[.!。！])\s+|\n+", prose.strip()) if x.strip()]
     last = last[-1] if last else ""
     return bool(_INTENT.search(last)) and not _OFFER.search(last)
@@ -282,6 +377,15 @@ _WORDS = {k: set(v.split()) for k, v in _WORDS.items()}
 LANG_ES = {"es": "español", "en": "inglés", "pt": "portugués", "fr": "francés", "de": "alemán", "it": "italiano", "ja": "japonés",
            "zh": "chino", "ko": "coreano", "ru": "ruso (u otro idioma de alfabeto cirílico)", "ar": "árabe", "he": "hebreo",
            "el": "griego", "th": "tailandés", "hi": "hindi"}
+
+
+def legible(text):
+    """¿Parece texto escrito, o el modelo se desbocó («?………..? …. ……...…?»)? Menos de un 40 % de letras o cifras
+    (de cualquier escritura) entre lo que no es espacio = no se entiende."""
+    t = [c for c in str(text or "") if not c.isspace()]
+    if len(t) < 4:
+        return True
+    return sum(c.isalnum() for c in t) / len(t) >= 0.4
 
 
 def guess_language(text):
@@ -330,7 +434,7 @@ Puedes ver: cuando lo que haces tiene un resultado visible, compruébalo miránd
 
 LOOK_BLIND = """
 
-No ves imágenes: comprueba tu trabajo por la salida y los errores. Si el resultado es visual, una captura le sirve al usuario para verlo en el chat. Lo que deba quedarse abierto (ventanas, servidores) se lanza en segundo plano y se cierra al acabar."""
+No ves imágenes: comprueba tu trabajo por la salida y los errores. Para manejar programas usa ui_elements y click_element (te dice qué cambió en la ventana) y el teclado; no puedes hacer clic por coordenadas. Si el resultado es visual, una captura le sirve al usuario para verlo en el chat. Lo que deba quedarse abierto (ventanas, servidores) se lanza en segundo plano y se cierra al acabar."""
 
 
 def can_see(cfg):
@@ -457,6 +561,8 @@ def all_schemas(cfg):
         off |= {n for n, t in T.TOOLS.items() if t["category"] == "net"}
     if not cfg.get("computer_control", True):
         off |= {n for n, t in T.TOOLS.items() if t["category"] == "control"}
+    elif not can_see(cfg):         # sin ver la captura no sabe qué hay en unas coordenadas: ui_elements + click_element
+        off |= {"click", "drag", "move_mouse"}
     if cfg.get("_temp") or not cfg.get("memory_enabled", True):       # chat temporal o memoria apagada: ni guarda ni olvida
         off |= {"remember", "forget"}
     if not images_offered(cfg):                  # desactivado, sin motor para este sistema o el modelo ya crea imágenes
@@ -731,6 +837,35 @@ class Run:
         self.groups = list(self.s.get("tool_groups") or [])     # grupos de herramientas ya activos en esta conversación
         self.tools = tool_schemas(settings, self.groups)
         self.sampling = self._sampling()
+        self.t0 = time.time()
+        self.inbox = []             # mensajes que el usuario escribe mientras trabaja: los ve en su próximo paso
+        self.inbox_lock = threading.Lock()
+
+    # ---- mensajes escritos mientras trabaja (para corregirle sin pararlo)
+    def queue(self, text):
+        with self.inbox_lock:
+            item = {"id": uuid.uuid4().hex[:8], "text": text}
+            self.inbox.append(item)
+        return item["id"]
+
+    def unqueue(self, qid):
+        with self.inbox_lock:
+            n = len(self.inbox)
+            self.inbox = [i for i in self.inbox if i["id"] != qid]
+            return len(self.inbox) < n
+
+    def queued(self):
+        with self.inbox_lock:
+            return list(self.inbox)
+
+    def _deliver(self, msgs):
+        """Pasa al modelo lo que el usuario escribió mientras trabajaba. Devuelve True si había algo."""
+        with self.inbox_lock:
+            items, self.inbox = self.inbox, []
+        for it in items:
+            msgs.append({"role": "user", "_auto": True, "content": STEER % it["text"]})
+            self.emit({"t": "steer", "id": it["id"], "text": it["text"]})
+        return bool(items)
 
     def _sampling(self):
         c = self.cfg
@@ -814,7 +949,9 @@ class Run:
         msgs = self.s["messages"] if msgs is None else msgs
         refs = [(i, j) for i, m in enumerate(msgs) if isinstance(m.get("content"), list)
                 for j, p in enumerate(m["content"]) if p.get("type") == "image_ref"]
-        keep = set(refs[-int(self.cfg["keep_images"]):]) if self.cfg.get("vision") and self.cfg["keep_images"] else set()
+        # solo si el modelo de verdad ve (tiene proyector de visión): si no, el motor rechaza la petición entera (HTTP 500)
+        see = can_see(self.cfg)
+        keep = set(refs[-int(self.cfg["keep_images"]):]) if see and self.cfg["keep_images"] else set()
         out = []
         for i, m in enumerate(msgs):
             c = m.get("content")
@@ -830,50 +967,147 @@ class Run:
                         mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}.get(ext, "image/png")
                         parts.append({"type": "image_url", "image_url": {"url": "data:%s;base64,%s" % (mime, b64)}})
                     else:
-                        parts.append({"type": "text", "text": "[imagen anterior omitida para ahorrar contexto]"})
+                        parts.append({"type": "text", "text": "[imagen anterior omitida para ahorrar contexto]" if see else
+                                      "[imagen: el usuario la ve en el chat; tú no puedes ver imágenes]"})
                 m = dict(m, content=parts)
             out.append({k: v for k, v in m.items() if not k.startswith("_")})   # claves internas (_auto) no van al modelo
         return out
 
-    def _maybe_compact(self, base, key):
-        """Si la conversacion se acerca al limite, resume la parte antigua con el propio modelo (en vez de olvidarla)."""
-        msgs = self.s["messages"]
-        budget = self._budget()
-        if self._estimate(msgs) <= 0.85 * budget:
-            return
-        last_user = max((i for i, m in enumerate(msgs) if m["role"] == "user" and not m.get("_auto")), default=0)
-        old, recent = msgs[:last_user], msgs[last_user:]
-        if len(old) < 4:
-            return
-        lines = []
-        for m in old:
-            c = m.get("content")
-            text = c if isinstance(c, str) else " ".join(p.get("text", "") for p in c if p.get("type") == "text")
-            if m.get("tool_calls"):
-                text += " [acciones: %s]" % ", ".join(tc["function"]["name"] for tc in m["tool_calls"])
-            if m["role"] == "tool":
-                text = text[:400]
-            lines.append("%s: %s" % ({"user": "Usuario", "assistant": "Agente", "tool": "Resultado"}.get(m["role"], m["role"]), text[:2500]))
-        transcript = "\n".join(lines)[-24000:]
-        payload = {"model": "local", "stream": True, "max_tokens": 700, "temperature": 0.2, "cache_prompt": False,
-                   "messages": [{"role": "system", "content": "Resume conversaciones de trabajo de forma fiel y compacta."},
-                                {"role": "user", "content": "Resume esta conversación entre un usuario y su agente para poder continuarla. Incluye: objetivo, "
-                                                            "decisiones, archivos creados o modificados (con rutas), comandos importantes, problemas pendientes y "
-                                                            "preferencias del usuario. Máximo 250 palabras.\n\n" + transcript}]}
+    # ---- memoria de la conversación (contexto): recortar y resumir antes de llegar al tope
+    TRIM_AT = 0.70      # a partir de aquí se recortan las salidas antiguas de las herramientas (sin llamar al modelo)
+    SUMMARY_AT = 0.85   # y si aun así no baja, el modelo resume lo antiguo
+
+    def ctx_used(self, msgs=None):
+        """Tokens que ocupa la conversación (estimados) y el máximo del modelo."""
+        msgs = self.s["messages"] if msgs is None else msgs
+        return int(self._fixed_tokens() + self._estimate(msgs)), int(self.cfg["n_ctx"])
+
+    def _emit_ctx(self):
+        used, mx = self.ctx_used()
+        self.emit({"t": "ctx", "used": used, "max": mx})
+
+    def _trim_old_results(self, msgs, keep=3):
+        """Sin llamar al modelo: las salidas largas de herramientas antiguas (todas menos las últimas `keep`) se quedan en
+        su principio, con una nota. Es lo que más ocupa (archivos, páginas web) y casi nunca vuelve a hacer falta entera.
+        Se hace de una vez al cruzar el umbral, no en cada paso (así no se pierde la caché del motor a cada rato)."""
+        idx = [i for i, m in enumerate(msgs) if m["role"] == "tool"]
+        cut = 0
+        for i in idx[:-keep] if keep else idx:
+            c = msgs[i].get("content")
+            if isinstance(c, str) and len(c) > 700 and not msgs[i].get("_trimmed"):
+                msgs[i] = dict(msgs[i], content=c[:400] + "\n[… salida antigua recortada para ahorrar memoria (%d caracteres en total). "
+                                                        "Si la necesitas entera, vuelve a pedirla.]" % len(c), _trimmed=True)
+                cut += len(c) - 400
+        return cut
+
+    @staticmethod
+    def _line(m, limit=2500):
+        c = m.get("content")
+        text = c if isinstance(c, str) else " ".join(p.get("text", "") for p in (c or []) if p.get("type") == "text")
+        if m.get("tool_calls"):
+            text += " [acciones: %s]" % ", ".join(tc["function"]["name"] for tc in m["tool_calls"])
+        if m["role"] == "tool":
+            limit = 400
+        if text.startswith("[Resumen"):
+            limit = 20000                               # un resumen anterior va entero: es lo único que queda de aquello
+        return "%s: %s" % ({"user": "Usuario", "assistant": "Agente", "tool": "Resultado"}.get(m["role"], m["role"]), text[:limit])
+
+    def _summarize(self, base, key, part, what):
+        """Pide al modelo un resumen de esos mensajes, del tamaño adecuado a su memoria. Devuelve el texto o ''."""
+        n = int(self.cfg["n_ctx"])
+        out_tok = int(min(2000, max(350, n * 0.05)))     # 8k → ~400 tokens · 32k → ~1600 · 128k o más → 2000
+        words = int(out_tok * 0.6)
+        room = max(1500, n - out_tok * 2 - 900)          # lo que cabe del texto a resumir en la propia petición
+        transcript = "\n".join(self._line(m) for m in part)
+        transcript = transcript[-int(room * 3.0 / float(self.s.get("_ratio", 1.0))):]
+        ask = ("Resume %s para poder continuarla sin perder nada importante. Incluye: objetivo, decisiones, datos y cifras "
+               "obtenidos, archivos creados o modificados (con rutas), comandos importantes, lo que falta por hacer y las "
+               "preferencias del usuario. Máximo %d palabras, en el idioma de la conversación.\n\n%s") % (what, words, transcript)
+        payload = {"model": "local", "stream": True, "max_tokens": out_tok * 2, "temperature": 0.2, "cache_prompt": False,
+                   "messages": [{"role": "system", "content": "Resumes conversaciones de trabajo de forma fiel y compacta."},
+                                {"role": "user", "content": ask}]}
         if self.cfg.get("llm_mode") == "external":
             payload["model"] = self.cfg.get("external_model") or "local"
             payload.pop("cache_prompt")
-        self.emit({"t": "info", "text": tr("La conversación es larga: estoy resumiendo la parte antigua para liberar memoria del modelo…")})
+        else:                                             # sin razonar: el resumen sale antes (en CPU cada token cuenta)
+            payload["chat_template_kwargs"] = {"enable_thinking": False, "reasoning_effort": "low"}
         try:
-            res = llm_stream(base, key, payload, self.holder, lambda k, t: None)
-            summary = res["content"].strip()
+            return (llm_stream(base, key, payload, self.holder, lambda k, t: None)["content"] or "").strip()
         except Exception:
-            summary = ""
-        if not summary:
-            return
-        self.s["messages"] = [{"role": "user", "_auto": True, "content": "[Resumen de la conversación anterior]\n" + summary},
-                              {"role": "assistant", "content": "Entendido. Continúo con ese contexto."}] + recent
+            return ""
+
+    def _maybe_compact(self, base, key, force=False):
+        """Antes de cada paso: si la conversación se acerca al tope de memoria del modelo, primero se recortan las salidas
+        antiguas de las herramientas y, si no basta, el modelo resume lo antiguo (en vez de olvidarlo). force: el usuario
+        pidió «Resumir ahora». Devuelve True si cambió algo."""
+        msgs = self.s["messages"]
+        budget = self._budget()
+        if not force and self._estimate(msgs) <= self.TRIM_AT * budget:
+            return False
+        changed = False
+        if not force:
+            cut = self._trim_old_results(msgs)
+            if cut:
+                changed = True
+                self.emit({"t": "trimmed", "chars": cut})
+                if self._estimate(msgs) <= self.SUMMARY_AT * budget:
+                    self._emit_ctx()
+                    return True
+        last_user = max((i for i, m in enumerate(msgs) if m["role"] == "user" and not m.get("_auto")), default=0)
+        old = msgs[:last_user]
+        trivial = len(old) < 4 and not (force and len(old) >= 2 and not str(old[0].get("content", "")).startswith("[Resumen"))
+        if not trivial:
+            # 1) lo anterior a tu último mensaje: un resumen al principio
+            self.emit({"t": "info", "text": tr("Resumiendo la parte antigua de la conversación para liberar memoria del modelo…") if force else
+                       tr("La conversación ocupa casi toda la memoria del modelo: estoy resumiendo la parte antigua para no perderla…")})
+            summary = self._summarize(base, key, old, "esta conversación entre un usuario y su agente")
+            if not summary:
+                self._emit_ctx()
+                return changed
+            self.s["messages"] = [{"role": "user", "_auto": True, "content": "[Resumen de la conversación anterior]\n" + summary},
+                                  {"role": "assistant", "content": "Entendido. Continúo con ese contexto."}] + msgs[last_user:]
+        else:
+            # 2) una sola tarea muy larga: se resumen sus primeros pasos y se conservan los últimos tal cual
+            starts = [i for i in range(last_user + 1, len(msgs)) if msgs[i]["role"] == "assistant"]
+            if len(starts) < 3:
+                if force:
+                    self.emit({"t": "info", "text": tr("Aún no hay suficiente conversación para resumir.")})
+                self._emit_ctx()
+                return changed
+            keep_from = starts[-1]
+            for i in reversed(starts[1:]):                   # los pasos recientes que quepan en ~35 % de la memoria
+                if self._estimate(msgs[i:]) > 0.35 * budget:
+                    break
+                keep_from = i
+            keep_from = min(keep_from, starts[-2])          # al menos los dos últimos pasos enteros
+            part = msgs[last_user + 1:keep_from]
+            if len(part) < 2:
+                self._emit_ctx()
+                return changed
+            self.emit({"t": "info", "text": tr("Esta tarea ocupa casi toda la memoria del modelo: estoy resumiendo sus primeros pasos "
+                                                "para no perderlos…")})
+            summary = self._summarize(base, key, part, "lo que el agente ya hizo en la tarea actual del usuario")
+            if not summary:
+                self._emit_ctx()
+                return changed
+            first = dict(msgs[keep_from])                   # el resumen va al principio de ese mensaje del agente:
+            first["content"] = "[Resumen de lo que ya hice en esta tarea]\n%s\n\n%s" % (summary, first.get("content") or "")
+            self.s["messages"] = msgs[:last_user + 1] + [first] + msgs[keep_from + 1:]   # (los turnos siguen alternando)
         self.emit({"t": "compacted", "text": summary})
+        self._emit_ctx()
+        return True
+
+    def compact_now(self):
+        """«Resumir ahora» (fuera de una tarea): resume lo antiguo con el modelo aunque no haga falta todavía."""
+        external = self.cfg.get("llm_mode") == "external"
+        base = self.cfg["external_url"].rstrip("/") if external else "http://127.0.0.1:%d/v1" % int(self.cfg["llm_port"])
+        key = self.cfg.get("external_key") if external else ""
+        try:
+            self._maybe_compact(base, key, force=True)
+        except Exception as e:
+            self.emit({"t": "error", "text": tr("No pude resumir la conversación: %s") % e})
+        finally:
+            self.emit({"t": "compact_end"})
 
     def _fit(self, msgs):
         budget = self._budget()
@@ -916,7 +1150,7 @@ class Run:
             return "blocked"
         if T.is_dangerous(name, args, self.ctx):
             return "pending"
-        if self._account_of(name) and cat not in self.s.setdefault("allowed", []):
+        if self._account_of(name):
             return "pending"        # cambia algo en una cuenta del usuario (publicar, enviar, gastar créditos): siempre se pregunta
         if cat in ("read", "agent") or cat in self.s.setdefault("allowed", []) or mode == "auto" or (mode == "edits" and cat == "write"):
             return "auto"
@@ -1015,6 +1249,10 @@ class Run:
                            "o pregunta al usuario con ask_user."), None, {}
         # --- herramientas del propio agente
         if name == "ask_user":
+            q = str(args.get("question", ""))
+            if legible(q) is False:     # el modelo se desbocó («?………..? ….»): no se le enseña eso al usuario
+                return False, ("Error: la pregunta no se entiende («%s»). Si de verdad necesitas preguntar algo, escríbela de "
+                               "nuevo con palabras; si no, sigue con la tarea." % q[:60]), None, {}
             opts = [str(o) for o in (args.get("options") or [])][:6]
             self.emit({"t": "question", "id": cid, "question": str(args.get("question", "")), "options": opts})
             d = self._wait(cid)
@@ -1039,7 +1277,11 @@ class Run:
             if d == "allow_category":
                 self.s.setdefault("allowed", []).append(tool["category"])
             elif d != "allow":
-                return False, "El usuario denegó esta acción.%s" % (" Motivo: " + d[5:] if d and d.startswith("deny:") and len(d) > 5 else ""), None, {}
+                said = d[5:].strip() if d and d.startswith("deny:") else ""
+                if said:                                 # «no, y haz esto otro»: lo que dijo manda sobre lo que iba a hacer
+                    return False, ("El usuario no permitió esta acción y te dice qué hacer en su lugar: «%s». Hazle caso y "
+                                   "sigue la tarea así." % said), None, {}
+                return False, "El usuario denegó esta acción.", None, {}
         extra = {}
         if name in T.WRITE_TOOLS:
             try:
@@ -1047,6 +1289,8 @@ class Run:
                 extra["undo"] = True
             except Exception:
                 pass
+        if tool["category"] == "control":
+            T.CONTROL_RUN = self                     # el botón «Parar» del aviso en pantalla detiene esta tarea
         try:
             self.ctx.call_id = cid                   # las herramientas largas publican su avance con este id
             r = tool["fn"](args, self.ctx)
@@ -1081,7 +1325,7 @@ class Run:
                 break
 
     # ---- bucle principal
-    def run(self, text, image_names=(), attachments=""):
+    def run(self, text, image_names=(), attachments="", marker=None):
         msgs = self.s["messages"]
         body = text + (("\n\n" + attachments) if attachments else "")
         if on_demand(self.cfg):                         # grupos que seguramente hagan falta: activos desde el primer paso
@@ -1097,7 +1341,10 @@ class Run:
                 body += "\n\n[Responde en %s, el idioma de este mensaje.]" % LANG_ES[lang]
         content = body if not image_names else [{"type": "text", "text": body}] + [{"type": "image_ref", "name": n} for n in image_names]
         msgs.append({"role": "user", "content": content})
-        self.emit({"t": "user", "text": text, "images": list(image_names), "files": [l[4:].strip() for l in attachments.splitlines() if l.startswith("### ")]})
+        uev = {"t": "user", "text": text, "images": list(image_names), "files": [l[4:].strip() for l in attachments.splitlines() if l.startswith("### ")]}
+        if marker:                                      # p. ej. «plan»: el chat lo muestra como marca, no como mensaje tuyo
+            uev["marker"] = marker
+        self.emit(uev)
         external = self.cfg.get("llm_mode") == "external"
         base = self.cfg["external_url"].rstrip("/") if external else "http://127.0.0.1:%d/v1" % int(self.cfg["llm_port"])
         key = self.cfg.get("external_key") if external else ""
@@ -1110,6 +1357,8 @@ class Run:
                     break
                 self._maybe_compact(base, key)
                 msgs = self.s["messages"]
+                if self._deliver(msgs):                 # el usuario escribió mientras trabajaba: lo ve ahora
+                    nudged = False
                 self.emit({"t": "turn_start", "step": step + 1})
                 sent = self._fit(self._to_llm())
                 payload = {"model": (self.cfg.get("external_model") or "local") if external else "local", "stream": True,
@@ -1176,22 +1425,30 @@ class Run:
                     am["tool_calls"] = calls
                 msgs.append(am)
                 self.emit({"t": "assistant_end", "text": text_out})
-                if not calls and nudged and self.cfg.get("mode") != "plan" and \
-                        written_tool_call(text_out, list(T.TOOLS) + [s["function"]["name"] for s in self.tools or []]):
+                wrote = None if calls or self.cfg.get("mode") == "plan" else \
+                    written_tool_call(text_out, list(T.TOOLS) + [s["function"]["name"] for s in self.tools or []])
+                offer = bool(wrote) and offered_call(text_out, wrote)    # se la propone al usuario: no dice haberla hecho
+                if wrote and nudged and not offer:
                     rec = parse_written_call(text_out, self.tools)
                     if rec:
                         calls = [{"id": "call_" + uuid.uuid4().hex[:12], "type": "function",
                                   "function": {"name": rec[0], "arguments": json.dumps(rec[1], ensure_ascii=False)}}]
                         am["tool_calls"] = calls                 # el mensaje ya está en el historial: que lleve la llamada
                         self.emit({"t": "recovered", "name": rec[0]})
-                written = None if calls or nudged or self.cfg.get("mode") == "plan" else \
-                    written_tool_call(text_out, list(T.TOOLS) + [s["function"]["name"] for s in self.tools or []])
+                written = None if calls or nudged else wrote
                 if written or (not calls and not nudged and self.cfg.get("mode") != "plan" and announced_action(text_out)):
                     nudged = True                   # una sola vez por mensaje del usuario
-                    msgs.append({"role": "user", "content": (NUDGE_WRITTEN % written) if written else NUDGE})
-                    self.emit({"t": "nudge", "written": written or ""})
+                    msgs.append({"role": "user", "content": ((NUDGE_OFFER if offer else NUDGE_WRITTEN) % written) if written else NUDGE})
+                    self.emit({"t": "nudge", "written": written or "", "offer": offer})
+                    continue
+                if not calls and not text_out.strip() and not nudged and res["finish"] != "length":
+                    nudged = True                   # respuesta vacía (gpt-oss tras una lista larga): se le pide que siga, una vez
+                    msgs.append({"role": "user", "content": NUDGE_EMPTY})
+                    self.emit({"t": "nudge", "written": "", "empty": True})
                     continue
                 if not calls:
+                    if self.queued():                   # te escribió mientras acababa: sigue, con su mensaje
+                        continue
                     if not text_out.strip():
                         self.emit({"t": "info", "text": (tr("El modelo no escribió respuesta (se alcanzó el límite de tokens; sube «longitud máxima» o desactiva el pensamiento).")
                                                        if res["finish"] == "length" else tr("El modelo no escribió respuesta."))})
@@ -1229,6 +1486,9 @@ class Run:
         finally:
             self._flush()
             self._repair()
+            if T.CONTROL_RUN is self:                   # una pausa pendiente del aviso en pantalla no pasa a la siguiente tarea
+                T.CONTROL_RUN = None
+                T.PAUSED.clear()
             if self.stop.is_set():
                 self.emit({"t": "info", "text": "Detenido."})
             if self.cfg.get("mode") == "plan" and self.s.get("plan") and not self.stop.is_set():

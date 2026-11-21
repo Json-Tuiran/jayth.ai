@@ -30,6 +30,7 @@ DEFAULTS = {
     "llama_tag": "",
     "backend": "cpu",            # cpu | cuda | vulkan
     "threads": max(1, (os.cpu_count() or 2) // 2),
+    "threads_batch": 0,          # hilos al leer (procesar el prompt); 0 = automático (con solo procesador, todos los lógicos)
     "llm_port": 8080,
     "n_ctx": 0,                  # 0 = automatico: el maximo que admite el modelo, ajustado a la memoria (ver effective_ctx)
     "ctx_auto_migrated": False,  # el antiguo valor fijo por defecto (16384) ya se paso a automatico
@@ -124,7 +125,7 @@ DEFAULTS = {
 }
 
 # Ajustes que solo se aplican al reiniciar el motor
-RESTART_KEYS = {"threads", "n_ctx", "gpu_layers", "batch_size", "flash_attn", "cache_type", "mmap", "mlock", "llm_port", "vision", "backend", "llama_exe",
+RESTART_KEYS = {"threads", "threads_batch", "n_ctx", "gpu_layers", "batch_size", "flash_attn", "cache_type", "mmap", "mlock", "llm_port", "vision", "backend", "llama_exe",
                 "spec_type", "tuning"}
 LAST_USE = [time.time()]   # ultima actividad del agente (para apagar el modelo por inactividad)
 
@@ -291,6 +292,19 @@ def models_dir(cfg=None):
     from .relocate import _drive_of
     drv = "" if osys.WIN else _drive_of(d)
     return paths.MODELS_DEFAULT if drv and not os.path.isdir(drv) else d
+
+
+def threads_batch(cfg):
+    """Hilos para leer (procesar lo que le llega al modelo). Automático: con solo procesador, todos los hilos lógicos.
+    Medido en un i5-8250U (4 núcleos, 8 hilos) con llama-bench: leer fue un 37-46 % más rápido con 8 hilos que con 4 en
+    Gemma 4 E4B, gpt-oss-20b y Qwen 27B, mientras que escribir (que depende de la memoria) iba mejor con los 4 núcleos."""
+    tb = int(cfg.get("threads_batch") or 0)
+    if tb > 0:
+        return tb
+    t = int(cfg["threads"])
+    if cfg.get("backend", "cpu") != "cpu":
+        return t                                # con gráfica, leer lo hace ella
+    return max(t, os.cpu_count() or t)
 
 
 def model_title(m):
@@ -543,6 +557,7 @@ class Session:
         self.run = None
         self.updated = self.created
         self.temp = False            # chat temporal: no se guarda en disco, no usa ni escribe la memoria
+        self.leftover = []           # mensajes en cola que el agente no llegó a ver
         self.jpath = os.path.join(paths.SESS_DIR, sid + ".json")
         self.epath = os.path.join(paths.SESS_DIR, sid + ".events.jsonl")
 
@@ -577,11 +592,56 @@ class Session:
         except Exception:
             pass
 
-    def send(self, text, images=(), files=(), mode=None, attach_text=None):
+    def send(self, text, images=(), files=(), mode=None, attach_text=None, marker=None):
         """Lanza el agente en un hilo. files: rutas de documentos adjuntos (su texto se incluye en el mensaje);
         attach_text: el texto de los adjuntos ya preparado (al reenviar un mensaje anterior). Devuelve None o un mensaje de error."""
         if self.run is not None:
             return tr("El agente sigue trabajando en esta conversación.")
+        cfg = self._run_cfg(mode)
+        attach = attach_text if attach_text is not None else attachments_text(files)
+        if cfg["mode"] == "plan":
+            self.data["plan"] = []
+        run = A.Run(self.data, cfg, self.add_event, paths.IMG_DIR)
+        self.run = run
+        if self.title in DEFAULT_TITLES:
+            # titulo provisional; al terminar la primera respuesta el propio modelo propone uno breve
+            t = re.sub(r"\s+", " ", text or tr("Archivo adjunto")).strip()
+            if len(t) > 48:                      # cortado en una palabra entera y con «…» (no «…de la carpeta de trab»)
+                cut = t[:48].rsplit(" ", 1)[0] if " " in t[:48] else t[:47]
+                t = cut.rstrip(" ,.;:") + "…"
+            self.title = t
+            self.data["title_auto"] = 2          # intentos que quedan
+
+        def go():
+            try:
+                run.run(text or "(adjuntos)", list(images), attach, marker)
+            finally:
+                # lo que escribiste mientras trabajaba y no llegó a ver (lo detuviste, hubo un error): vuelve al cuadro de texto
+                self.leftover = [i["text"] for i in run.queued()]
+                self.run = None
+                self.save()
+            self._auto_title(cfg)
+        threading.Thread(target=go, daemon=True).start()
+        return None
+
+    def compact(self):
+        """«Resumir ahora»: el modelo resume lo antiguo de la conversación para liberar memoria. None o un error."""
+        if self.run is not None:
+            return tr("El agente sigue trabajando en esta conversación.")
+        run = A.Run(self.data, self._run_cfg(), self.add_event, paths.IMG_DIR)
+        self.run = run
+
+        def go():
+            try:
+                run.compact_now()
+            finally:
+                self.run = None
+                self.save()
+        threading.Thread(target=go, daemon=True).start()
+        return None
+
+    def _run_cfg(self, mode=None):
+        """Ajustes con los que trabaja el agente en esta conversación (proyecto, asistente, contexto real…)."""
         cfg = SET.snapshot()
         if mode:
             cfg["mode"] = mode
@@ -603,25 +663,7 @@ class Session:
         cfg["_temp"] = self.temp
         cfg["n_ctx"] = effective_ctx(cfg)        # el agente mide la conversación con el contexto real (también en automático)
         cfg["_model_title"] = model_title(active_model(cfg)) if cfg["llm_mode"] == "local" else (cfg.get("external_model") or "")
-        attach = attach_text if attach_text is not None else attachments_text(files)
-        if cfg["mode"] == "plan":
-            self.data["plan"] = []
-        run = A.Run(self.data, cfg, self.add_event, paths.IMG_DIR)
-        self.run = run
-        if self.title in DEFAULT_TITLES:
-            # titulo provisional; al terminar la primera respuesta el propio modelo propone uno breve
-            self.title = re.sub(r"\s+", " ", text or tr("Archivo adjunto")).strip()[:48]
-            self.data["title_auto"] = 2          # intentos que quedan
-
-        def go():
-            try:
-                run.run(text or "(adjuntos)", list(images), attach)
-            finally:
-                self.run = None
-                self.save()
-            self._auto_title(cfg)
-        threading.Thread(target=go, daemon=True).start()
-        return None
+        return cfg
 
     def _auto_title(self, cfg):
         """El modelo elegido pone nombre a la conversacion (una vez; si falla, se reintenta en la siguiente respuesta)."""
@@ -639,6 +681,15 @@ class Session:
         self.title = title.strip()[:80]
         self.data["title_auto"] = None
         self.save()
+
+    def steer(self, text):
+        """Mensaje escrito mientras el agente trabaja: lo verá en su próximo paso. Devuelve su id (o None si ya terminó)."""
+        run = self.run
+        return run.queue(text) if run is not None else None
+
+    def unsteer(self, qid):
+        run = self.run
+        return bool(run and run.unqueue(qid))
 
     def answer(self, cid, text):
         """Respuesta del usuario a una pregunta del agente (ask_user)."""
@@ -660,6 +711,18 @@ class Session:
             self._note("el usuario deshizo tus cambios en: %s" % ", ".join(files))
             self.save()
         return files
+
+    def undo_file(self, path, cids):
+        """Devuelve un archivo a como estaba antes de las acciones cids (las de una respuesta). Devuelve las rutas restauradas."""
+        from . import harness
+        if self.run is not None:
+            return None
+        done, emptied = harness.undo_file(self.id, cids, path)
+        if done:
+            self.add_event({"t": "undo", "ids": emptied, "files": [done]})
+            self._note("el usuario deshizo tus cambios en: %s" % done)
+            self.save()
+        return [done] if done else []
 
     def undo_turn(self):
         """Deshace todos los cambios de archivos de la ultima respuesta (desde el ultimo mensaje del usuario)."""
@@ -703,7 +766,7 @@ class Session:
                         f.write(json.dumps(e, ensure_ascii=False) + "\n")
             except Exception:
                 pass
-        return self.send(ev["text"], ev.get("images") or [])
+        return self.send(ev["text"], ev.get("images") or [], marker=ev.get("marker"))
 
     # ---- volver a un mensaje anterior (editar, reintentar, rebobinar, ramificar)
     def _rewrite_events(self):
@@ -915,6 +978,9 @@ class LLM:
                "-t", str(cfg["threads"]), "-c", str(effective_ctx(cfg, m)), "--jinja", "--no-warmup",
                "-np", "1",                       # una sola ranura: todo el contexto disponible y la cache de prompt siempre se reutiliza
                "-b", str(cfg["batch_size"])]
+        tb = threads_batch(cfg)
+        if tb != int(cfg["threads"]):
+            cmd += ["-tb", str(tb)]             # leer (cálculo) aprovecha todos los hilos; escribir (memoria), los núcleos físicos
         if cfg["backend"] in ("cuda", "vulkan", "metal"):
             if int(cfg["gpu_layers"]) >= 0:
                 cmd += ["-ngl", str(cfg["gpu_layers"])]

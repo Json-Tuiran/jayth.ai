@@ -520,8 +520,9 @@ class OptionRow(QPushButton):
         h = QHBoxLayout(self)
         h.setContentsMargins(12, 9, 12, 9)
         h.setSpacing(10)
+        self.icon_lbl = None
         if ico:
-            il = QLabel()
+            il = self.icon_lbl = QLabel()
             il.setPixmap(pix(ico, color or C["acc"], 16))
             il.setFixedSize(18, 18)
             h.addWidget(il, 0, Qt.AlignTop)
@@ -546,6 +547,16 @@ class OptionRow(QPushButton):
 
     def hasHeightForWidth(self):
         return True
+
+    def resizeEvent(self, e):
+        # el texto va centrado en vertical: con una sola línea el icono también (si no, queda más alto que el texto
+        # cuando la fila es más alta); con varias, arriba, a la altura de la primera
+        super().resizeEvent(e)
+        if self.icon_lbl is not None and self.label.width() > 0:
+            one = self.label.heightForWidth(self.label.width()) < self.label.fontMetrics().lineSpacing() * 1.6
+            want = Qt.AlignVCenter if one else Qt.AlignTop
+            if self.layout().itemAt(0).alignment() != want:
+                self.layout().setAlignment(self.icon_lbl, want)
 
 
 class Switch(QCheckBox):

@@ -69,10 +69,40 @@ screen.
 
 ## Actions on responses
 
-Below each response: **Copy response**, **Read aloud**, **Regenerate response**, **Report a problem with this
-response** and, if it changed files, **Undo changes** (restores all the files it changed in that response). Each
-action that changes files also has its own button to undo just that change. On the right, the tokens, the speed and
-the conversation memory used.
+Below each response: **Copy response**, **Read aloud**, **Regenerate response** and **Report a problem with this response**; on the right, the tokens it wrote and their
+speed. If the response changed files, the **Changed 2 files** card appears below it with each file, its added and removed
+lines and a note (“new”, “to the Recycle Bin”, “moved to …”): a click opens it and its button restores it to how it was before that
+response; with two or more, **Undo all**. Each action that changes files also has its own button to undo just that
+change. When the agent used tools, the “Worked for 3 min 12 s” line separates what it did from its response.
+
+## While it works: writing to it, permissions and notifications
+
+- **Writing to it without stopping it:** while it works you can type and send (Enter or the send button that appears
+  next to **Stop**). The message waits in a queue above the text box (with × to remove it) and the agent sees it on its
+  next step; in the chat it shows the note “You wrote this while it was working; it saw it here”. If it is stopped first, the text goes back to the box.
+- **Grouped steps:** what it thinks between actions (“Thought for a moment”) goes inside the group of actions; when it finishes, the
+  group folds into one line that expands with a click. At the top, the status shows how long it has been working
+  (“Working · local · 1:12”).
+- **Permissions:** besides **Allow** and **Deny**, the field “Or tell it what to do instead and press Enter…” denies the action and passes the instruction
+  to the agent; below the action it shows “You asked: “…””. “Always “…” here” is not offered for sensitive actions or for actions on
+  connected accounts: those are confirmed every time.
+- **Plan:** when you press **Run the plan**, the chat shows the marker “You approved the plan: running it step by step”.
+- **Computer control:** while it uses the mouse and keyboard, a notice at the top of the screen has **Pause** (the agent
+  waits and the user can use the mouse; then **Resume**) and **Stop**. If the agent is about to click where the
+  notice is, the notice moves out of the way. Moving the pointer to the top-left corner also stops it.
+- **Notifications outside the window:** if it is waiting for a permission or an answer while Jayth is in the background,
+  the taskbar icon flashes and a notification appears; if a task longer than 15 seconds finishes while the user is
+  looking at something else, it also notifies (clicking the notification opens that conversation).
+
+## Conversation memory (context)
+
+Next to the microphone in the message box, a ring shows how much of the model's memory the conversation uses: accent
+color while there is room, amber from 70 % (with the percentage) and red from 85 %. At 70 % Jayth trims old tool outputs
+(it keeps their beginning; the last three stay whole). If that's not enough, at 85 % the model summarizes the older part:
+everything before the user's last message or, in a single very long task, its first steps (the latest ones stay as they
+are). The size of the summary adapts to the model's memory. Clicking the ring shows how much is used, what Jayth will do,
+**Summarize now** and **Start a new conversation**. The notice left by the summary has **Show the summary**. On computers without a graphics card,
+summarizing can take a few minutes.
 
 ## Actions on your messages
 
@@ -197,7 +227,7 @@ NVIDIA, Vulkan for AMD or Intel Arc, or CPU. In **Settings › Performance**: **
 up when starting the model**, **Conversation memory (context)** (by default **Automatic**: all the context the model
 supports out of the box, reduced if its memory doesn't fit on the computer; with **Compressed context** twice as much
 or more fits), **Stop the model if unused for**, and in
-**Engine settings**: CPU threads, GPU layers (automatic splits the model between GPU and RAM), Batch size,
+**Engine settings**: CPU threads, Threads for reading (automatic: without a graphics card it reads with all the processor's threads), GPU layers (automatic splits the model between GPU and RAM), Batch size,
 Compressed context, Flash attention, Writing speed-up, mmap, lock in RAM and the local port. Engine changes apply when the model
 restarts (**Restart model**). The engine log is in **Settings › Model log**.
 
@@ -235,7 +265,7 @@ names):
     values**.
 - **Performance:** **Change or update the engine…**, “Warm up when starting the model”, “Conversation memory
   (context)”, “Stop the model if unused for”.
-  - **Engine settings:** “CPU threads”, “GPU layers”, “Batch size”, “Compressed context”, “Flash attention”, “Load
+  - **Engine settings:** “CPU threads”, “Threads for reading”, “GPU layers”, “Batch size”, “Compressed context”, “Flash attention”, “Load
     the model with mmap (faster startup)”, “Lock the model in RAM (keeps the system from moving it to disk)”,
     “Engine local port”.
   - **Downloads:** “Simultaneous connections when downloading models”.

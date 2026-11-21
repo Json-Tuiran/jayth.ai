@@ -314,7 +314,7 @@ GROUP_NAMES = {"Hoy": tr("Hoy"), "Ayer": tr("Ayer"), "Últimos 7 días": tr("Úl
                "Últimos 30 días": tr("Últimos 30 días"), "Anteriores": tr("Anteriores")}
 
 
-def fill_history(lst, sessions, current, query="", empty_text=tr("Tus conversaciones aparecerán aquí"), folded=()):
+def fill_history(lst, sessions, current, query="", empty_text=tr("Aún no hay conversaciones"), folded=()):
     """Rellena una lista con conversaciones agrupadas por fecha (Hoy, Ayer, …). Los grupos en 'folded' salen plegados
     (clic en la cabecera del grupo para plegar o desplegar). Al buscar se muestran todos."""
     lst.blockSignals(True)
@@ -371,6 +371,8 @@ def _n(n, one, many):
 
 def _b(p):
     p = str(p or "").rstrip("\\/")
+    if p in ("", ".", "./", ".\\"):          # la propia carpeta de trabajo: quien llama pone «la carpeta de trabajo»
+        return ""
     return os.path.basename(p) or p
 
 
@@ -550,6 +552,17 @@ def diff_badge(name, a):
 
 
 # ---------------------------------------------------------------- pasos del agente
+# nombres de los datos de cada acción como los lee una persona (si no, salía «path:», «query:»… en cualquier idioma)
+ARG_LABEL = {"path": tr("ruta"), "url": tr("dirección"), "query": tr("búsqueda"), "command": tr("comando"), "cwd": tr("carpeta"),
+             "content": tr("contenido"), "target": tr("destino"), "dest": tr("destino"), "source": tr("origen"),
+             "window": tr("ventana"), "title": tr("título"), "text": tr("texto"), "keys": tr("teclas"), "index": tr("número"),
+             "name": tr("nombre"), "filter": tr("filtro"), "code": tr("código"), "question": tr("pregunta"),
+             "options": tr("opciones"), "pattern": tr("patrón"), "timeout": tr("tiempo máximo"), "action": tr("acción"),
+             "prompt": tr("descripción"), "button": tr("botón"), "max_results": tr("resultados"), "args": tr("argumentos"),
+             "items": tr("tareas"), "fact": tr("dato"), "topic": tr("tema"), "reason": tr("motivo"), "service": tr("servicio"),
+             "task": tr("tarea"), "language": tr("idioma"), "seconds": tr("segundos")}
+
+
 class StepRow(QWidget):
     """Una accion del agente en una linea, sin caja: icono de lo que hace (con un arco que gira mientras se ejecuta),
     «Escribiendo calculadora.py…» con un brillo que lo recorre y, al terminar, «Escribió calculadora.py». Se despliega
@@ -612,19 +625,30 @@ class StepRow(QWidget):
             av = QVBoxLayout(self.approval)
             av.setContentsMargins(12, 10, 12, 10)
             if ev.get("danger"):
-                av.addWidget(TextView(tr("Acción delicada: revisa bien el detalle antes de permitirla."), "plain", color=C["warn"], size="9pt"))
+                av.addWidget(TextView(tr("Acción delicada: revisa bien el detalle antes de permitirla. Esta se confirma siempre, también "
+                                         "en el modo automático."), "plain", color=C["warn"], size="9pt"))
             if ev.get("account"):
                 av.addWidget(TextView(tr("Actúa en tu cuenta de %s: puede publicar, enviar o gastar créditos.") % ev["account"], "plain",
                                       color=C["warn"], size="9pt"))
             bw = QWidget()
             row = FlowLayout(bw)
             cat = T.CATEGORIES.get(ev["category"], ev["category"])
-            for text, kind, dec in ((tr("Permitir"), "primary", "allow"), (tr("Siempre «%s» aquí") % cat.lower(), None, "allow_category"),
-                                    (tr("Denegar"), "danger", "deny")):
+            opts = [(tr("Permitir"), "primary", "allow")]
+            if not ev.get("danger") and not ev.get("account"):     # lo delicado se confirma cada vez: sin «Siempre…»
+                opts.append((tr("Siempre «%s» aquí") % cat.lower(), None, "allow_category"))
+            opts.append((tr("Denegar"), "danger", "deny"))
+            for text, kind, dec in opts:
                 b = btn(text, kind)
                 b.clicked.connect(lambda _=False, d=dec: self._decide(d, on_decide))
                 row.addWidget(b)
             av.addWidget(bw)
+            # «no, y haz esto otro»: se deniega y el agente recibe tu indicación (como en los agentes de escritorio actuales)
+            self.instead = QLineEdit()
+            self.instead.setPlaceholderText(tr("O dile qué hacer en su lugar y pulsa Intro…"))
+            self.instead.setAccessibleName(tr("Qué hacer en su lugar"))
+            self.instead.returnPressed.connect(lambda: self.instead.text().strip() and
+                                               self._decide("deny:" + self.instead.text().strip(), on_decide))
+            av.addWidget(self.instead)
             wrap = QWidget()
             wl = QVBoxLayout(wrap)
             wl.setContentsMargins(30, 2, 6, 8)
@@ -657,15 +681,16 @@ class StepRow(QWidget):
                     self.dl.addWidget(mono(str(val)))
                 elif isinstance(val, str) and ("\n" in val or len(val) > 160):
                     # codigo o texto largo (p. ej. el Python que se envia a Blender): en bloque monoespaciado plegable
-                    self.dl.addWidget(kv(k, ""))
+                    self.dl.addWidget(kv(ARG_LABEL.get(k, k), ""))
                     self.dl.addWidget(mono(val[:20000], None, 220))
                 else:
-                    self.dl.addWidget(kv(k, val if isinstance(val, str) else json.dumps(val, ensure_ascii=False)))
+                    self.dl.addWidget(kv(ARG_LABEL.get(k, k), val if isinstance(val, str) else json.dumps(val, ensure_ascii=False)))
 
     def _set(self, phase):
         self.phase = phase
         tool = CV.tool_icon(self.ev["name"])
-        ico, col = {"pending": ("est_aviso", C["acc"]), "run": (tool, C["acc"]), "ok": (tool, C["mut"]),
+        # pendiente de tu permiso: en ámbar, como lo que espera algo de ti (en verde parecía hecho)
+        ico, col = {"pending": ("est_aviso", C["warn"]), "run": (tool, C["acc"]), "ok": (tool, C["mut"]),
                     "err": ("est_error", C["bad"]), "denied": ("est_bloqueado", C["bad"]), "blocked": ("est_bloqueado", C["faint"])}[phase]
         self.st_icon.set_icon(ico, col)
         live = phase == "run" and self.ev.get("ts", 0) > time.time() - 30
@@ -691,6 +716,7 @@ class StepRow(QWidget):
     def _decide(self, d, cb):
         for b in self.approval.findChildren(QPushButton):
             b.setEnabled(False)
+        self.instead.setEnabled(False)
         cb(self.id, d)
 
     def resolved(self, decision):
@@ -699,6 +725,14 @@ class StepRow(QWidget):
             self.approval_wrap.hide()
         self.details.hide()
         self._set("run" if decision in ("allow", "allow_category") else "denied")
+        said = decision[5:].strip() if (decision or "").startswith("deny:") else ""
+        if said and getattr(self, "said", None) is None:     # lo que le dijiste que hiciera en su lugar, bajo la acción
+            self.said = TextView(tr("Le pediste: «%s»") % said, "plain", color=C["mut"], size="9pt")
+            w = QWidget()
+            sl = QVBoxLayout(w)
+            sl.setContentsMargins(30, 0, 6, 4)
+            sl.addWidget(self.said)
+            self.layout().insertWidget(1, w)
 
     def live(self, info):
         """Avance de una acción larga (crear una imagen): «Dibujando · paso 2 de 4 · quedan 1 min» y su vista previa."""
@@ -750,7 +784,8 @@ class StepRow(QWidget):
                 t, at = join_step(tr("Pulsó"), tr("«%s»") % m.group(1))
                 self.title.setText(t, at)
                 self.head.setToolTip(t)
-        if text:
+        denied = self.phase == "denied"           # «No se permitió…» ya lo dice; el texto para el modelo sobra
+        if text and not denied:
             self.dl.addWidget(mono(text, max_h=300))
         if image:                             # la imagen queda a la vista bajo las acciones (también con el resumen plegado)
             p = os.path.join(paths.IMG_DIR, image)
@@ -759,7 +794,7 @@ class StepRow(QWidget):
             else:
                 self.dl.addWidget(ImageLabel(p))
                 self.details.show()
-        if not ok:
+        if not ok and not denied:
             self.details.show()
         if ok and self.ev["name"] == "create_document" and self.box is not None:
             m = re.search(r"documento \w+ (.+?\.(?:docx|xlsx|pptx|pdf)) \(", text or "", re.I)
@@ -1003,7 +1038,9 @@ def reveal(path):
 class StepsBox(QFrame):
     """Acciones seguidas del agente, como líneas del mensaje (sin caja alrededor). Mientras trabaja se ven una a una;
     al terminar, si son varias, se resumen en una línea («Editó 2 archivos y ejecutó un comando  +12 −3 ›») que se
-    despliega con un clic. Las imágenes que ve y los documentos que crea quedan siempre a la vista debajo."""
+    despliega con un clic. Lo que pensó entre una acción y otra («Pensó 4 s ›») va dentro, entre ellas, en vez de
+    repetirse como líneas sueltas en la conversación. Las imágenes que ve y los documentos que crea quedan siempre a la
+    vista debajo."""
 
     def __init__(self):
         super().__init__()
@@ -1012,6 +1049,7 @@ class StepsBox(QFrame):
         self.v.setContentsMargins(0, 0, 0, 0)
         self.v.setSpacing(0)
         self.rows = []
+        self.thoughts = []                         # lo que pensó antes de cada acción (bloques sin texto)
         self.closed = False
         self.head = Clickable()
         self.head.setObjectName("stepHead")
@@ -1061,6 +1099,15 @@ class StepsBox(QFrame):
             self.head.hide()
         self.refresh()
 
+    def add_thought(self, block):
+        """Un paso en el que solo pensó y luego actuó: su «Pensó 4 s ›» queda aquí, justo antes de la acción."""
+        self.thoughts.append(block)
+        self.bv.addWidget(block)
+        if self.closed:
+            self.closed = False
+            self.body.show()
+            self.head.hide()
+
     def refresh(self):
         self.setProperty("pending", any(r.pending for r in self.rows))
         restyle(self)
@@ -1095,9 +1142,11 @@ class StepsBox(QFrame):
         return None
 
     def finish(self):
-        """El agente pasó a otra cosa: varias acciones terminadas se resumen en una línea."""
-        if self.closed or len(self.rows) < 2 or any(r.pending or r.phase == "run" for r in self.rows):
+        """El agente pasó a otra cosa: varias acciones terminadas (o una y lo que pensó) se resumen en una línea."""
+        if self.closed or not self.rows or len(self.rows) + len(self.thoughts) < 2 or any(r.pending or r.phase == "run" for r in self.rows):
             return
+        if len(self.rows) == 1 and self.rows[0].phase != "ok":
+            return                                  # una sola acción que falló o no permitiste: su error (o lo que le pediste) a la vista
         self.closed = True
         add = rem = 0
         for r in self.rows:
@@ -1106,7 +1155,7 @@ class StepsBox(QFrame):
                 add += int(a[1:] or 0)
                 rem += int(d[1:] or 0)
         fails = sum(1 for r in self.rows if r.phase in ("err", "denied"))
-        self.h_text.setText(summarize_steps(self.rows))
+        self.h_text.setText(summarize_steps(self.rows) if len(self.rows) > 1 else self.rows[0].title.text())
         self.h_text.setToolTip("\n".join(r.title.text() for r in self.rows))
         self.h_add.setText("+%d" % add if add else "")
         self.h_rem.setText("−%d" % rem if rem else "")
@@ -1149,6 +1198,127 @@ class StepsBox(QFrame):
     def toggle(self):
         self.body.setVisible(not self.body.isVisible())
         self._chev()
+
+
+# acciones que cambian archivos (salen en la tarjeta de cambios de la respuesta)
+CHANGE_TOOLS = ("write_file", "edit_file", "multi_edit", "create_document", "delete_path", "move_path")
+
+
+def divider(text, icon_name=None, color=None):
+    """Una línea de texto tenue centrada entre dos rayas finas (marcas de la conversación)."""
+    w = QWidget()
+    w.setObjectName("divider")
+    h = QHBoxLayout(w)
+    h.setContentsMargins(0, 2, 0, 2)
+    h.setSpacing(8)
+    h.addWidget(hline(), 1)
+    if icon_name:
+        h.addWidget(pix_label(icon_name, color or C["faint"], 13))
+    l = QLabel(text)
+    l.setObjectName("faint")
+    h.addWidget(l)
+    h.addWidget(hline(), 1)
+    w.label = l
+    return w
+
+
+def worked_line(seconds):
+    """«Trabajó durante 3 min 12 s» entre lo que hizo el agente y su respuesta."""
+    return divider(tr("Trabajó durante %s") % CV.fmt_secs(seconds))
+
+
+def steer_bubble(ev, compact=False):
+    """Lo que escribiste mientras el agente trabajaba, en el punto en que lo vio."""
+    w = QWidget()
+    v = QVBoxLayout(w)
+    v.setContentsMargins(0, 0, 0, 0)
+    v.setSpacing(2)
+    v.addWidget(user_bubble(ev, compact))
+    l = QLabel(tr("Lo escribiste mientras trabajaba; lo vio aquí"))
+    l.setObjectName("faint")
+    l.setAlignment(Qt.AlignRight)
+    v.addWidget(l)
+    return w
+
+
+class ChangesCard(QFrame):
+    """Bajo la respuesta: los archivos que el agente cambió en ella, con las líneas añadidas y quitadas, para abrirlos o
+    devolverlos uno a uno a como estaban (o todos a la vez)."""
+
+    def __init__(self, files, on_open, on_undo):
+        super().__init__()
+        self.setObjectName("changesCard")
+        self.files = files                         # [{path, add, rem, note, can_undo, undone}]
+        self.on_undo = on_undo
+        v = QVBoxLayout(self)
+        v.setContentsMargins(10, 6, 6, 6)
+        v.setSpacing(0)
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 2)
+        head.setSpacing(6)
+        head.addWidget(pix_label("acc_renombrar", C["mut"], 14))
+        n = len(files)
+        self.h_text = QLabel((tr("Cambió %d archivo") if n == 1 else tr("Cambió %d archivos")) % n)
+        self.h_text.setStyleSheet("color:%s; font-weight:600" % C["mut"])
+        head.addWidget(self.h_text)
+        add, rem = sum(f["add"] for f in files), sum(f["rem"] for f in files)
+        for txt, col in (("+%d" % add if add else "", C["ok"]), ("−%d" % rem if rem else "", C["bad"])):
+            if txt:
+                l = QLabel(txt)
+                l.setStyleSheet("color:%s; font-size:9pt" % col)
+                head.addWidget(l)
+        head.addStretch(1)
+        self.b_all = QPushButton(tr("Deshacer todo"))
+        self.b_all.setProperty("kind", "flat")
+        self.b_all.setIcon(icon("acc_refrescar", C["mut"], 13))
+        self.b_all.setToolTip(tr("Restaura todos los archivos que el agente cambió en esta respuesta"))
+        self.b_all.clicked.connect(lambda: self.on_undo(list(self.files)))
+        head.addWidget(self.b_all)
+        v.addLayout(head)
+        self.rows = []
+        for f in files:
+            row = Clickable()
+            row.setObjectName("changeRow")
+            row.setAttribute(Qt.WA_StyledBackground, True)
+            row.setAttribute(Qt.WA_Hover, True)
+            row.setCursor(Qt.PointingHandCursor)
+            row.setToolTip(tr("Abrir %s") % f["path"])
+            rh = QHBoxLayout(row)
+            rh.setContentsMargins(20, 2, 2, 2)
+            rh.setSpacing(8)
+            name = ElidedLabel(os.path.basename(f["path"]))
+            rh.addWidget(name, 1)
+            note_l = QLabel(f.get("note") or "")
+            note_l.setObjectName("faint")
+            rh.addWidget(note_l)
+            for txt, col in (("+%d" % f["add"] if f["add"] else "", C["ok"]), ("−%d" % f["rem"] if f["rem"] else "", C["bad"])):
+                l = QLabel(txt)
+                l.setStyleSheet("color:%s; font-size:9pt" % col)
+                l.setVisible(bool(txt))
+                rh.addWidget(l)
+            b = tbtn("acc_refrescar", tr("Devolver este archivo a como estaba"), lambda _=False, f=f: self.on_undo([f]), size=13)
+            rh.addWidget(b)
+            row.clicked.connect(lambda f=f: on_open(f["path"]))
+            v.addWidget(row)
+            self.rows.append((f, row, name, note_l, b))
+        self.refresh()
+
+    def refresh(self):
+        left = 0
+        for f, row, name, note_l, b in self.rows:
+            b.setVisible(f["can_undo"] and not f["undone"])
+            left += bool(f["can_undo"] and not f["undone"])
+            if f["undone"]:
+                name.setStyleSheet("color:%s; text-decoration: line-through" % C["faint"])
+                note_l.setText(tr("deshecho"))
+        self.b_all.setVisible(left >= 2)
+
+    def mark_undone(self, paths_):
+        keys = {os.path.normcase(os.path.normpath(p)) for p in paths_}
+        for f, *_ in self.rows:
+            if any(os.path.normcase(os.path.normpath(p)) in keys for p in f["paths"]):
+                f["undone"] = True
+        self.refresh()
 
 
 # ---------------------------------------------------------------- mensajes
@@ -1307,6 +1477,16 @@ class AssistantBlock(QWidget):
 
     def empty(self):
         return not self.text and self.r_start is None
+
+    def thought_only(self):
+        """Solo pensó (sin escribir nada): su «Pensó 4 s ›» puede ir dentro de las acciones que siguen."""
+        return not (self.text or "").strip() and self.r_start is not None and getattr(self, "gallery", None) is None
+
+    def add_extra(self, w):
+        """Algo bajo la respuesta y sobre sus botones (el resumen de los cambios)."""
+        lay = self.layout()
+        lay.insertWidget(lay.indexOf(self.actions), w)
+        return w
 
     def add_gallery(self, paths_):
         """Debajo de la respuesta final: miniaturas de lo que el agente capturó o generó en esta respuesta (cómo quedó)."""
@@ -1503,7 +1683,8 @@ class PlanPanel(QFrame):
         head.setCursor(Qt.PointingHandCursor)
         hh = QHBoxLayout(head)
         hh.setContentsMargins(0, 0, 0, 0)
-        hh.addWidget(pix_label("ui_check", C["acc"], 14))
+        self.ico = pix_label("ui_check", C["acc"], 14)       # ✓ solo con todo hecho; mientras tanto, el de lista
+        hh.addWidget(self.ico)
         self.title = QLabel()
         self.title.setStyleSheet("font-weight:600")
         hh.addWidget(self.title, 1)
@@ -1532,6 +1713,7 @@ class PlanPanel(QFrame):
             return self.hide()
         done = sum(1 for i in items if i.get("status") == "completed")
         self.title.setText(tr("Plan · %d de %d") % (done, len(items)))
+        self.ico.setPixmap(pix("ui_check" if done == len(items) else "uij_alinear_izq", C["acc"], 14))
         for i in items:
             st = i.get("status", "pending")
             row = QWidget()
@@ -1653,6 +1835,104 @@ def local_files(mime):
     if mime is None or not mime.hasUrls():
         return []
     return [os.path.normpath(u.toLocalFile()) for u in mime.urls() if u.isLocalFile() and u.toLocalFile()]
+
+
+class ContextRing(QToolButton):
+    """Memoria de la conversación que usa el modelo (su «contexto»), como un anillo que se va llenando junto al cuadro de
+    texto: del color de acento con sitio de sobra, ámbar desde el 70 % (Jayth empieza a recortar) y rojo desde el 85 % (resume lo antiguo). Con un
+    clic: cuánto ocupa, qué hará Jayth al llegar al tope y «Resumir ahora»."""
+    TRIM, SUMMARY = A.Run.TRIM_AT, A.Run.SUMMARY_AT
+
+    def __init__(self, panel):
+        super().__init__()
+        self.panel = panel
+        self.used = self.max = 0
+        self.setCursor(Qt.PointingHandCursor)
+        self.setPopupMode(QToolButton.InstantPopup)
+        self.setAccessibleName(tr("Memoria de la conversación"))
+        self.setStyleSheet("QToolButton { border: none; background: transparent; border-radius: 16px; }"
+                           "QToolButton:hover { background: %s; } QToolButton::menu-indicator { image: none; width: 0; }" % C["hover"])
+        self.menu_ = QMenu(self)
+        self.menu_.setToolTipsVisible(True)
+        self.menu_.aboutToShow.connect(self._fill)
+        self.setMenu(self.menu_)
+        self.setFixedSize(32, 32)
+        self.hide()
+
+    def frac(self):
+        return min(1.0, self.used / float(self.max)) if self.max else 0.0
+
+    def color(self):
+        f = self.frac()
+        return C["acc"] if f < self.TRIM else C["warn"] if f < self.SUMMARY else C["bad"]
+
+    def set_value(self, used, mx):
+        self.used, self.max = max(0, int(used)), max(0, int(mx))
+        self.setVisible(bool(self.max))
+        if not self.max:
+            return
+        pct = int(round(100 * self.frac()))
+        self.setFixedSize(60 if self.frac() >= self.TRIM else 32, 32)     # cerca del tope, también el número
+        self.setToolTip(tr("Memoria de la conversación: %s de %s tokens (%d %%).\nCerca del tope, Jayth recorta y resume lo "
+                           "antiguo para no perderlo. Pulsa para ver más.") % (self._k(self.used), self._k(self.max), pct))
+        self.update()
+
+    @staticmethod
+    def _k(n):
+        return ("%sk" % i18n.number(n / 1000.0)) if n >= 1000 else str(n)
+
+    def _fill(self):
+        m = self.menu_
+        m.clear()
+        pct = int(round(100 * self.frac()))
+        a = m.addAction(tr("Memoria de la conversación: %s de %s tokens (%d %%)") % (self._k(self.used), self._k(self.max), pct))
+        a.setEnabled(False)
+        left = self.SUMMARY - self.frac()
+        info = (tr("Va sobrada: queda mucho antes del tope.") if self.frac() < 0.5 else
+                tr("Al llegar al %d %%, Jayth recortará las salidas antiguas de las herramientas y, si no basta, resumirá lo "
+                   "antiguo.") % int(100 * self.TRIM) if self.frac() < self.TRIM else
+                tr("Casi llena: en el próximo paso Jayth resumirá lo antiguo para no perderlo.") if left > 0 else
+                tr("Llena: Jayth resume lo antiguo en el próximo paso. También puedes resumir ahora."))
+        b = m.addAction(info)
+        b.setEnabled(False)
+        m.addSeparator()
+        busy = self.panel.busy
+        r = m.addAction(icon("ia_memoria", C["mut"]), tr("Resumir ahora"), self.panel.compact_now)
+        r.setEnabled(not busy)
+        r.setToolTip(tr("El modelo resume lo antiguo de esta conversación y libera memoria (lo reciente se queda tal cual).")
+                     if not busy else tr("Espera a que termine lo que está haciendo."))
+        m.addAction(icon("acc_nuevo", C["mut"]), tr("Empezar una conversación nueva"), self.panel.main.new_conversation)
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        from PySide6.QtGui import QPainter, QPen, QColor
+        from PySide6.QtCore import QRectF
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(7, 7, 18, 18)
+        track = QColor(C["faint"])
+        track.setAlphaF(0.45)
+        p.setPen(QPen(track, 2.2))
+        p.drawEllipse(r)
+        f = self.frac()
+        if f > 0:
+            fill = QColor(self.color())                 # el «quesito» de dentro: se lee como un medidor, no como «cargando»
+            fill.setAlphaF(0.30)
+            p.setPen(Qt.NoPen)
+            p.setBrush(fill)
+            p.drawPie(r.adjusted(3, 3, -3, -3), 90 * 16, -max(8, int(f * 360 * 16)))
+            p.setBrush(Qt.NoBrush)
+            pen = QPen(QColor(self.color()), 2.6)
+            pen.setCapStyle(Qt.RoundCap)
+            p.setPen(pen)
+            p.drawArc(r, 90 * 16, -max(8, int(f * 360 * 16)))
+        if self.width() > 40:
+            font = p.font()
+            font.setPointSizeF(8.5)
+            p.setFont(font)
+            p.setPen(QColor(self.color()))
+            p.drawText(QRectF(29, 0, self.width() - 30, self.height()), Qt.AlignVCenter | Qt.AlignLeft, "%d %%" % int(round(100 * f)))
+        p.end()
 
 
 class ComposerEdit(QPlainTextEdit):
@@ -1793,6 +2073,13 @@ class ChatPanel(QWidget):
         iv.addWidget(self.banner)
         self.plan_panel = PlanPanel()
         iv.addWidget(self.plan_panel)
+        self.queue_box = QFrame()                # lo que escribiste mientras trabaja: lo verá en su próximo paso
+        self.queue_box.setObjectName("queueBox")
+        ql = QVBoxLayout(self.queue_box)
+        ql.setContentsMargins(12, 6, 6, 6)
+        ql.setSpacing(4)
+        self.queue_box.hide()
+        iv.addWidget(self.queue_box)
         self.box = QFrame()
         self.box.setObjectName("composerBox")
         bv = QVBoxLayout(self.box)
@@ -1880,6 +2167,8 @@ class ChatPanel(QWidget):
         self.chips_w, self.plus_btn = chips_w, plus
         _rs = chips_w.resizeEvent
         chips_w.resizeEvent = lambda e: (_rs(e), self._fit_model_chip())
+        self.ctx_ring = ContextRing(self)            # memoria de la conversación usada por el modelo
+        row.addWidget(self.ctx_ring, 0, Qt.AlignBottom)
         self.mic_btn = QToolButton()                 # dictar con el micrófono
         self.mic_btn.setObjectName("round")
         self.mic_btn.setFixedSize(32, 32)
@@ -1891,6 +2180,17 @@ class ChatPanel(QWidget):
         self.mic_btn.clicked.connect(lambda: self.toggle_dictation())
         row.addWidget(self.mic_btn, 0, Qt.AlignBottom)
         self._rec = None
+        self.queue_btn = QToolButton()               # trabajando: enviar sin pararlo (lo verá en su próximo paso)
+        self.queue_btn.setObjectName("round")
+        self.queue_btn.setFixedSize(32, 32)
+        self.queue_btn.setIcon(icon("lista_subir", C["tx"], 16))
+        self.queue_btn.setIconSize(QSize(16, 16))
+        self.queue_btn.setCursor(Qt.PointingHandCursor)
+        self.queue_btn.setToolTip(tr("Enviar sin detenerlo: lo verá en su próximo paso (Intro)"))
+        self.queue_btn.setAccessibleName(tr("Enviar mientras trabaja"))
+        self.queue_btn.clicked.connect(lambda: self.send())
+        self.queue_btn.hide()
+        row.addWidget(self.queue_btn, 0, Qt.AlignBottom)
         self.send_btn = QToolButton()
         self.send_btn.setObjectName("sendBtn")
         self.send_btn.setFixedSize(32, 32)
@@ -2013,6 +2313,12 @@ class ChatPanel(QWidget):
         self.stick = True
         self.questions = {}
         self.turn_undo = False
+        self.turn_rows = []
+        self.change_cards = []
+        self._turn_card = None
+        self._queue_sig = None
+        self._plan_cards = []
+        self.ctx_ring.set_value(0, 0)
         self.clear()
         s = self.session()
         self.empty = None
@@ -2078,8 +2384,17 @@ class ChatPanel(QWidget):
             self.busy = busy
             if not busy:
                 self._stale()
+                left = list(getattr(s, "leftover", None) or [])
+                if left:                                 # lo escribiste mientras trabajaba y no llegó a verlo
+                    s.leftover = []
+                    cur = self.input.toPlainText().strip()
+                    self.input.setPlainText("\n\n".join(([cur] if cur else []) + left))
+                    self.input.moveCursor(QTextCursor.End)
+                    self.main.toast(tr("Tu mensaje en cola no llegó a enviarse: sigue en el cuadro de texto."),
+                                    icon_name="est_info", ms=8000)
             self.sync()
             self.changed.emit()
+        self._render_queue()
 
     def handle(self, ev):
         t = ev["t"]
@@ -2092,8 +2407,23 @@ class ChatPanel(QWidget):
             self.cur = None
             self.turn_blocks = []
             self.turn_images = []
+            self.turn_rows = []
+            self.turn_t0 = ev["ts"]
             self.last_tool = None
-            self.add(UserMessage(ev, self.compact, self))
+            if ev.get("marker") == "plan":              # «Ejecutar el plan»: una marca, no un mensaje tuyo con texto interno
+                for c in getattr(self, "_plan_cards", []):   # la tarjeta «Plan listo» ya está respondida
+                    try:
+                        c.hide()
+                    except RuntimeError:
+                        pass
+                self._plan_cards = []
+                self.add(divider(tr("Aprobaste el plan: se ejecuta paso a paso"), "ui_check", C["ok"]))
+            else:
+                self.add(UserMessage(ev, self.compact, self))
+        elif t == "steer":                              # lo escribiste mientras trabajaba: lo vio en este punto
+            self._end_steps()
+            self.add(steer_bubble(ev, self.compact))
+            self._render_queue(force=True)
         elif t == "turn_start":
             if self.cur is not None and self.cur.empty():   # un paso anterior sin texto ni pensamiento: fuera su línea de espera
                 self.cur.hide()
@@ -2109,17 +2439,18 @@ class ChatPanel(QWidget):
             if self.cur is not None and ev["ts"] > time.time() - 5:
                 self.cur.preparing(ev["name"], ev.get("chars", 0), ev["ts"])
         elif t == "stats":
+            if ev.get("ctx_used") and ev.get("ctx_max"):       # memoria de la conversación: en el anillo junto al cuadro de texto
+                self.ctx_ring.set_value(int(ev["ctx_used"]) + int(ev.get("gen_n") or 0), int(ev["ctx_max"]))
             if self.cur is not None and ev.get("gen_n"):
                 tok = "%s tok" % ev["gen_n"]
                 tps = (" · %s tok/s" % i18n.number(ev["tps"])) if ev.get("tps") else ""
                 cut = tr(" · cortado por límite") if ev.get("finish") == "length" else ""
-                ctx = ctx_s = ""
-                if ev.get("ctx_used") and ev.get("ctx_max"):
-                    ctx = tr(" · contexto %sk de %dk") % (i18n.number(ev["ctx_used"] / 1000.0), ev["ctx_max"] // 1000)
-                    ctx_s = " · %sk/%dk" % (i18n.number(ev["ctx_used"] / 1000.0), ev["ctx_max"] // 1000)
-                self.cur.stats.set_options([tok + tps + cut + ctx, tok + tps + cut + ctx_s, (tps[3:] or tok) + cut + ctx_s,
-                                            (cut[3:] or (ctx_s[3:] or tok))],
-                                           tr("Memoria de la conversación usada por el modelo. Al acercarse al límite, Jayth resume lo antiguo."))
+                self.cur.stats.set_options([tok + tps + cut, (tps[3:] or tok) + cut, cut[3:] or tok],
+                                           tr("Tokens que escribió el modelo en este paso y a qué velocidad."))
+        elif t == "ctx":                                # tras recortar o resumir: lo que ocupa ahora
+            self.ctx_ring.set_value(int(ev.get("used") or 0), int(ev.get("max") or 0))
+        elif t in ("trimmed", "compact_end"):
+            pass
         elif t == "assistant_end":
             if self.cur is None and ev["text"]:
                 self.cur = self.add(AssistantBlock(ev["ts"]))
@@ -2132,7 +2463,8 @@ class ChatPanel(QWidget):
                     self.blocks.append(self.cur)
                     self.turn_blocks = getattr(self, "turn_blocks", []) + [self.cur]
                     self.cur.b_regen.clicked.connect(self.regenerate)
-                    self._end_steps()
+                    if not self.cur.thought_only():   # solo pensó: su «Pensó 4 s ›» irá dentro de las acciones que siguen
+                        self._end_steps()
                 self.cur = None
         elif t == "tool_call" and ev["name"] in ("update_plan", "use_tools"):     # plan: en su panel; activar herramientas: interno
             pass                                        # se muestra en el panel del plan (evento «plan»)
@@ -2146,7 +2478,7 @@ class ChatPanel(QWidget):
             if card.inputs.isVisible():
                 self.waiting += 1
                 self.sync()
-                self.main.notify_pending(tr("tiene una pregunta: %s") % ev["question"], ev["ts"])
+                self.main.notify_pending(tr("tiene una pregunta: %s") % ev["question"], ev["ts"], self.sid)
         elif t == "answer":
             q = self.questions.get(ev["id"])
             if q:
@@ -2158,17 +2490,41 @@ class ChatPanel(QWidget):
             for cid in ev.get("ids") or []:
                 if cid in self.rows:
                     self.rows[cid].undone()
+            for c in getattr(self, "change_cards", []):
+                try:
+                    c.mark_undone(ev.get("files") or [])
+                except RuntimeError:
+                    pass
             self.add(note(tr("Cambios deshechos: %s") % ", ".join(os.path.basename(f) for f in ev.get("files") or [])))
             self._end_steps()
         elif t == "compacted":
-            self.add(note(tr("Resumí la parte antigua de la conversación para que el modelo no la olvide ni se quede sin memoria.")))
+            w = self.add(note(tr("Resumí la parte antigua de la conversación para que el modelo no la olvide ni se quede sin memoria.")))
+            if ev.get("text"):                          # qué recuerda ahora el modelo de aquello: se puede leer
+                full = TextView(ev["text"], "plain", color=C["mut"], size="9pt")
+                full.hide()
+                b = QPushButton(tr("Ver el resumen"))
+                b.setProperty("kind", "flat")
+                b.clicked.connect(lambda _=False, f=full, b=b: (f.setVisible(not f.isVisible()),
+                                                                 b.setText(tr("Ocultar el resumen") if f.isVisible() else tr("Ver el resumen"))))
+                w.layout().addWidget(b, 0, Qt.AlignTop)
+                box = QVBoxLayout()
+                text_w = w.layout().itemAt(1).widget()
+                w.layout().removeWidget(text_w)
+                box.addWidget(text_w)
+                box.addWidget(full)
+                w.layout().insertLayout(1, box, 1)
             self._end_steps()
         elif t == "recovered":                      # la volvió a escribir como texto: Jayth la convirtió en una acción real
             self.add(note(tr("El modelo volvió a escribir la acción «%s» como texto; Jayth la convirtió en una acción real, con los "
                              "permisos de siempre.") % T.TOOL_LABELS.get(ev["name"], ev["name"])))
             self._end_steps()
         elif t == "nudge":                          # el modelo anunció una acción y no la hizo: Jayth se lo recordó
-            if ev.get("written"):                   # la escribió como texto: lo que diga de su resultado no es verdad
+            if ev.get("empty"):                     # respondió vacío a mitad de la tarea
+                self.add(note(tr("El modelo dejó la respuesta vacía; Jayth le pidió que siga con la tarea.")))
+            elif ev.get("offer"):                   # te propuso como comando una acción suya: no dijo haberla hecho
+                self.add(note(tr("El modelo te propuso usar «%s», que es una acción suya y no un comando que puedas "
+                                 "ejecutar; Jayth se lo indicó.") % T.TOOL_LABELS.get(ev["written"], ev["written"])))
+            elif ev.get("written"):                 # la escribió como texto: lo que diga de su resultado no es verdad
                 self.add(note(tr("Atención: el modelo escribió la acción «%s» como texto en vez de hacerla, así que no se hizo "
                                  "(aunque diga lo contrario). Jayth se lo indicó.") % T.TOOL_LABELS.get(ev["written"], ev["written"]), True))
             else:
@@ -2177,22 +2533,29 @@ class ChatPanel(QWidget):
             self.last_tool = "__nudge__"
         elif t == "plan_ready":
             if getattr(self, "_live", False):
-                self.add(self._plan_ready_card())
+                self._plan_cards = [c for c in getattr(self, "_plan_cards", []) if c.parent() is not None] + [self.add(self._plan_ready_card())]
                 self._end_steps()
         elif t == "tool_call":
             self.last_tool = ev["name"]
             row = StepRow(ev, self.decide)
             self.rows[ev["id"]] = row
+            self.turn_rows = getattr(self, "turn_rows", []) + [row]
+            th = self._last_visible()                   # lo que pensó justo antes: dentro del grupo, no suelto en el chat
+            thought = th if isinstance(th, AssistantBlock) and th.thought_only() else None
+            if thought is not None:
+                self.cl.removeWidget(thought)
             if self.steps is None or self._last_visible() is not self.steps:
                 self._end_steps()
                 self.steps = self.add(StepsBox())
                 self.boxes = [b for b in getattr(self, "boxes", []) if b.parent() is not None] + [self.steps]
+            if thought is not None:
+                self.steps.add_thought(thought)
             self.steps.add(row)
             row.box = self.steps
             if row.pending:
                 self.waiting += 1
                 self.sync()
-                self.main.notify_pending(describe(ev["name"], ev.get("args"), "pending"), ev["ts"])
+                self.main.notify_pending(describe(ev["name"], ev.get("args"), "pending"), ev["ts"], self.sid)
         elif t == "approval":
             r = self.rows.get(ev["id"])
             if r:
@@ -2278,22 +2641,29 @@ class ChatPanel(QWidget):
             tb = getattr(self, "turn_blocks", [])
             for b in tb[:-1]:
                 b.final = False
+            anchor = self._final_anchor(tb[-1] if tb else None)
             if tb:
-                tb[-1].final = True
+                tb[-1].final = anchor is not None or not (tb[-1].text or "").strip()
+            self._turn_summary(ev, anchor)
+            # cómo quedó: las últimas capturas, bajo la respuesta (no dentro de un grupo de acciones plegado)
+            home = anchor if anchor is not None else (tb[-1] if tb and self.cl.indexOf(tb[-1]) >= 0 else None)
+            if home is not None:
                 imgs = getattr(self, "turn_images", None) or []
-                near = self._just_above(tb[-1])          # las que ya se ven justo encima no se repiten
+                near = self._just_above(home)            # las que ya se ven justo encima no se repiten
                 imgs = [p for p in imgs if p not in (getattr(near, "images", None) or [])]
                 if imgs:
-                    tb[-1].add_gallery(imgs[-4:])       # cómo quedó: las últimas capturas, bajo la respuesta
+                    home.add_gallery(imgs[-4:])
             self.turn_blocks = []
             self.turn_images = []
             for b in self.blocks:
-                b.actions.setVisible(getattr(b, "final", True))
+                # sin texto (el turno acabó en un error tras una acción) no hay nada que copiar ni escuchar: sin la fila,
+                # que si no quedaba en medio, antes de esa acción
+                b.actions.setVisible(getattr(b, "final", True) and bool((b.text or "").strip()))
                 b.b_regen.hide()
                 b.b_undo_all.hide()
             if self.blocks:
                 self.blocks[-1].b_regen.show()      # solo la ultima respuesta se puede regenerar
-                if self.turn_undo:
+                if self.turn_undo and not getattr(self, "_turn_card", None):   # (con tarjeta de cambios, va en ella)
                     last = self.blocks[-1]
                     last.b_undo_all.show()
                     if not getattr(last, "_undo_wired", False):
@@ -2303,6 +2673,167 @@ class ChatPanel(QWidget):
             for q in self.questions.values():
                 if q.inputs.isVisible():
                     q.answered("")
+            QTimer.singleShot(0, self.main.sync)          # el estado de arriba vuelve a «Listo»
+
+    def _final_anchor(self, b):
+        """La respuesta final del turno si tiene texto y queda después de todas sus acciones (ahí van «Trabajó durante»,
+        los cambios y los botones); None si no la hay."""
+        if b is None or not (b.text or "").strip():
+            return None
+        i = self.cl.indexOf(b)
+        if i < 0:
+            return None
+        last = -1
+        for x in getattr(self, "boxes", []):
+            try:
+                if x.parent() is not None:
+                    last = max(last, self.cl.indexOf(x))
+            except RuntimeError:
+                pass
+        return b if i > last else None
+
+    def _turn_summary(self, ev, anchor):
+        """Al terminar un turno con acciones: «Trabajó durante 3 min 12 s» antes de la respuesta y, bajo ella, los archivos
+        que cambió (para abrirlos o deshacerlos)."""
+        rows = []
+        for r in getattr(self, "turn_rows", []):
+            try:
+                if r.parent() is not None:
+                    rows.append(r)
+            except RuntimeError:
+                pass
+        self.turn_rows = []
+        self._turn_card = None
+        if not rows:
+            return
+        t0 = getattr(self, "turn_t0", None)
+        if t0 and ev["ts"] - t0 >= 1:
+            wl = worked_line(ev["ts"] - t0)
+            if anchor is not None:
+                self.cl.insertWidget(self.cl.indexOf(anchor), wl)
+            else:
+                self.add(wl)
+        files = self._turn_changes(rows)
+        if files:
+            card = ChangesCard(files, self._open_changed, self._undo_files)
+            self.change_cards = [c for c in getattr(self, "change_cards", []) if c.parent() is not None] + [card]
+            self._turn_card = card
+            if anchor is not None:
+                anchor.add_extra(card)
+            else:
+                self.add(card)
+
+    def _abs(self, p):
+        p = str(p or "")
+        return os.path.normpath(p if os.path.isabs(p) else os.path.join(self.workspace(), p))
+
+    def _turn_changes(self, rows):
+        """Archivos que cambiaron en este turno, en orden: {path, paths, add, rem, note, can_undo, undone, cids}."""
+        from . import harness
+        files, order = {}, []
+        for r in rows:
+            name, a = r.ev["name"], r.ev.get("args") or {}
+            if name not in CHANGE_TOOLS or r.phase != "ok" or getattr(r, "is_undone", False):
+                continue
+            snap = harness.snapshot_files(self.sid, r.id)
+            if snap:
+                ps = [(e["path"], e.get("existed", True), bool(e.get("copy")) or not e.get("existed", True)) for e in snap]
+            else:
+                raw = [a.get("source"), a.get("dest")] if name == "move_path" else [a.get("path")]
+                ps = [(self._abs(x), True, False) for x in raw if x]
+            if not ps:
+                continue
+            ad, de = diff_badge(name, a)
+            ad, de = int(ad[1:] or 0), int(de[1:] or 0)
+            path, existed, can = ps[0]
+            key = os.path.normcase(os.path.normpath(path))
+            f = files.get(key)
+            if f is None:
+                f = files[key] = {"path": path, "paths": [path], "add": 0, "rem": 0, "note": "", "undone": False, "cids": [],
+                                  "can_undo": bool(snap) and can, "new": not existed}
+                order.append(key)
+            f["add"] += ad
+            f["rem"] += de
+            f["cids"].append(r.id)
+            if name == "delete_path":
+                f["note"] = tr("a la papelera")
+            elif name == "move_path" and len(ps) > 1:
+                f["note"] = tr("movido a %s") % os.path.basename(ps[1][0])
+                if ps[1][0] not in f["paths"]:
+                    f["paths"].append(ps[1][0])
+            elif f["new"] and not f["note"]:
+                f["note"] = tr("nuevo")
+        return [files[k] for k in order]
+
+    def _open_changed(self, path):
+        if os.path.isfile(path):
+            if self.can_edit(path):
+                self.open_in_editor(path)
+            else:
+                osys.open_path(path)
+        elif os.path.isdir(path):
+            reveal(path)
+        else:
+            self.main.toast(tr("«%s» ya no existe.") % os.path.basename(path), icon_name="est_info")
+
+    def _undo_files(self, fs):
+        """Devuelve esos archivos (de la tarjeta de cambios) a como estaban antes de la respuesta."""
+        s = self.session()
+        if not s:
+            return
+        if s.run is not None:
+            return self.main.toast(tr("Espera a que el agente termine para deshacer."), icon_name="est_aviso", color=C["warn"])
+        done = []
+        for f in fs:
+            if f["undone"] or not f["can_undo"]:
+                continue
+            for p in f["paths"]:
+                done += s.undo_file(p, f["cids"]) or []
+        if done:
+            self.main.toast(tr("Restaurado: %s") % ", ".join(os.path.basename(x) for x in done), icon_name="acc_refrescar", color=C["ok"])
+            for x in done:
+                self.file_written.emit(x)
+        else:
+            self.main.toast(tr("No queda nada que deshacer en esos archivos."), icon_name="est_info")
+
+    # ---- mensajes escritos mientras trabaja
+    def _render_queue(self, force=False):
+        s = self.session()
+        items = s.run.queued() if (s is not None and s.run is not None) else []
+        sig = tuple(i["id"] for i in items)
+        if not force and sig == getattr(self, "_queue_sig", ()):
+            return
+        self._queue_sig = sig
+        lay = self.queue_box.layout()
+        while lay.count():
+            it = lay.takeAt(0)
+            if it.widget():
+                it.widget().hide()
+                it.widget().deleteLater()
+        for i in items:
+            row = QWidget()
+            h = QHBoxLayout(row)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(8)
+            h.addWidget(pix_label("lista_subir", C["faint"], 13))
+            t = ElidedLabel(i["text"].replace("\n", " "))
+            t.setToolTip(i["text"])
+            h.addWidget(t, 1)
+            w = QLabel(tr("lo verá en su próximo paso"))
+            w.setObjectName("faint")
+            h.addWidget(w)
+            h.addWidget(tbtn("ui_cerrar", tr("Quitar de la cola (vuelve al cuadro de texto)"),
+                             lambda _=False, i=i: self._unqueue(i), size=11))
+            lay.addWidget(row)
+        self.queue_box.setVisible(bool(items))
+
+    def _unqueue(self, item):
+        s = self.session()
+        if s is not None and s.unsteer(item["id"]):
+            cur = self.input.toPlainText().strip()
+            self.input.setPlainText("\n\n".join([x for x in (cur, item["text"]) if x]))
+            self.input.moveCursor(QTextCursor.End)
+        self._render_queue(force=True)
 
     def _just_above(self, w):
         """El elemento visible inmediatamente anterior a w en la conversación."""
@@ -2332,7 +2863,7 @@ class ChatPanel(QWidget):
         self.main.sync()
         if card is not None:
             card.hide()
-        self.session().send(tr("Adelante: ejecuta el plan aprobado paso a paso, actualizando la lista de tareas."))
+        self.session().send(tr("Adelante: ejecuta el plan aprobado paso a paso, actualizando la lista de tareas."), marker="plan")
         self.busy = True
         self.sync()
 
@@ -2386,6 +2917,23 @@ class ChatPanel(QWidget):
         s = self.session()
         if s and s.run:
             s.run.resolve(cid, decision)
+
+    def compact_now(self):
+        """«Resumir ahora» desde el anillo de memoria: el modelo resume lo antiguo de la conversación."""
+        s = self.session()
+        if s is None or self.busy:
+            return
+        if not core.SET.ready():
+            return self.main.fix_not_ready()
+        if core.SET.snapshot()["llm_mode"] == "local" and self.main.llm.get("state") != "ready":
+            return self.main.toast(tr("Enciende el modelo para poder resumir la conversación."), icon_name="est_aviso", color=C["warn"])
+        err = s.compact()
+        if err:
+            return QMessageBox.information(self, APP_NAME, err)
+        self.busy = True
+        self.stick = True
+        self.sync()
+        self.changed.emit()
 
     def regenerate(self):
         s = self.session()
@@ -2521,7 +3069,14 @@ class ChatPanel(QWidget):
     def send(self):
         text = self.input.toPlainText().strip()
         files = list(getattr(self, "pending_files", []))
-        if self.busy or (not text and not self.pending_imgs and not files):
+        if self.busy:                        # trabajando: lo que escribes lo verá en su próximo paso (sin pararlo)
+            s = self.session()
+            if text and s is not None and s.steer(text):
+                self.input.clear()
+                self.stick = True
+                self._render_queue(force=True)
+            return
+        if not text and not self.pending_imgs and not files:
             return
         if not core.SET.ready():
             return self.main.fix_not_ready()
@@ -2883,6 +3438,7 @@ class ChatPanel(QWidget):
 
     def _sync_send(self):
         has = bool(self.input.toPlainText().strip() or self.pending_imgs or getattr(self, "pending_files", []))
+        self.queue_btn.setVisible(self.busy and bool(self.input.toPlainText().strip()))
         self.send_btn.setEnabled(self.busy or has)
         self.send_btn.setIcon(icon("trans_detener" if self.busy else "lista_subir", C["on_send"] if (self.busy or has) else C["faint"], 14 if self.busy else 16))
         self.send_btn.setToolTip(tr("Detener") if self.busy else tr("Enviar (Enter)"))
@@ -2945,7 +3501,8 @@ class ChatPanel(QWidget):
         self.model_chip.setToolTip(tr("%s\nEsfuerzo %s: %s\nPulsa para cambiar de modelo o de esfuerzo.") % (
             ("%s · %s" % (core.model_title(m), core.model_quant(m))) if (m and not ext) else name, label.lower(), desc))
         if not self.rec_bar.isVisible():         # mientras se dicta, la caja dice «Escuchando…» / «Pasando tu voz a texto…»
-            self.input.setPlaceholderText(tr("Pide algo sobre el proyecto…") if self.project_id else tr("Escribe un mensaje…"))
+            self.input.setPlaceholderText(tr("Escribe para corregirle o añadir algo; lo verá en su próximo paso") if self.busy else
+                                          tr("Pide algo sobre el proyecto…") if self.project_id else tr("Escribe un mensaje…"))
         self._sync_send()
 
 
@@ -2969,6 +3526,7 @@ class CodePage(QWidget):
         # sin proyecto
         e = QWidget()
         ev = QVBoxLayout(e)
+        ev.setSpacing(18)                    # el mismo aire que la bienvenida del Chat
         ev.addStretch(1)
         logo = QLabel()
         logo.setPixmap(theme.logo(60))
@@ -3890,7 +4448,11 @@ class Main(QMainWindow):
         m.addAction(icon("ui_cerrar"), tr("Salir"), self.quit_app)
         self.tray.setContextMenu(m)
         self.tray.activated.connect(lambda r: r == QSystemTrayIcon.Trigger and self._show())
+        self.tray.messageClicked.connect(self._tray_message_clicked)
         self.tray.show()
+        self._running, self._was_busy, self._notify_sid = {}, False, None
+        self.runs_t = QTimer(self, interval=1000, timeout=self._watch_runs)
+        self.runs_t.start()
 
     def _show(self):
         self.showMaximized()
@@ -3916,9 +4478,49 @@ class Main(QMainWindow):
             return QMessageBox.information(self, APP_NAME, tr("Espera a que el agente termine antes de actualizar."))
         self.restart_app()
 
-    def notify_pending(self, text, ts):
+    def notify_pending(self, text, ts, sid=None):
         if core.SET.snapshot().get("notifications", True) and not self.isActiveWindow() and ts > time.time() - 10:
+            self._notify_sid = sid
             self.tray.showMessage(APP_NAME, tr("El agente espera tu aprobación: %s") % text, QSystemTrayIcon.Information, 6000)
+            QApplication.alert(self, 0)             # el icono de la barra de tareas parpadea hasta que vuelvas
+
+    def _watch_runs(self):
+        """Cada segundo: el tiempo que lleva trabajando (arriba) y, si una conversación termina mientras miras otra cosa,
+        un aviso (en la bandeja y en la barra de tareas si la ventana no está delante)."""
+        active = {sid: getattr(s.run, "t0", time.time()) for sid, s in list(core.SESSIONS.items()) if s.run is not None}
+        for sid, t0 in list(self._running.items()):
+            if sid not in active:
+                self._running.pop(sid)
+                self._finished(sid, time.time() - t0)
+        for sid, t0 in active.items():
+            self._running.setdefault(sid, t0)
+        if active or self._was_busy:
+            self._sync_status()
+        self._was_busy = bool(active)
+
+    def _finished(self, sid, dur):
+        s = core.SESSIONS.get(sid)
+        if s is None or s.data.get("task") or dur < 15 or not core.SET.snapshot().get("notifications", True):
+            return                                   # las tareas programadas avisan por su cuenta
+        here = self.current_panel().sid == sid
+        if self.isActiveWindow() and here:
+            return
+        title = s.title if s.events else APP_NAME
+        if not self.isActiveWindow():
+            self._notify_sid = sid
+            self.tray.showMessage(APP_NAME, tr("Terminó «%s» (trabajó %s).") % (title, CV.fmt_secs(dur)), QSystemTrayIcon.Information, 8000)
+            QApplication.alert(self, 0)
+        elif not s.data.get("project"):
+            self.toast(tr("Terminó «%s».") % title, tr("Ver"), lambda sid=sid: self.open_task_result(sid), ms=9000,
+                       icon_name="ui_check", color=C["ok"])
+
+    def _tray_message_clicked(self):
+        sid, self._notify_sid = getattr(self, "_notify_sid", None), None
+        s = core.SESSIONS.get(sid) if sid else None
+        if s is not None and not s.data.get("project") and self.current_panel().sid != sid:
+            self.open_task_result(sid)
+        else:
+            self._show()
 
     # ---- modos
     def current_panel(self):
@@ -4295,7 +4897,7 @@ class Main(QMainWindow):
                 e.setFlags(Qt.NoItemFlags)
                 e.setForeground(QGuiApplication.palette().placeholderText())
                 self.plist.addItem(e)
-            fill_history(self.clist, cs, self.code.chat.sid, empty_text=tr("Las conversaciones del proyecto aparecerán aquí"), folded=self.folded)
+            fill_history(self.clist, cs, self.code.chat.sid, folded=self.folded)     # corto: cabe en la barra (como «Aún no hay proyectos»)
 
     def _history_click(self, it, panel):
         """Clic en el historial: abre la conversación o pliega/despliega su grupo (Hoy, Ayer…)."""
@@ -4677,11 +5279,7 @@ class Main(QMainWindow):
         name = (tr("Externo · %s") % (cfg["external_model"] or cfg["external_url"])) if ext else (core.model_title(m) if m else tr("Sin modelo"))
         self.model_btn.setText(name + "  ⌄")
         self.model_btn.setToolTip(("%s · %s · %s" % (core.model_title(m), core.model_quant(m), m.get("path", ""))) if (m and not ext) else tr("Elegir modelo"))
-        col, txt = {"ready": (C["ok"], tr("Listo · externo") if ext else tr("Listo · local")), "loading": (C["warn"], tr("Cargando…")),
-                    "checking": (C["faint"], tr("Comprobando…"))}.get(st, (C["faint"], tr("Apagado")))
-        if st == "ready" and self.llm.get("warm") == "warming":
-            col, txt = C["warn"], tr("Preparando el agente…")
-        self.status_lbl.setText("<span style='color:%s'>●</span> <span style='color:%s'>%s</span>" % (col, C["mut"], txt))
+        self._sync_status()
         panel = self.current_panel()
         s = panel.session()
         if self.mode == "code" and self.code.project:
@@ -4709,6 +5307,26 @@ class Main(QMainWindow):
         self.setWindowTitle((tr("● Esperando tu aprobación · %s") if waiting else "%s") % (CODE_NAME if self.mode == "code" else APP_NAME))
         for p in (self.chat, self.code.chat):
             p.sync()
+
+    def _sync_status(self):
+        """El punto de estado de arriba: listo, cargando… o «Trabajando · local · 1:12» (con lo que lleva)."""
+        cfg = core.SET.snapshot()
+        st = self.llm.get("state", "off")
+        ext = cfg["llm_mode"] == "external"
+        col, txt = {"ready": (C["ok"], tr("Listo · externo") if ext else tr("Listo · local")), "loading": (C["warn"], tr("Cargando…")),
+                    "checking": (C["faint"], tr("Comprobando…"))}.get(st, (C["faint"], tr("Apagado")))
+        runs = [s.run for s in list(core.SESSIONS.values()) if s.run is not None]
+        if st == "ready" and self.llm.get("warm") == "warming":
+            col, txt = C["warn"], tr("Preparando el agente…")
+        elif st == "ready" and runs:                     # no «Listo» mientras trabaja: cuánto lleva
+            mine = self.current_panel().session()
+            run = mine.run if (mine is not None and mine.run is not None) else runs[0]
+            sec = int(max(0, time.time() - getattr(run, "t0", time.time())))
+            clock = ("%d:%02d" % divmod(sec, 60)) if sec < 3600 else ("%d:%02d:%02d" % (sec // 3600, sec % 3600 // 60, sec % 60))
+            txt = "%s · %s" % (tr("Trabajando · externo") if ext else tr("Trabajando · local"), clock)
+            col = C["acc"]
+        self.status_lbl.setText("<span style='color:%s'>●</span> <span style='color:%s'>%s</span>" % (col, C["mut"], txt))
+        self.status_lbl.setToolTip(tr("Tiempo que lleva trabajando en esta tarea") if (st == "ready" and runs) else "")
 
     def toggle_llm(self):
         if not core.SET.ready():

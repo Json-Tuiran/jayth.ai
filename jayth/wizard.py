@@ -61,8 +61,10 @@ def btn(text, kind=None, cb=None, ico=None):
 
 
 def set_icon(b, ico):
-    dark = b.property("kind") in ("primary", "ok", "danger")
-    b.setIcon(icon(ico, "#0b1020" if dark else C["tx"], 16))
+    """Icono del color del texto del botón: el de sobre el verde en los principales (oscuro o blanco según el tema) y rojo
+    en los de peligro, que van con borde y fondo transparente."""
+    kind = b.property("kind")
+    b.setIcon(icon(ico, C["on_acc"] if kind in ("primary", "ok") else C["bad"] if kind == "danger" else C["tx"], 16))
     b.setIconSize(QSize(16, 16))
 
 
@@ -500,14 +502,22 @@ class SetupWizard(QDialog):
             rows.append(e)
         rows.sort(key=lambda e: (e is not rec, order[e["fit"]], -HW.capability(e)))
         from PySide6.QtGui import QColor
+        have = {}                                   # repositorio -> modelos de tu lista que salen de él (con sus archivos)
+        for m in self._installed():
+            if m.get("repo"):
+                have.setdefault(m["repo"].lower(), []).append(m)
         self.cat_table.blockSignals(True)
         self.cat_table.setUpdatesEnabled(False)
         self.cat_table.setRowCount(len(rows))
         for i, e in enumerate(rows):
-            name = e["name"] + (("   ★ " + tr("recomendado")) if e is rec else "")
+            mine = have.get(e["repo"].lower(), [])
+            name = e["name"] + (("   ★ " + tr("recomendado")) if e is rec else "") + (("   ✓ " + tr("descargado")) if mine else "")
             it = QTableWidgetItem(name)
             it.setData(Qt.UserRole, e["repo"])
             tip = ["%s · %s" % (e["repo"], _lab_txt(e["lab"])), tr("%s mil millones de parámetros") % i18n.number(e["params"] / 1e9)]
+            if mine:
+                it.setForeground(QColor(C["ok"]))
+                tip.insert(0, tr("Ya lo tienes descargado: %s") % ", ".join(core.model_quant(m) or os.path.basename(m["path"]) for m in mine))
             if e["active"] < e["params"] * 0.6:
                 tip.append(tr("MoE: usa ~%s mil millones por palabra (por eso va más rápido de lo que su tamaño sugiere)") % i18n.number(e["active"] / 1e9))
             if e.get("ctx"):
@@ -642,16 +652,21 @@ class SetupWizard(QDialog):
         rec = HW.recommend_quant(qs, self.hw) if self.hw else None
         self.table.setRowCount(len(qs))
         sel = 0
+        from PySide6.QtGui import QColor
         for i, q in enumerate(qs):
-            name = q["label"] + ((" · " + tr("se crea al convertir")) if q.get("convert") else "") + (("   ★ " + tr("recomendada")) if rec is q else "")
+            got = self._have_quant(q)[1]
+            name = q["label"] + ((" · " + tr("se crea al convertir")) if q.get("convert") and not got else "") + \
+                (("   ★ " + tr("recomendada")) if rec is q else "") + (("   ✓ " + tr("ya descargada")) if got else "")
             it = QTableWidgetItem(name)
             it.setData(Qt.UserRole, i)
+            if got:
+                it.setForeground(QColor(C["ok"]))
+                it.setToolTip(tr("Ya está en tu equipo: %s") % got)
             self.table.setItem(i, 0, it)
             self.table.setItem(i, 1, QTableWidgetItem(HW.human(q["size"])))
             if self.hw:
                 fit = HW.classify(q["size"], self.hw, self.chk_mm.isChecked())
                 fi = QTableWidgetItem(FIT_TXT[fit])
-                from PySide6.QtGui import QColor
                 fi.setForeground(QColor(FIT_COL[fit]))
                 self.table.setItem(i, 2, fi)
             if rec is q:
@@ -668,10 +683,79 @@ class SetupWizard(QDialog):
 
     def _update_disk(self):
         q = self._selected_quant()
+        got = self._have_quant(q)[1] if q else None
+        if got:
+            return self.disk_lbl.setText(tr("✓ Esta variante ya está descargada en %s: no se vuelve a descargar.") % got)
         free = HW.disk_free(self.dest.text() or core.models_dir(self.cfg))
         need = (q["size"] if q else 0) + (self.info["mmproj"][0]["size"] if self.info and self.info["mmproj"] and self.chk_mm.isChecked() else 0)
         warn = ("  ⚠ " + tr("no hay espacio suficiente")) if q and need > free else ""
         self.disk_lbl.setText(tr("Necesita %s · libre en esa unidad: %s%s") % (HW.human(need), HW.human(free), warn))
+
+    # --- lo que ya está descargado (para marcarlo y no bajarlo otra vez)
+    def _installed(self):
+        """Modelos de tu lista cuyos archivos siguen en su sitio."""
+        from . import relocate as R
+        out = []
+        for m in core.SET.snapshot()["models"]:
+            try:
+                if m.get("path") and R.files_ok(m):
+                    out.append(m)
+            except Exception:
+                pass
+        return out
+
+    def _have_quant(self, q):
+        """¿Ya hay en este equipo una copia completa de esa variante? Devuelve (modelo de tu lista o None, ruta o None):
+        por la lista de modelos (mismo archivo del mismo repositorio, o mismo nombre y tamaño) o porque sus archivos
+        ya están enteros en la carpeta de descarga."""
+        info = self.info or {}
+        repo = (info.get("repo") or "").lower()
+        if not q or not repo:
+            return None, None
+        inst = self._installed()
+        if q.get("convert"):                         # convertido en este equipo desde el original
+            for m in inst:
+                if (m.get("repo") or "").lower() == repo and m.get("converted_from") and \
+                        (m.get("quant") or "").upper() == q["label"].upper():
+                    return m, m["path"]
+            return None, None
+        parts = q.get("parts") or []
+        if not parts:
+            return None, None
+        first = os.path.basename(parts[0]["file"]).lower()
+        for m in inst:
+            if os.path.basename(m["path"]).lower() == first and \
+                    ((m.get("repo") or "").lower() == repo or int(m.get("size") or 0) == int(q["size"])):
+                return m, m["path"]
+        folder = os.path.join(self.dest.text() or core.models_dir(self.cfg), info["repo"].replace("/", "__"))
+        files = [os.path.join(folder, os.path.basename(x["file"])) for x in parts]
+        if all(os.path.isfile(f) and (not x.get("size") or os.path.getsize(f) == x["size"]) for f, x in zip(files, parts)):
+            return None, files[0]
+        return None, None
+
+    def _engine_ready(self):
+        return bool(self.cfg.get("setup_done")) and os.path.isfile(self.cfg.get("llama_exe") or "")
+
+    def _offer_existing(self, m):
+        """Ya lo tienes: en vez de descargarlo otra vez, se ofrece usarlo. Devuelve True si se usó."""
+        box = QMessageBox(self)
+        box.setWindowTitle(tr("Ya lo tienes"))
+        box.setIcon(QMessageBox.Information)
+        fm, name = box.fontMetrics(), os.path.basename(m["path"])               # una ruta larga, en una sola línea: se acorta
+        shown = os.path.join(fm.elidedText(os.path.dirname(m["path"]), Qt.ElideMiddle, max(140, 460 - fm.horizontalAdvance(name))), name)   # la carpeta
+        box.setText(tr("«%s» ya está descargado en este equipo:\n%s\n\nNo hace falta descargarlo otra vez.") % (
+            core.model_title(m) + (" · " + core.model_quant(m) if core.model_quant(m) else ""), shown))
+        use = box.addButton(tr("Usar este modelo"), QMessageBox.AcceptRole)
+        box.addButton(tr("Elegir otro"), QMessageBox.RejectRole)
+        box.setDefaultButton(use)
+        box.exec()
+        if box.clickedButton() is not use:
+            return False
+        core.SET.update({"active_model": m["id"], "llm_mode": "local"})
+        self.done_lbl.setText(tr("«%s» ya estaba descargado: ahora es el modelo activo.\n\nArchivo: %s") % (core.model_title(m), m["path"]))
+        self.chk_start.show()
+        self.go(self.p_done)
+        return True
 
     # --- modelo que ya tengo: GGUF, carpeta original de Hugging Face, Ollama o LM Studio
     def _pick_file(self):
@@ -812,8 +896,21 @@ class SetupWizard(QDialog):
                         HW.human(need), self.dest.text() or core.models_dir(self.cfg)))
             if fmt == "gguf" and self.f_mm.text() and not os.path.isfile(self.f_mm.text()):
                 return QMessageBox.warning(self, tr("Archivo no encontrado"), tr("El proyector de visión indicado no existe."))
+            if fmt == "gguf" and self._engine_ready():       # ese archivo ya está en tu lista: no se añade dos veces
+                p = os.path.normcase(os.path.normpath(self.local.get("path") or self.f_model.text()))
+                m = next((m for m in self._installed() if os.path.normcase(os.path.normpath(m["path"])) == p), None)
+                if m is not None and (not self.f_mm.text() or self.f_mm.text() == m.get("mmproj")):
+                    self._offer_existing(m)              # usarlo, o quedarse aquí para elegir otro
+                    return
         elif self._selected_quant() is None:
             return QMessageBox.warning(self, tr("Elige una variante"), tr("Elige un modelo de la lista y espera a que aparezcan sus variantes."))
+        else:
+            m, _ = self._have_quant(self._selected_quant())
+            info = self.info or {}
+            vision_missing = self.chk_mm.isChecked() and info.get("mmproj") and not (m and m.get("mmproj") and os.path.isfile(m["mmproj"]))
+            if m is not None and self._engine_ready() and not vision_missing:
+                self._offer_existing(m)                      # ya lo tenías: se usa sin descargar nada, o eliges otra variante
+                return
         self.go(self.p_engine)
 
     def _llama_ok(self):
@@ -842,7 +939,11 @@ class SetupWizard(QDialog):
         else:
             job.add(tr("Motor llama.cpp (%s)") % dict(BACKENDS)[backend], lambda pr, st, res: self._job_llama(backend, pr, st, res))
         threads = self.threads.value()
-        if self.r_hf.isChecked() and self._selected_quant() and self._selected_quant().get("convert"):
+        m_have, have = self._have_quant(self._selected_quant()) if self.r_hf.isChecked() and self._selected_quant() else (None, None)
+        if self.r_hf.isChecked() and m_have is not None and self._selected_quant().get("convert"):
+            job.add(tr("Modelo %s (ya convertido)") % m_have.get("quant", ""), lambda pr, st, res: pr(1, 1, "ya descargado"))
+            self.pending_model = dict(m_have)
+        elif self.r_hf.isChecked() and self._selected_quant() and self._selected_quant().get("convert"):
             # formato original: descargar sus archivos, preparar el convertidor y crear el GGUF en este equipo
             q, info = self._selected_quant(), self.info
             models = self.dest.text() or core.models_dir(self.cfg)
@@ -872,22 +973,30 @@ class SetupWizard(QDialog):
                                   "added": time.time(), "converted_from": info["path"]}
         elif self.r_hf.isChecked():
             q, info = self._selected_quant(), self.info
-            folder = os.path.join(self.dest.text() or core.models_dir(self.cfg), info["repo"].replace("/", "__"))
-            for k, part in enumerate(q["parts"]):
-                job.add(tr("Modelo %s parte %d/%d") % (q["label"], k + 1, len(q["parts"])) if len(q["parts"]) > 1 else tr("Modelo %s") % q["label"],
-                        lambda pr, st, res, part=part: P.download(P.hf_url(info["repo"], part["file"]), os.path.join(folder, os.path.basename(part["file"])),
-                                                                  part["size"], part["sha256"], pr, st), size=part["size"])
+            if have:                                  # ya está en el equipo: se usa donde está, sin descargarlo otra vez
+                folder = os.path.dirname(have)
+                job.add(tr("Modelo %s (ya descargado)") % q["label"], lambda pr, st, res: pr(1, 1, "ya descargado"))
+            else:
+                folder = os.path.join(self.dest.text() or core.models_dir(self.cfg), info["repo"].replace("/", "__"))
+                for k, part in enumerate(q["parts"]):
+                    job.add(tr("Modelo %s parte %d/%d") % (q["label"], k + 1, len(q["parts"])) if len(q["parts"]) > 1 else tr("Modelo %s") % q["label"],
+                            lambda pr, st, res, part=part: P.download(P.hf_url(info["repo"], part["file"]), os.path.join(folder, os.path.basename(part["file"])),
+                                                                      part["size"], part["sha256"], pr, st), size=part["size"])
             mm = info["mmproj"][0] if info["mmproj"] and self.chk_mm.isChecked() else None
-            if mm:
-                job.add(tr("Proyector de visión"), lambda pr, st, res: P.download(P.hf_url(info["repo"], mm["file"]), os.path.join(folder, os.path.basename(mm["file"])),
+            mm_path = os.path.join(folder, os.path.basename(mm["file"])) if mm else ""
+            if mm and m_have is not None and m_have.get("mmproj") and os.path.isfile(m_have["mmproj"]):
+                mm_path = m_have["mmproj"]               # su proyector de visión también estaba
+            elif mm:
+                job.add(tr("Proyector de visión"), lambda pr, st, res: P.download(P.hf_url(info["repo"], mm["file"]), mm_path,
                                                                                mm["size"], mm["sha256"], pr, st), size=mm["size"])
-            self.pending_model = {"id": re.sub(r"[^\w.-]+", "_", info["repo"] + "_" + q["label"]), "name": P.pretty_name(info["repo"]),
-                                  "quant": quant_short(q["label"]), "path": os.path.join(folder, os.path.basename(q["parts"][0]["file"])),
-                                  "mmproj": os.path.join(folder, os.path.basename(mm["file"])) if mm else "",
-                                  "repo": info["repo"], "file": q["file"], "size": q["size"], "added": time.time()}
+            self.pending_model = {"id": m_have["id"] if m_have else re.sub(r"[^\w.-]+", "_", info["repo"] + "_" + q["label"]),
+                                  "name": P.pretty_name(info["repo"]),
+                                  "quant": quant_short(q["label"]), "path": have or os.path.join(folder, os.path.basename(q["parts"][0]["file"])),
+                                  "mmproj": mm_path, "repo": info["repo"], "file": q["file"], "size": q["size"], "added": time.time()}
         else:
             p = os.path.normpath((self.local or {}).get("path") or self.f_model.text())
-            self.pending_model = {"id": re.sub(r"[^\w.-]+", "_", "local_" + os.path.basename(p)),
+            same = next((m for m in self._installed() if os.path.normcase(os.path.normpath(m["path"])) == os.path.normcase(p)), None)
+            self.pending_model = {"id": same["id"] if same else re.sub(r"[^\w.-]+", "_", "local_" + os.path.basename(p)),   # sin duplicados
                                   "name": (self.local or {}).get("name") or P.pretty_name(os.path.basename(p)),
                                   "quant": P.quant_label(os.path.basename(p)), "path": p, "mmproj": os.path.normpath(self.f_mm.text()) if self.f_mm.text() else "",
                                   "repo": "", "file": os.path.basename(p), "size": os.path.getsize(p), "added": time.time()}

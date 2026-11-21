@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Ventana de Ajustes con secciones (los cambios se guardan al instante)."""
 import os, re, sys, json, subprocess, threading, webbrowser, urllib.request, datetime
-from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtCore import Qt, QTimer, QSize, QLocale
 from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QPushButton, QListWidget, QListWidgetItem,
                                QStackedWidget, QScrollArea, QCheckBox, QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit, QPlainTextEdit,
@@ -299,6 +299,28 @@ class SettingsDialog(QDialog):
         self.nav.setCurrentRow(keys.index(page) if page in keys else labels.index(page) if page in labels else 0)
 
     # ---- infraestructura
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._fit_combos()
+
+    def _fit_combos(self):
+        """Las listas de cada página, todas del mismo ancho: el de su opción más larga (entre 300 y 480 px; si aun así no
+        cabe, «…»). Se mide ya dentro de la ventana, con su letra de verdad (antes saldría con la letra por defecto)."""
+        for col in getattr(self, "_cols", []):
+            combos = [c for c in col.findChildren(QComboBox) if c.property("setChoice")]
+            if not combos:
+                continue
+            from PySide6.QtWidgets import QStyle, QStyleOptionComboBox
+            for c in combos:
+                c.ensurePolished()
+            c = combos[0]                             # lo que ocupan la flecha y el relleno, medido con el estilo
+            opt = QStyleOptionComboBox()
+            c.initStyleOption(opt)
+            extra = c.width() - c.style().subControlRect(QStyle.CC_ComboBox, opt, QStyle.SC_ComboBoxEditField, c).width() + 8
+            need = max((c.fontMetrics().horizontalAdvance(c.itemText(i)) for c in combos for i in range(c.count())), default=0)
+            for c in combos:
+                c.setFixedWidth(max(300, min(480, need + extra)))
+
     def _scroll(self, title, build, sub=""):
         """Página con su título, una frase que explica para qué sirve y las opciones agrupadas en tarjetas."""
         sc = QScrollArea()
@@ -326,6 +348,7 @@ class SettingsDialog(QDialog):
         v.addSpacing(8)
         page = Page(v)
         build(page)
+        self._cols = getattr(self, "_cols", []) + [col]      # sus listas se igualan al mostrarse (ver _fit_combos)
         v.addStretch(1)
         sc.setWidget(w)
         return sc
@@ -418,6 +441,8 @@ class SettingsDialog(QDialog):
             side = w
         elif kind == "float":
             w = QDoubleSpinBox()
+            # separador decimal como en el resto de Jayth: coma en portugués, francés, alemán e italiano; punto en los demás
+            w.setLocale(QLocale(i18n.LANG) if i18n.LANG in i18n.COMMA else QLocale.c())
             w.setRange(kw.get("min", 0.0), kw.get("max", 2.0))
             w.setSingleStep(kw.get("step", 0.05))
             w.setDecimals(kw.get("decimals", 2))
@@ -435,7 +460,8 @@ class SettingsDialog(QDialog):
                 i = w.count() - 1
             w.setCurrentIndex(i)
             w.currentIndexChanged.connect(lambda _: self._save(key, w.currentData()))
-            w.setFixedWidth(300)
+            w.setFixedWidth(300)                      # luego la página iguala todas al ancho de su opción más larga
+            w.setProperty("setChoice", True)
             side = w
         elif kind in ("text", "secret"):
             w = QLineEdit(str(val))
@@ -641,7 +667,7 @@ class SettingsDialog(QDialog):
         self.field(v, "top_p", "Top-p", "float", min=0, max=1)
         self.field(v, "top_k", "Top-k", "int", min=0, max=500, special=tr("sin límite"))
         self.field(v, "min_p", "Min-p", "float", min=0, max=1)
-        self.field(v, "repeat_penalty", tr("Penalización por repetición"), "float", min=1, max=2, help=tr("1,00 = desactivada."))
+        self.field(v, "repeat_penalty", tr("Penalización por repetición"), "float", min=1, max=2, help=tr("1.00 = desactivada."))
         self.field(v, "seed", tr("Semilla"), "int", min=-1, max=2_000_000_000, special=tr("aleatoria"), help=tr("Fija un número para obtener siempre la misma respuesta."))
         r = QHBoxLayout()
         r.addWidget(btn(tr("Restablecer valores recomendados"), cb=self._reset_generation))
@@ -666,7 +692,8 @@ class SettingsDialog(QDialog):
         cl.setContentsMargins(14, 12, 14, 12)
         hw = lbl(tr("Detectando tu equipo…"))
         cl.addWidget(hw)
-        cl.addWidget(lbl(tr("Motor: llama.cpp %s · %s") % (cfg["llama_tag"] or "", {"cpu": "CPU", "cuda": tr("GPU NVIDIA (CUDA)"), "vulkan": "GPU (Vulkan)"}.get(cfg["backend"], cfg["backend"])), "faint"))
+        eng = tr("Motor: llama.cpp %s · %s") % (cfg["llama_tag"] or "", {"cpu": "CPU", "cuda": tr("GPU NVIDIA (CUDA)"), "vulkan": "GPU (Vulkan)"}.get(cfg["backend"], cfg["backend"]))
+        cl.addWidget(lbl(re.sub(r" {2,}", " ", eng), "faint"))     # sin versión conocida (motor elegido a mano): sin doble espacio
         r = QHBoxLayout()
         r.addWidget(btn(tr("Cambiar o actualizar el motor…"), cb=lambda: SetupWizard(self).exec(), ico="acc_refrescar"))
         self.tune_btn = btn(tr("Optimizar para este equipo"), "primary", self._tune, "prof_cpu")
@@ -704,6 +731,9 @@ class SettingsDialog(QDialog):
                    choices=[(tr("Nunca"), 0), (tr("5 minutos"), 5), (tr("15 minutos"), 15), (tr("30 minutos"), 30), (tr("1 hora"), 60)], help=tr("Libera memoria cuando no lo estás usando."))
         self._section(v, tr("Ajustes del motor"))
         self.field(v, "threads", tr("Hilos de CPU"), "int", min=1, max=256, help=tr("Lo ideal suele ser el número de núcleos físicos."))
+        self.field(v, "threads_batch", tr("Hilos al leer"), "int", min=0, max=256, special=tr("automático"),
+                   help=tr("Leer tu mensaje es sobre todo cálculo: sin gráfica suele ir más rápido con todos los hilos del procesador. "
+                           "Escribir depende de la memoria y va mejor con los núcleos físicos. La optimización medida elige los dos."))
         self.field(v, "gpu_layers", tr("Capas en la GPU"), "int", min=-1, max=999, special=tr("automático"), help=tr("Solo con GPU. Automático reparte el modelo entre GPU y RAM."))
         self.field(v, "batch_size", tr("Tamaño de lote"), "choice", choices=[(str(x), x) for x in (128, 256, 512, 1024, 2048)],
                    help=tr("Más grande procesa más rápido los textos largos, con algo más de memoria."))
@@ -1223,7 +1253,8 @@ class SettingsDialog(QDialog):
         imgs = unused_images()
         size = sum(os.path.getsize(f) for f in imgs if os.path.isfile(f))
         r = QHBoxLayout()
-        b = btn(tr("Liberar espacio: borrar %d imágenes sin usar (%s)") % (len(imgs), HW.human(size)), cb=self._clean_images, ico="acc_eliminar")
+        b = btn(tr("Liberar espacio: borrar %d imágenes sin usar (%s)") % (len(imgs), HW.human(size)) if imgs else
+                tr("No hay imágenes sin usar que borrar"), cb=self._clean_images, ico="acc_eliminar")
         b.setEnabled(bool(imgs))
         r.addWidget(b)
         r.addStretch(1)
@@ -1304,7 +1335,7 @@ class SettingsDialog(QDialog):
         r.addStretch(1)
         v.addLayout(r)
         commit = local_commit()
-        v.addWidget(lbl(tr("Código: %s%s\nMotor: llama.cpp %s\nDatos: %s") % (paths.APP_DIR, (" · " + commit[:7]) if commit else "", cfg["llama_tag"] or "—", paths.HOME), "faint"))
+        v.addWidget(lbl(tr("Código: %s%s\nMotor: llama.cpp %s\nDatos: %s") % (paths.APP_DIR, (" · " + commit[:7]) if commit else "", cfg["llama_tag"] or "", paths.HOME), "faint"))
         self.upd = lbl("", "muted")
         self.upd.hide()
         r = QHBoxLayout()

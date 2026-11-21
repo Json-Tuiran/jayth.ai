@@ -5,7 +5,8 @@
 - ControlOverlay: mientras el agente usa el ratón y el teclado, un brillo animado recorre los bordes de la pantalla,
   el puntero lleva un halo con la etiqueta «Jayth» que se desliza hasta donde va a actuar (y deja una onda al hacer
   clic) y arriba aparece un aviso de cómo detenerlo. Al capturar la pantalla, los bordes destellan un instante.
-  Todo deja pasar los clics y, en Windows, no sale en las capturas que hace el propio agente.
+  Todo deja pasar los clics menos el aviso (con «Pausar» y «Parar»), que se aparta si el agente va a pulsar donde está;
+  en Windows nada de esto sale en las capturas que hace el propio agente.
 - glow(widget): el mismo brillo, un momento, alrededor de una zona de la ventana donde el agente acaba de trabajar
   (el lienzo, el editor).
 
@@ -191,21 +192,58 @@ class _Pointer(QWidget):
 
 
 class _Notice(QWidget):
-    """Aviso arriba en el centro: el agente tiene el control y cómo quitárselo."""
-    TEXT = tr("Jayth está usando el ratón y el teclado  ·  para detenerlo, lleva el ratón a la esquina superior izquierda")
+    """Aviso arriba en el centro: el agente tiene el control, con «Pausar» (para usar tú el ratón un momento) y «Parar».
+    Es la única pieza que recibe clics; no se lleva el foco de la ventana en la que trabaja el agente."""
+    TEXT = tr("Jayth está usando el ratón y el teclado")
+    PAUSED = tr("En pausa: puedes usar el ratón y el teclado")
 
     def __init__(self, ov):
         super().__init__(None)
-        _float(self)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint
+                            | Qt.WindowDoesNotAcceptFocus)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setMouseTracking(True)
         self.ov = ov
+        self.hover = None
+        self.btns = {}
         self.fit()
 
+    def _labels(self):
+        from . import tools as T
+        return (tr("Seguir") if T.PAUSED.is_set() else tr("Pausar")), tr("Parar")
+
     def fit(self):
+        from . import tools as T
         self.ensurePolished()                         # la fuente que pone la hoja de estilos de la app
         fm = self.fontMetrics()
-        self.resize(fm.horizontalAdvance(self.TEXT) + 52, fm.height() + 16)
+        text = self.PAUSED if T.PAUSED.is_set() else self.TEXT
+        a, b = self._labels()
+        bw = [fm.horizontalAdvance(t) + 22 for t in (a, b)]
+        h = fm.height() + 18
+        self.resize(28 + fm.horizontalAdvance(text) + 14 + bw[0] + 6 + bw[1] + 6, h)
+        x = self.width() - 6 - bw[1]
+        bh = h - 10
+        self.btns = {"stop": QRect(x, 5, bw[1], bh), "pause": QRect(x - 6 - bw[0], 5, bw[0], bh)}
+
+    def mouseMoveEvent(self, e):
+        k = next((k for k, r in self.btns.items() if r.contains(e.position().toPoint())), None)
+        if k != self.hover:
+            self.hover = k
+            self.setCursor(Qt.PointingHandCursor if k else Qt.ArrowCursor)
+            self.update()
+
+    def leaveEvent(self, e):
+        self.hover = None
+        self.update()
+
+    def mousePressEvent(self, e):
+        k = next((k for k, r in self.btns.items() if r.contains(e.position().toPoint())), None)
+        if k:
+            self.ov.press(k)
 
     def paintEvent(self, e):
+        from . import tools as T
         lv = self.ov.level(pulse=False)
         if lv <= 0.005:
             return
@@ -213,18 +251,35 @@ class _Notice(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
         bg = QColor(C["panel2"])
-        bg.setAlphaF(0.94 * lv)
+        bg.setAlphaF(0.96 * lv)
         p.setBrush(bg)
-        p.setPen(QPen(_acc(0.9 * lv), 1.2))
+        paused = T.PAUSED.is_set()
+        p.setPen(QPen(QColor(C["warn"]) if paused else _acc(0.9 * lv), 1.2))
         p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
         p.setPen(Qt.NoPen)
-        p.setBrush(_acc(lv * (0.6 + 0.4 * math.sin(time.time() * 4))))   # punto que late
+        dot = QColor(C["warn"]) if paused else _acc(lv * (0.6 + 0.4 * math.sin(time.time() * 4)))   # punto que late
+        p.setBrush(dot)
         p.drawEllipse(QPointF(16, r.center().y()), 4, 4)
         t = QColor(C["tx"])
         t.setAlphaF(lv)
         p.setPen(t)
         p.setFont(self.font())
-        p.drawText(r.adjusted(28, 0, -12, 0), Qt.AlignVCenter | Qt.AlignLeft, self.TEXT)
+        left = self.btns["pause"].left() - 8
+        p.drawText(QRectF(28, 0, left - 28, self.height()), Qt.AlignVCenter | Qt.AlignLeft, self.PAUSED if paused else self.TEXT)
+        a, b = self._labels()
+        for k, label in (("pause", a), ("stop", b)):
+            br = QRectF(self.btns[k]).adjusted(0.5, 0.5, -0.5, -0.5)
+            col = QColor(C["bad"] if k == "stop" else C["tx"])
+            fill = QColor(col)
+            fill.setAlphaF((0.22 if self.hover == k else 0.10) * lv)
+            p.setBrush(fill)
+            edge = QColor(col)
+            edge.setAlphaF(0.55 * lv)
+            p.setPen(QPen(edge, 1))
+            p.drawRoundedRect(br, br.height() / 2, br.height() / 2)
+            col.setAlphaF(lv)
+            p.setPen(col)
+            p.drawText(br, Qt.AlignCenter, label)
         p.end()
 
 
@@ -241,6 +296,7 @@ class ControlOverlay(QObject):
         self.fade = 0.0
         self.t0 = time.time()
         self.size, self.origin, self.dpr = (1, 1), (0, 0), 1.0
+        self.bottom = False       # el aviso se apartó abajo (el agente iba a hacer clic donde estaba)
         self.timer = QTimer(self, interval=33, timeout=self._frame)
 
     # --- desde cualquier hilo
@@ -266,8 +322,37 @@ class ControlOverlay(QObject):
         e["bottom"].setGeometry(g.x(), g.y() + g.height() - EDGE, g.width(), EDGE)
         e["left"].setGeometry(g.x(), g.y(), EDGE, g.height())
         e["right"].setGeometry(g.x() + g.width() - EDGE, g.y(), EDGE, g.height())
-        self.notice.fit()
-        self.notice.move(g.x() + (g.width() - self.notice.width()) // 2, g.y() + 10)
+        self._place_notice()
+
+    def _place_notice(self):
+        from . import tools as T
+        g = QGuiApplication.primaryScreen().geometry()
+        n = self.notice
+        n.fit()
+        x = g.x() + (g.width() - n.width()) // 2
+        y = g.y() + (g.height() - n.height() - 54 if self.bottom else 10)
+        n.move(x, y)
+        d = self.dpr
+        T.NOTICE_RECT = (int((x - g.x()) * d), int((y - g.y()) * d), int((x - g.x() + n.width()) * d), int((y - g.y() + n.height()) * d))
+
+    def press(self, k):
+        """Botones del aviso: «Pausar» / «Seguir» y «Parar»."""
+        from . import tools as T
+        if k == "pause":
+            if T.PAUSED.is_set():
+                T.PAUSED.clear()
+            else:
+                T.PAUSED.set()
+                self.pointer.hide()
+                self.pointer.cur = None
+        else:
+            T.PAUSED.clear()
+            run = T.CONTROL_RUN
+            if run is not None:
+                run.request_stop()
+            self.until = time.time()
+        self._place_notice()
+        self.notice.update()
 
     def _windows(self):
         return list(self.parts.values()) + [self.pointer, self.notice] if self.parts else []
@@ -287,6 +372,14 @@ class ControlOverlay(QObject):
             return
         if kind == "end":
             self.until = min(self.until, now)
+        elif kind == "dodge":                          # el agente va a hacer clic donde está el aviso: al otro extremo
+            self.bottom = not self.bottom
+            self._place_notice()
+        elif kind == "paused":
+            self.until = now + HOLD
+            self._show(self.notice)
+            for w in self.parts.values():
+                self._show(w)
         elif kind == "look":
             self.flash = now + 0.7
             for w in self.parts.values():
@@ -319,7 +412,10 @@ class ControlOverlay(QObject):
         return self.fade * (0.78 + 0.22 * math.sin((time.time() - self.t0) * 2.6))
 
     def _frame(self):
+        from . import tools as T
         now = time.time()
+        if T.PAUSED.is_set():                           # en pausa el aviso sigue a la vista hasta «Seguir» o «Parar»
+            self.until = max(self.until, now + HOLD)
         target = 1.0 if now < self.until else (0.85 if now < self.flash else 0.0)
         speed = 0.18 if target > self.fade else 0.08
         self.fade += (target - self.fade) * (speed if animations_on() else 1.0)
@@ -329,6 +425,8 @@ class ControlOverlay(QObject):
                 w.hide()
             self.pointer.cur = None
             self.timer.stop()
+            T.NOTICE_RECT = None
+            self.bottom = False
             return
         if now >= self.until:                           # una captura sola: solo los bordes
             self.notice.hide()

@@ -73,11 +73,43 @@ stoppen: den Mauszeiger in die obere linke Ecke des Bildschirms bewegen.
 
 ## Aktionen bei Antworten
 
-Unter jeder Antwort: **Antwort kopieren**, **Vorlesen**, **Antwort neu generieren**, **Ein Problem mit dieser Antwort
-melden** und, wenn Dateien geändert wurden, **Änderungen rückgängig machen** (stellt alle Dateien wieder her, die in
-dieser Antwort geändert wurden). Jede Aktion, die Dateien ändert, hat außerdem eine eigene Schaltfläche, um nur diese
-Änderung rückgängig zu machen. Rechts stehen die Tokens, die Geschwindigkeit und das genutzte Gedächtnis der
-Unterhaltung.
+Unter jeder Antwort: **Antwort kopieren**, **Vorlesen**, **Antwort neu generieren** und **Ein Problem mit dieser Antwort melden**; rechts die geschriebenen Tokens und ihre
+Geschwindigkeit. Hat die Antwort Dateien geändert, erscheint darunter die Karte **2 Dateien geändert** mit jeder Datei, den
+hinzugefügten und entfernten Zeilen und einem Hinweis („neu“, „in den Papierkorb“, „verschoben nach …“): Ein Klick öffnet sie, und ihre
+Schaltfläche stellt sie so wieder her, wie sie vor dieser Antwort war; bei zwei oder mehr gibt es **Alles rückgängig**. Jede
+Aktion, die Dateien ändert, hat außerdem eine eigene Schaltfläche, um nur diese Änderung rückgängig zu machen. Hat der
+Agent Werkzeuge benutzt, trennt die Zeile „Hat 3 min 12 s gearbeitet“ seine Arbeit von seiner Antwort.
+
+## Während er arbeitet: ihm schreiben, Berechtigungen und Hinweise
+
+- **Ihm schreiben, ohne ihn zu stoppen:** Während er arbeitet, kann man schreiben und senden (Enter oder die
+  Senden-Schaltfläche neben **Stoppen**). Die Nachricht wartet in einer Warteschlange über dem Textfeld (mit × zum
+  Entfernen), und der Agent sieht sie beim nächsten Schritt; im Chat steht sie mit dem Hinweis „Während der Arbeit geschrieben; hier hat er es gesehen“. Wird er vorher
+  gestoppt, kommt der Text zurück ins Textfeld.
+- **Gruppierte Schritte:** Was er zwischen den Aktionen denkt („Kurz nachgedacht“), steht in der Gruppe der Aktionen; am Ende
+  klappt die Gruppe zu einer Zeile zusammen, die sich mit einem Klick öffnet. Oben zeigt der Status, wie lange er schon
+  arbeitet („Arbeitet · lokal · 1:12“).
+- **Berechtigungen:** Neben **Erlauben** und **Ablehnen** lehnt das Feld „Oder sag ihm, was er stattdessen tun soll, und drück Enter…“ die Aktion ab und gibt die Anweisung an
+  den Agenten weiter; unter der Aktion steht „Du hast gebeten: „…““. „Hier immer „…““ wird bei heiklen Aktionen und bei Aktionen in
+  verbundenen Konten nicht angeboten: Diese werden jedes Mal bestätigt.
+- **Plan:** Nach **Plan ausführen** zeigt der Chat die Markierung „Du hast den Plan freigegeben: Er wird Schritt für Schritt ausgeführt“.
+- **Computersteuerung:** Während er Maus und Tastatur benutzt, gibt es oben auf dem Bildschirm einen Hinweis mit
+  **Pausieren** (der Agent wartet, und der Benutzer kann die Maus benutzen; danach **Weiter**) und **Stoppen**. Will der
+  Agent dort klicken, wo der Hinweis ist, weicht dieser aus. Den Mauszeiger in die linke obere Ecke zu bewegen stoppt
+  ihn ebenfalls.
+- **Hinweise außerhalb des Fensters:** Wartet er auf eine Berechtigung oder Antwort, während Jayth im Hintergrund ist,
+  blinkt das Taskleistensymbol und ein Hinweis erscheint; endet eine Aufgabe von mehr als 15 Sekunden, während der
+  Benutzer etwas anderes ansieht, gibt es ebenfalls einen Hinweis (ein Klick darauf öffnet diese Unterhaltung).
+
+## Gedächtnis der Unterhaltung (Kontext)
+
+Neben dem Mikrofon im Nachrichtenfeld zeigt ein Ring, wie viel vom Gedächtnis des Modells die Unterhaltung belegt: in der
+Akzentfarbe, solange Platz ist, ab 70 % bernsteinfarben (mit Prozentzahl) und ab 85 % rot. Bei 70 % kürzt Jayth alte
+Ausgaben der Werkzeuge (der Anfang bleibt; die letzten drei bleiben ganz). Reicht das nicht, fasst das Modell bei 85 % das
+Ältere zusammen: alles vor der letzten Nachricht des Benutzers oder, bei einer einzigen sehr langen Aufgabe, ihre ersten
+Schritte (die letzten bleiben, wie sie sind). Die Länge der Zusammenfassung richtet sich nach dem Gedächtnis des Modells.
+Ein Klick auf den Ring zeigt die Belegung, was Jayth tun wird, **Jetzt zusammenfassen** und **Neue Unterhaltung beginnen**. Der Hinweis der
+Zusammenfassung hat **Zusammenfassung anzeigen**. Auf Computern ohne Grafikkarte kann das Zusammenfassen einige Minuten dauern.
 
 ## Aktionen bei deinen Nachrichten
 
@@ -219,7 +251,7 @@ aktualisieren…**, **Beim Starten des Modells vorwärmen**, **Gedächtnis der U
 **Automatisch**: der gesamte Kontext, den das Modell ab Werk unterstützt, verringert, wenn sein Speicher nicht auf den
 Computer passt; mit **Kontext komprimiert** passt doppelt so viel oder mehr hinein), **Modell stoppen nach Inaktivität
 von**, und in den
-**Engine-Einstellungen**: CPU-Threads, Layer auf der GPU (automatisch verteilt das Modell auf GPU und RAM), Batch-Größe,
+**Engine-Einstellungen**: CPU-Threads, Threads beim Lesen (automatisch: ohne Grafikkarte liest es mit allen Threads des Prozessors), Layer auf der GPU (automatisch verteilt das Modell auf GPU und RAM), Batch-Größe,
 Kontext komprimiert, Flash attention, Beschleunigung beim Schreiben, mmap, im RAM halten und der lokale Port. Änderungen
 an der Engine werden beim Neustart des Modells wirksam (**Modell neu starten**). Das Log der Engine steht unter
 **Einstellungen › Modell-Log**.
@@ -260,7 +292,7 @@ Du öffnest sie über das Profilmenü (**Einstellungen**). Änderungen werden au
     wiederherstellen**.
 - **Leistung:** **Engine wechseln oder aktualisieren…**, „Beim Starten des Modells vorwärmen“, „Gedächtnis der
   Unterhaltung (Kontext)“, „Modell stoppen nach Inaktivität von“.
-  - **Engine-Einstellungen:** „CPU-Threads“, „Layer auf der GPU“, „Batch-Größe“, „Kontext komprimiert“, „Flash
+  - **Engine-Einstellungen:** „CPU-Threads“, „Threads beim Lesen“, „Layer auf der GPU“, „Batch-Größe“, „Kontext komprimiert“, „Flash
     attention“, „Modell mit mmap laden (schnellerer Start)“, „Modell im RAM halten (verhindert, dass das System es auf
     die Festplatte auslagert)“, „Lokaler Port der Engine“.
   - **Downloads:** „Gleichzeitige Verbindungen beim Herunterladen von Modellen“.
