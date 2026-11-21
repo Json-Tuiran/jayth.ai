@@ -1,6 +1,6 @@
 # Jayth · Copyright (C) 2026 Ing. Jeison Tuiran · Licencia GPL-3.0 (ver LICENSE y MARCA.md)
 # SPDX-License-Identifier: GPL-3.0-only
-"""Idioma de la interfaz: español (el original), inglés, portugués, francés, alemán e italiano.
+"""Idioma de la interfaz: español (el original), inglés, portugués, francés, alemán, italiano, japonés y chino.
 
 - Los textos se escriben en español en el código y se envuelven con tr(): tr("Guardar"), tr("Descargando %s") % nombre.
 - Las traducciones están en assets/i18n/<idioma>.json ({"texto en español": "traducción"}). Lo que falte se ve en español.
@@ -11,8 +11,10 @@
 import os, json, atexit
 from . import paths
 
-LANGS = ("es", "en", "pt", "fr", "de", "it")
-NAMES = {"es": "Español", "en": "English", "pt": "Português", "fr": "Français", "de": "Deutsch", "it": "Italiano"}
+LANGS = ("es", "en", "pt", "fr", "de", "it", "ja", "zh")
+NAMES = {"es": "Español", "en": "English", "pt": "Português", "fr": "Français", "de": "Deutsch", "it": "Italiano",
+         "ja": "日本語", "zh": "中文（简体）"}
+CJK = ("ja", "zh")                 # escritura sin espacios entre palabras: fuentes propias y búsquedas por caracteres
 DEFAULT = "en"          # sistemas en otros idiomas: la interfaz en inglés
 
 
@@ -106,6 +108,17 @@ def number(x, decimals=1):
 def unit(u):
     """Unidad de tamaño en el idioma de la interfaz: «GB»; en francés «Go»."""
     return UNITS.get(LANG, {}).get(u, u)
+
+
+def cjk_spacing(text):
+    """En japonés y chino, un espacio entre letras latinas o cifras y los caracteres CJK pegados a ellas, en frases que
+    Jayth arma uniendo trozos («使用了 github和…» -> «使用了 github 和…»)."""
+    if LANG not in CJK or not text:
+        return text
+    import re
+    cjk = "\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff"
+    text = re.sub(r"([A-Za-z0-9\)\]])([%s])" % cjk, r"\1 \2", text)
+    return re.sub(r"([%s])([A-Za-z0-9\(\[])" % cjk, r"\1 \2", text)
 
 
 def size(n):

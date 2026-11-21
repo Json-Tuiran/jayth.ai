@@ -8,10 +8,17 @@ from PySide6.QtCore import Qt, QRectF, QObject, QEvent
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QPalette, QGuiApplication, QImage
 from PySide6.QtWidgets import QProxyStyle, QStyle, QWidget
 from . import paths, osys
+from . import i18n as _i18n
 
 ICON_DIR = os.path.join(paths.ASSETS, "icons")
 LOGO = os.path.join(paths.ASSETS, "logo.svg")
 UI_FONT = osys.ui_font()
+_CJK_FONT = {"ja": {"win": "'Yu Gothic UI', 'Meiryo UI', 'Meiryo'", "mac": "'Hiragino Sans', 'Hiragino Kaku Gothic ProN'",
+                    "linux": "'Noto Sans CJK JP', 'Source Han Sans JP', 'IPAexGothic'"},
+             "zh": {"win": "'Microsoft YaHei UI', 'Microsoft YaHei'", "mac": "'PingFang SC', 'Hiragino Sans GB'",
+                    "linux": "'Noto Sans CJK SC', 'Source Han Sans SC', 'WenQuanYi Micro Hei'"}}
+if _i18n.LANG in _CJK_FONT:                 # sin esto, Windows puede dibujar los kanji japoneses con la fuente china
+    UI_FONT += ", " + _CJK_FONT[_i18n.LANG]["win" if osys.WIN else "mac" if osys.MAC else "linux"]
 MONO_FONT = osys.mono_font()
 _cache = {}
 

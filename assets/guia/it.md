@@ -332,7 +332,8 @@ screenshot** allega un'immagine di ciò che c'era sullo schermo (Ctrl+S). Invio 
 
 ## Lingua dell'interfaccia
 
-Jayth è disponibile in spagnolo, inglese, portoghese (Brasile), francese, tedesco e italiano. La prima volta usa la
+Jayth è disponibile in spagnolo, inglese, portoghese (Brasile), francese, tedesco, italiano,
+giapponese e cinese semplificato. La prima volta usa la
 lingua del sistema (altrimenti l'inglese); si cambia in **Impostazioni › Generale › Lingua dell'interfaccia** e Jayth propone di riavviarsi per
 applicarla. La lingua in cui risponde l'agente è a parte: di default, quella del messaggio dell'utente (Impostazioni ›
 Personalizzazione › Lingua delle risposte).

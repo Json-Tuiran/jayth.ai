@@ -25,7 +25,12 @@ def _norm(s):
 
 
 def _words(s):
-    return [w for w in re.findall(r"[a-z0-9+]{3,}", _norm(s)) if w not in _STOP]
+    """Palabras para buscar; en japonés y chino (sin espacios), pares de caracteres de kanji, katakana o hanzi."""
+    n = _norm(s)
+    out = [w for w in re.findall(r"[a-z0-9+]{3,}", n) if w not in _STOP]
+    for run in re.findall(r"[゠-ヿ㐀-䶿一-鿿豈-﫿]{2,}", n):
+        out += [run[i:i + 2] for i in range(len(run) - 1)]
+    return out
 
 
 def guide_path(lang=None):
@@ -51,13 +56,18 @@ def sections(lang=None):
 
 
 def search(topic, lang=None, top=3):
-    """Las secciones que más se parecen al tema (título y texto; las del título pesan más)."""
+    """Las secciones que más se parecen al tema (título y texto; las del título pesan más). Todas las guías tienen los
+    mismos temas en el mismo orden, así que también se busca en la española y la inglesa: el modelo puede escribir el
+    tema en otro idioma que el de la interfaz."""
     q = set(_words(topic))
     if not q:
         return []
+    mine = sections(lang)
+    others = [o for o in (sections(l) for l in ("es", "en") if l != (lang or i18n.LANG)) if len(o) == len(mine)]
     scored = []
-    for title, body in sections(lang):
-        tw, bw = _words(title), _words(body)
+    for i, (title, body) in enumerate(mine):
+        tw = _words(" ".join([title] + [o[i][0] for o in others]))
+        bw = _words(" ".join([body] + [o[i][1] for o in others]))
         score = 4 * sum(1 for w in q if any(t.startswith(w[:5]) for t in tw)) + sum(
             min(3, sum(1 for b in bw if b.startswith(w[:5]))) for w in q)
         if score:
@@ -90,7 +100,7 @@ def live():
     model = (cfg.get("external_model") or cfg.get("external_url") or "—") if ext else (core.model_title(m) if m else tr("ninguno"))
     eff = core.effort_of(cfg)
     eff_label = next((l for k, l, d in core.EFFORTS if k == eff), eff)
-    mode_label = A.MODES.get(cfg.get("mode"), cfg.get("mode") or "").split(":")[0]
+    mode_label = re.split("[:：]", A.MODES.get(cfg.get("mode"), cfg.get("mode") or ""))[0]
     autosave = {"delay": tr("al hacer una pausa al escribir"), "focus": tr("al cambiar de pestaña o de ventana"),
                 "off": tr("desactivado")}.get(cfg.get("editor_autosave", "delay"), "")
     models = [core.model_title(x) or x.get("name") for x in cfg.get("models") or []]

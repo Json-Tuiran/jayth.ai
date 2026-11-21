@@ -75,6 +75,11 @@ GROUPS = {   # grupo: (para qué sirve, herramientas, cómo usarlas: se le da al
                "- forget borra un recuerdo; schedule_task, list_tasks y cancel_task gestionan tareas programadas; use_skill carga una habilidad; connect_service propone conectar un servicio externo con la cuenta del usuario."),
 }
 # palabras que delatan que una tarea necesitará un grupo (español, inglés y portugués; sin acentos)
+def _fold(s):
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", str(s or "").lower()) if unicodedata.category(c) != "Mn")
+
+
 _HINTS = {
     "web": r"\b(busca|buscar|busqueda|internet|web|google|noticia|pagina|url|http|www\.|descarg|search|news|website|link|enlace|precio|"
            r"cotiza|clima|pesquis|baixar|noticias|wikipedia)",
@@ -108,13 +113,20 @@ _HINTS_MORE = {
     "conocimiento": r"(mes notes|mes documents|meine notizen|meine dokumente|miei appunti|miei documenti)",
     "agenda": r"(chaque (jour|matin|semaine)|jeden (tag|morgen)|ogni (giorno|mattina)|rappel|erinner|promemoria|oublie|vergiss|dimentica)",
 }
+# japonés y chino (sin espacios entre palabras: se buscan como trozos de texto)
+_HINTS_CJK = {
+    "web": r"(検索|調べ|ググ|ニュース|ウェブ|インターネット|ネットで|値段|価格|天気|ダウンロード|サイト|搜索|查一下|查找|新闻|网页|网上|互联网|价格|天气|下载|网站)",
+    "navegador": r"(ログイン|フォーム|ブラウザ|予約|購入|登录|表单|填写|浏览器|预订|购买)",
+    "control": r"(クリック|画面|スクリーンショット|ウィンドウ|マウス|キーボード|アプリ|メモ帳|電卓|点击|屏幕|截图|窗口|鼠标|键盘|应用|记事本|计算器)",
+    "documentos": r"(ワード|エクセル|パワーポイント|ドキュメント|文書|報告書|レポート|資料|表計算|スライド|プレゼン|文档|报告|表格|演示|幻灯片)",
+    "procesos": r"(データ|グラフ|統計|分析|サーバー|数据|图表|统计|服务器)",
+    "imagenes": r"(画像|イラスト|ロゴ|写真|絵を|描い|アイコン|壁紙|图片|图像|插画|照片|画一|绘制|图标|壁纸)",
+    "conocimiento": r"(私のメモ|私の資料|私のドキュメント|私のファイル|メモによると|ナレッジ|我的笔记|我的文档|我的文件|根据我的|知识库)",
+    "agenda": r"(毎日|毎朝|毎週|毎時|リマインダー|忘れて|スケジュール|定期的|每天|每周|每早|每小时|提醒|忘记|定时)",
+}
 for _g, _p in _HINTS_MORE.items():
-    _HINTS[_g] = "(?:%s|%s)" % (_HINTS[_g], _p)
+    _HINTS[_g] = "(?:%s|%s|%s)" % (_HINTS[_g], _p, _fold(_HINTS_CJK[_g]))   # el texto del usuario también se pliega
 
-
-def _fold(s):
-    import unicodedata
-    return "".join(c for c in unicodedata.normalize("NFD", str(s or "").lower()) if unicodedata.category(c) != "Mn")
 
 
 def on_demand(cfg):
@@ -223,12 +235,14 @@ def system_prompt(cfg):
     p = WORKFLOW % {"os": osys.os_label(), "shell": osys.shell_name(), "date": datetime.date.today().isoformat(), "ws": cfg["workspace"],
                     "python": "python" if osys.WIN else "python3", "example": "D:\\Trabajo" if osys.WIN else "~/Trabajo",
                     "fence": "powershell" if osys.WIN else "bash", "tools": _tools_text(cfg)}
-    lang = {"es": "español", "en": "inglés", "pt": "portugués", "fr": "francés", "de": "alemán", "it": "italiano"}.get(cfg.get("response_language"))
+    lang = {"es": "español", "en": "inglés", "pt": "portugués", "fr": "francés", "de": "alemán", "it": "italiano", "ja": "japonés",
+            "zh": "chino mandarín (caracteres simplificados)"}.get(cfg.get("response_language"))
     if lang:
         p += "\nResponde siempre en %s." % lang
     elif (cfg.get("response_language") or "auto") == "auto" and i18n.LANG != "es":   # ante la duda, el idioma de su interfaz
         p += "\nSi no está claro en qué idioma escribe el usuario, responde en %s (el idioma de su interfaz)." % (
-            {"en": "inglés", "pt": "portugués de Brasil", "fr": "francés", "de": "alemán", "it": "italiano"}.get(i18n.LANG, "inglés"))
+            {"en": "inglés", "pt": "portugués de Brasil", "fr": "francés", "de": "alemán", "it": "italiano", "ja": "japonés",
+             "zh": "chino mandarín (caracteres simplificados)"}.get(i18n.LANG, "inglés"))
     if not cfg.get("web_access", True):
         p += "\nNo tienes acceso a internet en esta sesión."
     if cfg.get("mode") == "plan":
@@ -970,7 +984,8 @@ class Run:
                 self.emit({"t": "assistant_end", "text": text_out})
                 if not calls:
                     if not text_out.strip():
-                        self.emit({"t": "info", "text": tr("El modelo no escribió respuesta") + (tr(" (se alcanzó el límite de tokens; sube «longitud máxima» o desactiva el pensamiento).") if res["finish"] == "length" else ".")})
+                        self.emit({"t": "info", "text": (tr("El modelo no escribió respuesta (se alcanzó el límite de tokens; sube «longitud máxima» o desactiva el pensamiento).")
+                                                       if res["finish"] == "length" else tr("El modelo no escribió respuesta."))})
                     break
                 images = []
                 for call in calls:

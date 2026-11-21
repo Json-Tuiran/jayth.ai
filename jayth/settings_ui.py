@@ -44,7 +44,7 @@ SYSTEM = "Windows" if osys.WIN else ("macOS" if osys.MAC else "Linux")
 FILE_MANAGER = tr("el Explorador") if osys.WIN else (tr("el Finder") if osys.MAC else tr("el gestor de archivos"))
 
 LANGS = [(tr("Automático (el idioma de tu mensaje)"), "auto"), ("Español", "es"), ("English", "en"), ("Português", "pt"), ("Français", "fr"),
-         ("Deutsch", "de"), ("Italiano", "it")]
+         ("Deutsch", "de"), ("Italiano", "it"), ("日本語", "ja"), ("中文", "zh")]
 SHORTCUTS = [("Ctrl+N", tr("Nueva conversación")), ("Ctrl+K", tr("Buscar en tus conversaciones")), ("Ctrl+1 / Ctrl+2", tr("Cambiar entre Chat y Code")),
              ("Ctrl+Shift+S", tr("Mostrar u ocultar la barra lateral")), ("Enter / Shift+Enter", tr("Enviar / nueva línea")),
              ("Ctrl+V", tr("Pegar una imagen en el mensaje")), ("Ctrl+S", tr("Guardar el archivo (Code)")), ("Ctrl+W", tr("Cerrar la pestaña (Code)")),
@@ -510,7 +510,8 @@ class SettingsDialog(QDialog):
         self.field(v, "voice_model", tr("Precisión del dictado"), "choice", choices=[("%s: %s" % (k.capitalize(), d), k) for k, d in _voice.MODELS.items()],
                    help=tr("El dictado funciona en tu equipo. El modelo elegido se descarga la primera vez que lo uses."))
         self.field(v, "voice_lang", tr("Idioma del dictado"), "choice",
-                   choices=[(tr("Detectar automáticamente"), ""), (tr("Español"), "es"), (tr("Inglés"), "en"), (tr("Portugués"), "pt"), (tr("Francés"), "fr"), (tr("Alemán"), "de"), (tr("Italiano"), "it")])
+                   choices=[(tr("Detectar automáticamente"), ""), (tr("Español"), "es"), (tr("Inglés"), "en"), (tr("Portugués"), "pt"), (tr("Francés"), "fr"), (tr("Alemán"), "de"), (tr("Italiano"), "it"),
+                            (tr("Japonés"), "ja"), (tr("Chino"), "zh")])
         self._section(v, tr("Memoria"))
         v.addWidget(lbl(tr("Lo que %s recuerda de ti entre conversaciones (lo guarda cuando le dices algo duradero, como «uso pnpm»). "
                         "Puedes editarlo o borrarlo.") % APP_NAME, "faint"))

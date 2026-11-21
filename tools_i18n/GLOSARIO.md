@@ -161,3 +161,68 @@ italiano en primera persona («Denke nach», «Sto pensando»). Los resúmenes (
 van en minúscula y en pasado: «a modifié 2 fichiers», «2 Dateien bearbeitet», «ha modificato 2 file».
 
 En francés, las sugerencias que el usuario le dice al agente también van con «vous» («Créez un script…»).
+
+## Japonés y chino (simplificado)
+
+Tono: japonés con **です・ます** (lo habitual en programas); los botones y menús, en forma corta («保存», «キャンセル»,
+«モデルを起動»). Chino simplificado (zh-CN) con **«你»** (cercano, como el español de Jayth); botones con verbo
+(«保存», «取消»). Puntuación de ancho completo: japonés 、。：（）「」; chino ，。：；！？（）“”. Comillas: japonés
+「…」, chino “…”. Un espacio de ancho normal entre el texto CJK y las palabras latinas, los números y los marcadores
+(«main.py を読み取りました», «已读取 main.py», «%d 个文件»), nunca dentro de 「」 o “”. Las teclas se dejan como en
+inglés (Ctrl, Shift, Enter, Esc). Fechas: «%(m)d月%(d)d日». No hay plurales: «cambio/cambios» → «変更», «更改».
+
+| Español | 日本語 | 中文 |
+|---|---|---|
+| Ajustes | 設定 | 设置 |
+| conversación · Nueva conversación | 会話 · 新しい会話 | 对话 · 新对话 |
+| modelo · motor (llama.cpp) | モデル · エンジン | 模型 · 引擎 |
+| encender / apagar el modelo | モデルを起動 / 停止 | 启动 / 停止模型 |
+| agente · herramienta · acción | エージェント · ツール · 操作 | 智能体 · 工具 · 操作 |
+| Permitir / Denegar · Permitir siempre | 許可 / 拒否 · 常に許可 | 允许 / 拒绝 · 始终允许 |
+| Detener | 停止 | 停止 |
+| modo de permisos | 権限モード | 权限模式 |
+| Solo lectura · Planificar · Preguntar | 読み取り専用 · 計画 · 確認 | 只读 · 规划 · 询问 |
+| Automático | 自動 | 自动 |
+| esfuerzo (Bajo/Medio/Alto) | 思考の深さ（低/中/高） | 推理强度（低/中/高） |
+| pensar / razonamiento | 考える / 推論 | 思考 / 推理 |
+| archivo · carpeta · carpeta de trabajo | ファイル · フォルダー · 作業フォルダー | 文件 · 文件夹 · 工作文件夹 |
+| proyecto · pestaña | プロジェクト · タブ | 项目 · 标签页 |
+| lienzo | キャンバス | 画布 |
+| navegador de Jayth | Jayth ブラウザー | Jayth 浏览器 |
+| captura de pantalla | スクリーンショット | 截图 |
+| ratón · teclado | マウス · キーボード | 鼠标 · 键盘 |
+| ventana rápida | クイックウィンドウ | 快捷窗口 |
+| descargar | ダウンロード | 下载 |
+| cuantización | 量子化 | 量化 |
+| memoria (RAM) | メモリ | 内存 |
+| memoria (recuerdos) · recuerdo | メモリー機能 · 記憶 | 记忆 · 记忆条目 |
+| asistente (personalizado) | アシスタント | 助手 |
+| asistente de configuración | セットアップウィザード | 设置向导 |
+| habilidad · conector | スキル · コネクター | 技能 · 连接器 |
+| tarea programada | スケジュールタスク | 计划任务 |
+| Deshacer · Reintentar | 元に戻す · 再試行 | 撤销 · 重试 |
+| Copiar / Pegar | コピー / 貼り付け | 复制 / 粘贴 |
+| Ejecutar · Guardar | 実行 · 保存 | 运行 · 保存 |
+| Vista previa · Buscar | プレビュー · 検索 | 预览 · 搜索 |
+| Cancelar · Cerrar · Salir | キャンセル · 閉じる · 終了 | 取消 · 关闭 · 退出 |
+| Listo | 準備完了（estado） / 完了（fin） | 就绪 / 完成 |
+| aprobación · actualización | 承認 · アップデート | 批准 · 更新 |
+| Acerca de · licencia | バージョン情報 · ライセンス | 关于 · 许可证 |
+| Enviar comentarios | フィードバックを送信 | 发送反馈 |
+| conocimiento (carpetas) | ナレッジ | 知识库 |
+| servicios con tu cuenta | アカウント連携サービス | 账户关联服务 |
+| bandeja del sistema | 通知領域 | 系统托盘 |
+
+### Pasos del agente en japonés y chino
+
+| | Pendiente («Quiere %s») | No permitida («No se permitió %s») | En curso | Hecha | Unión (`%s %s`) |
+|---|---|---|---|---|---|
+| 日本語 | 読み取る（承認待ち） | 読み取る（拒否されました） | 読み取り中 | 読み取りました | `%s：%s` → 「読み取りました：main.py」 |
+| 中文 | 请求读取 | 未允许读取 | 正在读取 | 已读取 | `%s %s` → “已读取 main.py” |
+
+En japonés el infinitivo va en forma de diccionario («読み取る», «コマンドを実行する», «ウィンドウを閉じる»), con
+«Quiere %s» = «%s（承認待ち）» y «No se permitió %s» = «%s（拒否されました）»; en curso «〜中» o «〜ています», hecha
+«〜しました». En chino, el infinitivo es el verbo («读取», «运行», «关闭窗口»), en curso con «正在» y hecha con «已».
+Lo que el modelo hace mientras piensa: japonés «〜しています» («考えています»), chino «正在…» («正在思考»).
+Resúmenes: japonés en forma corta y con «、» («ファイルを 2 件編集、コマンドを 1 件実行»), chino con «了»
+(«编辑了 2 个文件、运行了 1 个命令»).

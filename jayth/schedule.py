@@ -69,7 +69,12 @@ def describe(t):
         return tr("De lunes a viernes a las %s") % hm
     if kind == "weekly":
         ds = [DAYS[int(x)] for x in (t.get("days") or [])] or ["?"]
-        return tr("Cada %s a las %s") % (", ".join(ds[:-1]) + (tr(" y ") if len(ds) > 1 else "") + ds[-1], hm)
+        names = ds[0]
+        for d in ds[1:-1]:
+            names = tr("%s, %s") % (names, d)
+        if len(ds) > 1:
+            names = tr("%s y %s") % (names, ds[-1])
+        return tr("Cada %s a las %s") % (names, hm)
     n = max(5, int(t.get("every_min") or 60))
     if n == 60:
         return tr("Cada hora")

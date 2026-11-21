@@ -27,7 +27,7 @@ RAIZ = Path(__file__).resolve().parent.parent
 MODS = RAIZ / "jayth"
 CAT = RAIZ / "assets" / "i18n"
 PARTES = Path(__file__).resolve().parent / "partes"
-IDIOMAS = ("en", "pt", "fr", "de", "it")
+IDIOMAS = ("en", "pt", "fr", "de", "it", "ja", "zh")
 FMT = re.compile(r"%(?:\([^)]+\))?[-#0 +]*\d*(?:\.\d+)?[sdifrxX%]")
 TAG = re.compile(r"</?[a-zA-Z][^>]*>")
 
@@ -154,14 +154,15 @@ def main():
         sys.exit(1 if mal else 0)
     elif modo == "citas":
         def norm(t):
-            return re.sub(r"[\s  «»“”„\"'‘’‚‹›]+", " ", t.replace("…", "")).strip().lower()
+            return re.sub(r"[\s  «»“”„\"'‘’‚‹›「」『』　]+", " ", t.replace("…", "")).strip().lower()
         mal = 0
         for lang in sys.argv[2:] or IDIOMAS:
             cat = leer(CAT / (lang + ".json"))
+            sin_espacios = {k.strip(): v.strip() for k, v in cat.items()}      # botones con espacios delante del texto
             n = 0
             for k, v in sorted(cat.items()):
                 for q in re.findall(r"«([^«»]{2,80})»", k):
-                    t = cat.get(q) or cat.get(q + "…") or cat.get(q.rstrip("…"))
+                    t = cat.get(q) or cat.get(q + "…") or cat.get(q.rstrip("…")) or sin_espacios.get(q)
                     if t and "%" not in q and norm(t) not in norm(v):
                         n += 1
                         print("[%s] %r cita «%s»; debería decir «%s»: %r" % (lang, k[:60], q, t, v[:90]))

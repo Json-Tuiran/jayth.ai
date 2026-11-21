@@ -35,7 +35,8 @@ def revisar(lang, ancho, alto, letra=100):
     from PySide6.QtGui import QFontDatabase, QTextDocument, QFont, QFontMetrics
     app = QApplication.instance() or QApplication(sys.argv)
     if os.name == "nt":                          # sin ventanas Qt no ve las fuentes del sistema
-        for f in ("segoeui.ttf", "segoeuib.ttf", "seguisb.ttf", "segmdl2.ttf", "YuGothR.ttc", "msyh.ttc"):
+        for f in ("segoeui.ttf", "segoeuib.ttf", "seguisb.ttf", "segmdl2.ttf", "YuGothR.ttc", "YuGothB.ttc", "YuGothM.ttc",
+                  "msyh.ttc", "msyhbd.ttc", "meiryo.ttc"):
             QFontDatabase.addApplicationFont(os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", f))
     from jayth import theme, core
     theme.apply(app, "dark", letra)
@@ -69,6 +70,8 @@ def revisar(lang, ancho, alto, letra=100):
                 need = w.sizeHint().width()
                 if need > w.width() + 2:
                     problemas.append((donde, w.__class__.__name__, t, need - w.width()))
+                if fm.height() > w.height() + 1:                  # letra más alta que el botón (japonés y chino)
+                    problemas.append((donde, w.__class__.__name__ + " (alto)", t, fm.height() - w.height()))
             elif isinstance(w, QLabel):
                 t = w.text()
                 if not t or w.wordWrap() or w.pixmap() is not None and not w.pixmap().isNull() or t.endswith("…") \
@@ -80,6 +83,9 @@ def revisar(lang, ancho, alto, letra=100):
                 need = fm.horizontalAdvance(p) + w.contentsMargins().left() + w.contentsMargins().right()
                 if need > w.width() + 2:
                     problemas.append((donde, "QLabel", p, need - w.width()))
+                alto = fm.height() + w.contentsMargins().top() + w.contentsMargins().bottom()
+                if alto > w.height() + 1:
+                    problemas.append((donde, "QLabel (alto)", p, alto - w.height()))
             elif isinstance(w, QComboBox) and not isinstance(w, ElideCombo):
                 t = w.currentText()
                 need = fm.horizontalAdvance(t) + 40

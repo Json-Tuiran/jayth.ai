@@ -26,7 +26,7 @@ from . import updater
 from . import chatview as CV
 from . import overlay as OV
 
-MODE_LABEL = {k: v.split(":")[0] for k, v in A.MODES.items()}
+MODE_LABEL = {k: re.split("[:：]", v)[0] for k, v in A.MODES.items()}       # japonés y chino usan «：»
 CODE_NAME = APP_NAME + " Code"
 SHOW_IN = tr("Mostrar en el Explorador") if osys.WIN else (tr("Mostrar en el Finder") if osys.MAC else tr("Abrir la carpeta"))
 
@@ -825,7 +825,12 @@ def summarize_steps(rows):
             parts.append((tr("hizo %d acción más") if n == 1 else tr("hizo %d acciones más")) % n)
     if not parts:
         return ""
-    text = parts[0] if len(parts) == 1 else tr("%s y %s") % (", ".join(parts[:-1]), parts[-1])
+    text = parts[0]
+    for p in parts[1:-1]:
+        text = tr("%s, %s") % (text, p)              # en japonés y chino, con «、»
+    if len(parts) > 1:
+        text = tr("%s y %s") % (text, parts[-1])
+    text = i18n.cjk_spacing(text)
     return text[:1].upper() + text[1:]
 
 
@@ -1735,6 +1740,11 @@ class ChatPanel(QWidget):
         bl.addWidget(self.ban_btn)
         bl.addWidget(tbtn("ui_cerrar", tr("Ocultar este aviso (vuelve si cambia algo)"), self._dismiss_banner, size=11), 0, Qt.AlignTop)
         self._ban_key = self._ban_dismissed = None
+        self._ban_want = False
+        self._ban_timer = QTimer(self)        # el aviso sale tras un momento: los estados de paso (al abrir, al
+        self._ban_timer.setSingleShot(True)   # retomar un modelo ya cargado) no lo hacen parpadear
+        self._ban_timer.setInterval(1200)
+        self._ban_timer.timeout.connect(lambda: self.banner.setVisible(self._ban_want))
         self._queued = False                 # mensaje esperando a que el modelo termine de encenderse
         iv.addWidget(self.banner)
         self.plan_panel = PlanPanel()
@@ -2435,6 +2445,8 @@ class ChatPanel(QWidget):
 
     def _dismiss_banner(self):
         self._ban_dismissed = self._ban_key
+        self._ban_want = False
+        self._ban_timer.stop()
         self.banner.hide()
 
     def _hide_note(self, w, i):
@@ -2451,6 +2463,8 @@ class ChatPanel(QWidget):
             return
         if not core.SET.ready():
             return self.main.fix_not_ready()
+        if self.main.llm.get("state") == "checking":          # recién abierto: en un momento se sabe si está encendido
+            return QTimer.singleShot(300, self.send)
         if core.SET.snapshot()["llm_mode"] == "local" and self.main.llm.get("state", "off") in ("off", "loading"):
             # modelo apagado o encendiéndose: se enciende y el mensaje sale solo cuando esté listo (sin error rojo)
             if self.main.llm.get("state", "off") == "off":
@@ -2838,7 +2852,12 @@ class ChatPanel(QWidget):
         self._ban_key = (st, why, self.ban_txt.text())
         if self._ban_dismissed is not None and self._ban_dismissed != self._ban_key:
             self._ban_dismissed = None
-        self.banner.setVisible(st != "ready" and self._ban_dismissed is None)
+        self._ban_want = st not in ("ready", "checking") and self._ban_dismissed is None
+        if not self._ban_want:
+            self._ban_timer.stop()
+            self.banner.hide()
+        elif self.banner.isHidden() and not self._ban_timer.isActive():
+            self._ban_timer.start()
         # mensaje en espera: se envía en cuanto el modelo está listo; si no llega a encenderse, se avisa
         if self._queued and st == "ready":
             self._queued = False
@@ -3143,7 +3162,7 @@ class Main(QMainWindow):
         self.setWindowIcon(make_icon())
         self.resize(1320, 840)
         self.setMinimumSize(960, 600)
-        self.llm = {"state": "off"}
+        self.llm = {"state": "checking"}      # hasta la primera consulta: sin avisos de «apagado» que parpadean al abrir
         self.sig = _Sig()
         self.sig.status.connect(self._got_status)
         self._polling = False
@@ -4590,7 +4609,8 @@ class Main(QMainWindow):
         name = (tr("Externo · %s") % (cfg["external_model"] or cfg["external_url"])) if ext else (core.model_title(m) if m else tr("Sin modelo"))
         self.model_btn.setText(name + "  ⌄")
         self.model_btn.setToolTip(("%s · %s · %s" % (core.model_title(m), core.model_quant(m), m.get("path", ""))) if (m and not ext) else tr("Elegir modelo"))
-        col, txt = {"ready": (C["ok"], tr("Listo · externo") if ext else tr("Listo · local")), "loading": (C["warn"], tr("Cargando…"))}.get(st, (C["faint"], tr("Apagado")))
+        col, txt = {"ready": (C["ok"], tr("Listo · externo") if ext else tr("Listo · local")), "loading": (C["warn"], tr("Cargando…")),
+                    "checking": (C["faint"], tr("Comprobando…"))}.get(st, (C["faint"], tr("Apagado")))
         if st == "ready" and self.llm.get("warm") == "warming":
             col, txt = C["warn"], tr("Preparando el agente…")
         self.status_lbl.setText("<span style='color:%s'>●</span> <span style='color:%s'>%s</span>" % (col, C["mut"], txt))
@@ -4625,6 +4645,8 @@ class Main(QMainWindow):
     def toggle_llm(self):
         if not core.SET.ready():
             return self.fix_not_ready()
+        if self.llm.get("state") == "checking":
+            return                              # aún no se sabe si está encendido (es un instante al abrir)
         if self.llm.get("state", "off") == "off":
             cfg = core.SET.snapshot()
             plan = core.memory_plan(cfg) if cfg.get("llm_mode") != "external" else None      # antes de cargar: la libre real
@@ -4774,7 +4796,7 @@ def install_qt_language(app):
     folders = [QLibraryInfo.path(QLibraryInfo.TranslationsPath)]
     if osys.FROZEN:
         folders.append(os.path.join(getattr(sys, "_MEIPASS", paths.APP_DIR), "PySide6", "translations"))
-    name = {"pt": "qtbase_pt_BR"}.get(i18n.LANG, "qtbase_" + i18n.LANG)     # Qt trae el portugués de Brasil
+    name = {"pt": "qtbase_pt_BR", "zh": "qtbase_zh_CN"}.get(i18n.LANG, "qtbase_" + i18n.LANG)     # portugués de Brasil, chino simplificado
     for d in folders:
         qt_tr = QTranslator(app)
         if qt_tr.load(name, d):

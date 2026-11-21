@@ -350,7 +350,8 @@ sendet, Esc schließt.
 
 ## Sprache der Oberfläche
 
-Jayth gibt es auf Spanisch, Englisch, Portugiesisch (Brasilien), Französisch, Deutsch und Italienisch. Beim ersten Start
+Jayth gibt es auf Spanisch, Englisch, Portugiesisch (Brasilien), Französisch, Deutsch,
+Italienisch, Japanisch und vereinfachtem Chinesisch. Beim ersten Start
 nutzt es die Sprache des Systems (sonst Englisch); ändern lässt sie sich unter **Einstellungen › Allgemein › Sprache der Oberfläche**,
 und Jayth bietet einen Neustart an, um sie anzuwenden. Die Sprache, in der der Agent antwortet, ist davon unabhängig:
 standardmäßig die der Nachricht des Nutzers (Einstellungen › Personalisierung › Sprache der Antworten).

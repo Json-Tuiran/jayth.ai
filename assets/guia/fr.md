@@ -355,7 +355,8 @@ notification. **Avec capture** joint une image de ce qui était à l'écran (Ctr
 
 ## Langue de l'interface
 
-Jayth est disponible en espagnol, anglais, portugais (Brésil), français, allemand et italien. La première fois, il
+Jayth est disponible en espagnol, anglais, portugais (Brésil), français, allemand, italien,
+japonais et chinois simplifié. La première fois, il
 utilise la langue du système (à défaut, l'anglais) ; elle se change dans **Paramètres › Général › Langue de l'interface** et Jayth propose de
 redémarrer pour l'appliquer. La langue dans laquelle répond l'agent est indépendante : par défaut, celle du message de
 l'utilisateur (Paramètres › Personnalisation › Langue des réponses).
