@@ -39,7 +39,8 @@ TOOL_LABELS = {
     "run_command": tr("Ejecutar comandos"), "open_target": tr("Abrir programas y archivos"), "wait": tr("Esperar"), "web_fetch": tr("Leer páginas web"),
     "web_search": tr("Buscar en internet"), "download_file": tr("Descargar archivos"), "screenshot": tr("Capturas de pantalla"), "click": tr("Hacer clic"),
     "move_mouse": tr("Mover el ratón"), "scroll": tr("Desplazar (rueda)"), "type_text": tr("Escribir con el teclado"), "press_keys": tr("Pulsar teclas"),
-    "list_windows": tr("Ver ventanas abiertas"), "focus_window": tr("Activar una ventana"), "command_output": tr("Ver salida de procesos"),
+    "list_windows": tr("Ver ventanas abiertas"), "focus_window": tr("Activar una ventana"), "command_output": tr("Ver salida de procesos"), "list_commands": tr("Ver procesos en segundo plano"),
+    "list_memory": tr("Ver lo que recuerda"),
     "stop_command": tr("Detener procesos"), "read_document": tr("Leer documentos"), "view_image": tr("Ver imágenes"), "update_plan": tr("Plan de tareas"),
     "run_python": tr("Analizar datos con Python"), "show_canvas": tr("Mostrar en el lienzo"), "ask_user": tr("Preguntarte"), "remember": tr("Recordar preferencias"), "forget": tr("Olvidar un recuerdo"), "use_skill": tr("Usar una habilidad"), "schedule_task": tr("Programar tareas"), "list_tasks": tr("Ver tareas programadas"),
     "cancel_task": tr("Quitar tareas programadas"), "create_document": tr("Crear documentos (Word, Excel, PowerPoint, PDF)"),
@@ -828,6 +829,20 @@ def replace_in_files(a, ctx):
             lines.append("    %d: %s  →  %s" % (i, old_l, new_l))
     if len(plan) > 60:
         lines.append("… y %d archivos más" % (len(plan) - 60))
+    pat = str(a.get("pattern") or "")
+    if not a.get("regex") and re.fullmatch(r"[A-Za-z_]\w*", pat):    # p. ej. «utils»: ¿es también un módulo del proyecto?
+        base = ctx.path(a.get("path") or ".")
+        mods = []
+        for root, dirs, files in os.walk(base):
+            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS and not d.startswith(".")]
+            if pat + ".py" in files or (pat in dirs and os.path.isfile(os.path.join(root, pat, "__init__.py"))):
+                mods.append(short(os.path.join(root, pat)))
+            if len(mods) >= 3:
+                break
+        if mods:
+            note += ("\n[Ojo: «%s» también es el nombre de un módulo (%s). El reemplazo alcanza a los «import» y a los usos como "
+                     "«%s.algo», pero el archivo del módulo no se renombra: hazlo con move_path si hace falta, y revisa que "
+                     "ningún atributo con ese nombre se haya cambiado sin querer.]" % (pat, ", ".join(mods), pat))
     return "\n".join(lines) + note
 
 
@@ -1041,7 +1056,10 @@ def main_html(h):
             h = m.group(2)
     h = re.sub(r"(?is)<(nav|aside|footer|header|form|button|select)\b[^>]*>.*?</\1>", " ", h)
     # índices laterales, menús…; «toctree» no: en la documentación hecha con Sphinx es el contenido de las páginas índice
-    return re.sub(r"(?is)<(div|ul|section)\b[^>]*(class|id)=[\"'][^\"']*(toc(?!tree)|sidebar|sphinxsidebar|navbar|menu|breadcrumb|cookie|related)[^\"']*[\"'][^>]*>.*?</\1>", " ", h)
+    h = re.sub(r"(?is)<(div|ul|section)\b[^>]*(class|id)=[\"'][^\"']*(toc(?!tree)|sidebar|sphinxsidebar|navbar|menu|breadcrumb|cookie|related)[^\"']*[\"'][^>]*>.*?</\1>", " ", h)
+    # publicidad: «ad», «ads», «sponsor», «promo», «banner»… como palabra de la clase o del id (no «header» ni «download»)
+    return re.sub(r"(?is)<(div|aside|section|ins|iframe)\b[^>]*(class|id)=[\"'](?:[^\"']*[\s_-])?(ad|ads|adsbygoogle|advert\w*|"
+                  r"sponsor\w*|promo\w*|banner)(?:[\s_-][^\"']*)?[\"'][^>]*>.*?</\1>", " ", h)
 
 
 def page_credits(h):
@@ -1091,15 +1109,29 @@ def page_links(h, base, mx=20):
     return out
 
 
+_INLINE = (r"a|span|code|b|i|em|strong|sub|sup|small|mark|kbd|var|abbr|s|u|q|cite|time|label|font|tt|samp|bdi|bdo|data|wbr|"
+           r"del|ins|dfn")
+
+
 def _flatten(h, main):
+    # los bloques de código, tal cual (antes cada etiqueta de su coloreado se volvía un espacio: «dt . datetime (»)
+    pres = []
+
+    def keep(m):
+        pres.append(html.unescape(re.sub(r"(?s)<[^>]+>", "", re.sub(r"(?i)<br\s*/?>", "\n", m.group(1)))))
+        return "\n\x00PRE%d\x00\n" % (len(pres) - 1)
+    h = re.sub(r"(?is)<pre\b[^>]*>(.*?)</pre>", keep, h)
     h = re.sub(r"(?i)<br\s*/?>|</(p|div|li|tr|h[1-6]|section|article|ul|ol|table|pre|blockquote)>", "\n", h)
     h = re.sub(r"(?i)<(h[1-6])[^>]*>", "\n\n## ", h) if main else h
-    # respetando las comillas: un atributo puede llevar «>» dentro (Wikipedia guarda JSON con «/>» en data-mw)
+    # las etiquetas en línea (enlaces, código, negrita…) se quitan sin dejar hueco: no parten palabras ni código
+    h = re.sub(r"(?i)</?(?:%s)\b(?:[^>\"']|\"[^\"]*\"|'[^']*')*>" % _INLINE, "", h)
+    # el resto, por un espacio, respetando las comillas: un atributo puede llevar «>» dentro (Wikipedia guarda JSON en data-mw)
     h = re.sub(r"<(?:[^>\"']|\"[^\"]*\"|'[^']*')*>|<[^>]+>", " ", h)
     h = html.unescape(h)
     h = re.sub(r"[ \t\r\f\v]+", " ", h)
     h = re.sub(r" *\n *", "\n", h)
     h = re.sub(r"\n{3,}", "\n\n", h)
+    h = re.sub(r"\x00PRE(\d+)\x00", lambda m: "```\n" + pres[int(m.group(1))].strip("\n") + "\n```", h)
     return h.strip()
 
 
@@ -1327,11 +1359,16 @@ def _search_browser(engine, q, mx, ctx):
     return "\n".join(out)
 
 
-@tool("web_search", "net", "Busca en la web y devuelve títulos, enlaces y resúmenes (requiere internet).",
-      {"query": S("Texto de búsqueda"), "max_results": I("Resultados (por defecto 6)")}, ["query"])
+@tool("web_search", "net", "Busca en la web y devuelve títulos, enlaces y resúmenes (requiere internet). Con site, solo en ese "
+      "sitio (p. ej. docs.python.org).",
+      {"query": S("Texto de búsqueda"), "max_results": I("Resultados (por defecto 6)"),
+       "site": S("Buscar solo en este dominio, p. ej. docs.python.org (opcional)")}, ["query"])
 def web_search(a, ctx):
     mx = int(a.get("max_results") or 6)
     q = str(a["query"])
+    site = re.sub(r"^(https?://)?(www\.)?", "", str(a.get("site") or "").strip()).split("/")[0]
+    if site and "site:" not in q:
+        q += " site:" + site                     # lo entienden DuckDuckGo, Bing, Brave y SearXNG
     ex = ctx.extras or {}
     prov = ex.get("search_provider", "auto")
     if prov == "searxng" and ex.get("searxng_url"):
@@ -1664,8 +1701,22 @@ def _zone(ctx, z):
 @tool("screenshot", "control", "Captura la pantalla, solo una ventana (window) o amplía una zona de la última captura (zoom, para leer texto "
       "pequeño). El usuario también ve la captura en el chat. Las coordenadas de click/drag/scroll son píxeles de la última imagen.",
       {"window": S("Parte del título de una ventana: la trae al frente y captura solo esa ventana (opcional)"),
-       "zoom": S("Zona de la última captura a ampliar: «x,y,ancho,alto» (opcional)")})
+       "zoom": S("Zona de la última captura a ampliar: «x,y,ancho,alto» (opcional)"),
+       "save_to": S("Guardar además la imagen en este archivo .png (opcional)")})
 def screenshot(a, ctx):
+    r = _screenshot(a, ctx)
+    if a.get("save_to") and isinstance(r, dict) and r.get("image"):
+        p = ctx.path(str(a["save_to"]))
+        if not p.lower().endswith(".png"):
+            p += ".png"
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "wb") as f:
+            f.write(r["image"])
+        r = dict(r, text=r["text"] + " Guardada en %s." % p)
+    return r
+
+
+def _screenshot(a, ctx):
     _failsafe()
     q = str(a.get("window") or "").strip()
     rect, title = None, ""
@@ -1763,6 +1814,32 @@ def _hold(mods, down):
 _BTN = {"right": (0x8, 0x10), "middle": (0x20, 0x40)}
 
 
+def _jayth_at(x, y):
+    """Título de la ventana de Jayth que hay en ese punto de la pantalla, o None. (Las capas de Jayth sin título, como el
+    brillo del control o su puntero, no cuentan: dejan pasar los clics.) Solo se sabe en Windows."""
+    if not osys.WIN:
+        return None
+    try:
+        h = user32.WindowFromPoint(wintypes.POINT(int(x), int(y)))
+        root = user32.GetAncestor(h, 2) if h else 0          # GA_ROOT: la ventana principal de lo que hay ahí
+        if root and _own_window(root):
+            t = _wtitle(root)
+            if t.strip() and t != "?" and t != "(sin título)":
+                return t
+    except Exception:
+        pass
+    return None
+
+
+def _not_on_jayth(x, y, what):
+    """Antes se podía pulsar sobre Jayth con coordenadas (por nombre de ventana ya no): ahora tampoco."""
+    t = _jayth_at(x, y)
+    if t:
+        raise ToolError("En (%s) está la ventana de Jayth («%s»): el agente no %s sobre su propia ventana. Si querías otra "
+                        "ventana, tráela al frente con focus_window o window_action y vuelve a mirar con screenshot." % (
+                            "%d,%d" % (x, y), t, what))
+
+
 def _press_at(x, y, button="left", double=False, keys=None):
     """Lleva el ratón hasta (x, y) píxeles reales y hace clic (con teclas pulsadas si se piden)."""
     _glide(x, y)
@@ -1792,6 +1869,7 @@ def _press_at(x, y, button="left", double=False, keys=None):
 def click(a, ctx):
     _failsafe()
     x, y = _real(ctx, a["x"], a["y"])
+    _not_on_jayth(x, y, "pulsa")
     _press_at(x, y, a.get("button"), a.get("double"), a.get("keys"))
     return "Clic %s%s en (%s,%s)" % (a.get("button") or "left", (" con " + a["keys"]) if a.get("keys") else "", a["x"], a["y"])
 
@@ -1804,6 +1882,8 @@ def drag(a, ctx):
     _failsafe()
     x1, y1 = _real(ctx, a["x1"], a["y1"])
     x2, y2 = _real(ctx, a["x2"], a["y2"])
+    _not_on_jayth(x1, y1, "arrastra")
+    _not_on_jayth(x2, y2, "suelta nada")
     button = str(a.get("button") or "left").lower()
     _glide(x1, y1)
     _ui("click", x1, y1)
@@ -1835,7 +1915,12 @@ def scroll(a, ctx):
     _failsafe()
     if a.get("x") is not None and a.get("y") is not None:
         x, y = _real(ctx, a["x"], a["y"])
+        _not_on_jayth(x, y, "desplaza la rueda")
         _glide(x, y)
+    else:
+        hx, hy = _here()
+        if hx >= 0:
+            _not_on_jayth(hx, hy, "desplaza la rueda")
     _ui("scroll", *_here())
     if osys.WIN:
         _mouse(0x800, int(a["amount"]) * 120)
@@ -2479,6 +2564,17 @@ def command_output(a, ctx):
     return clip(out, ctx.max_out)
 
 
+@tool("list_commands", "read", "Lista los comandos lanzados con background=true: id, si siguen en marcha y cuánto llevan.", {})
+def list_commands(a, ctx):
+    from . import harness
+    rows = []
+    for pid, r in list(harness.BG.items()):
+        code = r["proc"].poll()
+        state = "en marcha" if code is None else ("detenido" if r.get("stopped") else "terminado (código %s)" % code)
+        rows.append("%s · %s · %ds · %s" % (pid, state, time.time() - r["started"], str(r.get("cmd") or "")[:120]))
+    return "\n".join(rows) or "No hay comandos en segundo plano en esta sesión de Jayth."
+
+
 @tool("stop_command", "exec", "Detiene un comando lanzado en segundo plano. Primero se lo pide con orden (como Ctrl+C, para "
       "que cierre sus archivos y conexiones) y, si en unos segundos no termina, lo cierra a la fuerza junto con los procesos "
       "que abrió. El resultado dice cómo terminó.",
@@ -2676,10 +2772,23 @@ CANVAS_EXT = {"html": ".html", "markdown": ".md", "svg": ".svg", "code": ".txt"}
       "dibujos o diagramas (kind=svg) y programas completos (kind=code). Para corregirlo, llama de nuevo con el mismo "
       "title y el contenido entero: se guarda como una versión nueva.",
       {"title": S("Título corto del contenido"), "kind": S("html, markdown, svg o code"), "content": S("Contenido completo"),
-       "language": S("Lenguaje, solo para kind=code (python, javascript…)")}, ["title", "content"])
+       "language": S("Lenguaje, solo para kind=code (python, javascript…)"),
+       "path": S("O un archivo ya hecho que mostrar (en vez de copiar su contenido en content)")}, ["title"])
 def show_canvas(a, ctx):
     from . import paths
     content = str(a.get("content") or "")
+    if a.get("path") and not content.strip():       # un archivo que ya existe: se lee aquí (el modelo no tiene que copiarlo)
+        p = ctx.path(str(a["path"]))
+        if not os.path.isfile(p):
+            raise missing(p, ctx)
+        with open(p, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        ext = os.path.splitext(p)[1].lower()
+        if not a.get("kind"):
+            a = dict(a, kind={".html": "html", ".htm": "html", ".svg": "svg", ".md": "markdown", ".markdown": "markdown",
+                              ".txt": "markdown"}.get(ext, "code"))
+        if not a.get("language") and a["kind"] == "code":
+            a = dict(a, language=ext.lstrip(".") or "text")
     if not content.strip():
         raise ToolError("Falta el contenido.")
     kind = str(a.get("kind") or "").lower().strip()
@@ -2879,6 +2988,12 @@ def remember(a, ctx):
     from . import harness
     harness.remember(str(a["fact"]))
     return "Guardado en la memoria."
+
+
+@tool("list_memory", "agent", "Lista lo que tienes guardado en la memoria sobre el usuario (lo que guardaste con remember).", {})
+def list_memory(a, ctx):
+    from . import harness
+    return harness.memory_text() or "La memoria está vacía."
 
 
 @tool("forget", "agent", "Borra de la memoria un dato que el usuario ya no quiere que recuerdes (p. ej. si dice «olvida que uso pnpm»).",

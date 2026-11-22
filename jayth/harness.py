@@ -398,7 +398,17 @@ def read_document(path, limit=60000):
             raise RuntimeError("Para leer PDF hace falta el paquete pypdf (pip install pypdf).")
         r = PdfReader(path)
         return "\n\n".join("--- Página %d ---\n%s" % (i + 1, (p.extract_text() or "").strip()) for i, p in enumerate(r.pages))[:limit]
-    raise RuntimeError("Formato no soportado: %s (usa read_file para texto plano)" % ext)
+    # según lo que es de verdad: texto → read_file; binario → mirar sus bytes (read_file también lo rechazaría)
+    try:
+        with open(path, "rb") as f:
+            binary = b"\0" in f.read(4096)
+    except OSError:
+        binary = False
+    if binary:
+        raise RuntimeError("Formato no soportado: %s, y es un archivo binario (read_file tampoco lo lee). Para ver sus primeros "
+                           "bytes usa run_command (%s); si es de un programa concreto, ábrelo con él (open_target)." % (
+                               ext or "sin extensión", "Format-Hex -Path 'archivo' | Select-Object -First 8" if osys.WIN else "xxd archivo | head"))
+    raise RuntimeError("Formato no soportado: %s. Parece texto: léelo con read_file." % (ext or "sin extensión"))
 
 
 # ---------------------------------------------------------------- conectores MCP (Model Context Protocol, transporte stdio)

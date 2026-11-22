@@ -149,7 +149,8 @@ def extras():
     out.append("## " + tr("Modos de permiso"))
     out += ["- %s" % v for v in A.MODES.values()]
     out.append("## " + tr("Herramientas del agente"))
-    out.append(", ".join(T.TOOL_LABELS[k] for k in T.TOOL_LABELS))
+    # con su nombre real (el que usa el modelo) y, si tiene, el que se ve en Ajustes: «read_file (Leer archivos)»
+    out.append(", ".join("%s (%s)" % (k, T.TOOL_LABELS[k]) if k in T.TOOL_LABELS else k for k in T.TOOLS))
     return "\n".join(out)
 
 

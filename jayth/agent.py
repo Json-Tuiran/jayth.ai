@@ -55,7 +55,7 @@ Responde en el idioma del usuario, claro y sin relleno. Si razonas antes de resp
 # ~8000 tokens de contexto y confunde a los modelos pequeños. Los grupos activados se añaden al final de la lista y se
 # conservan en la conversación: así lo ya procesado por el modelo (caché de prompt) sigue valiendo.
 CORE = ["read_file", "write_file", "edit_file", "multi_edit", "replace_in_files", "list_dir", "search_files", "move_path", "delete_path",
-        "run_command", "open_target", "update_plan", "ask_user", "remember", "jayth_guide", "undo_changes", "delegate"]
+        "run_command", "open_target", "update_plan", "ask_user", "remember", "list_memory", "jayth_guide", "undo_changes", "delegate"]
 
 # ---- ayudantes (subagentes): otra copia del modelo, con la memoria en blanco, que hace una subtarea de lectura y devuelve
 # solo su informe. Sirve para que una búsqueda o una lectura larga no llene la conversación del agente principal.
@@ -103,7 +103,7 @@ GROUPS = {   # grupo: (para qué sirve, herramientas, cómo usarlas: se le da al
     "documentos": ("Word, Excel, PowerPoint y PDF, ver imágenes del disco y el lienzo junto al chat",
                    ["read_document", "create_document", "view_image", "show_canvas"],
                    "- Documentos Word, Excel, PowerPoint y PDF: read_document para leerlos y create_document para crearlos (escribes el contenido en Markdown). Imágenes del disco: view_image.\n- Páginas web, documentos largos, diagramas SVG o programas completos que el usuario quiera VER: show_canvas (lienzo junto al chat). No pegues ese contenido en tu respuesta."),
-    "procesos": ("Python para datos y gráficos, procesos en segundo plano y esperas", ["run_python", "command_output", "stop_command", "wait"],
+    "procesos": ("Python para datos y gráficos, procesos en segundo plano y esperas", ["run_python", "command_output", "list_commands", "stop_command", "wait"],
                  "- Datos (CSV, Excel), cálculos y gráficos: run_python con pandas y matplotlib; los gráficos se muestran solos al usuario. Procesos lanzados con background=true: command_output y stop_command."),
     "imagenes": ("crear imágenes nuevas en este equipo", ["generate_image"], ""),
     "conocimiento": ("buscar por significado en las carpetas de conocimiento del usuario (sus notas, documentos y proyectos)",
@@ -677,7 +677,7 @@ def all_schemas(cfg):
     elif not can_see(cfg):         # sin ver la captura no sabe qué hay en unas coordenadas: ui_elements + click_element
         off |= {"click", "drag", "move_mouse"}
     if cfg.get("_temp") or not cfg.get("memory_enabled", True):       # chat temporal o memoria apagada: ni guarda ni olvida
-        off |= {"remember", "forget"}
+        off |= {"remember", "forget", "list_memory"}
     if not images_offered(cfg):                  # desactivado, sin motor para este sistema o el modelo ya crea imágenes
         off.add("generate_image")
     if not cfg.get("web_access", True):          # los servicios externos necesitan internet
@@ -874,6 +874,7 @@ INTERRUPTED = "Interrumpido."
 _DAY_WARNED = {}     # aviso de gasto del día ya dado: fecha -> límite (una vez por día y límite)
 # Consultas sin efectos fuera de la categoría «read»: repetirlas tras una acción no es un bucle
 QUERY_TOOLS = {"list_windows", "screenshot", "ui_elements", "browser_read", "browser_screenshot", "command_output", "wait",
+               "list_commands", "list_memory",
                "list_tasks"}
 CUT_CALL = ("No se ejecutó: tu respuesta se cortó por el límite de salida a mitad de esta acción y sus datos llegaron "
             "incompletos (hacerla así habría dejado, por ejemplo, un archivo a medias). Divídela en partes más pequeñas: "
