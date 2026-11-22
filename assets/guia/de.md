@@ -245,10 +245,21 @@ globale Steuerung eingeschränkt); zum Auflisten von Fenstern wird `wmctrl` ben�
   **Einstellungen › Modelle › Anbieter** (URL, Modellname und Schlüssel). Bei einem API-Modell fragt Jayth den
   Dienst, wie viel Kontext und Ausgabe das Modell zulässt, und nutzt diese Werte (mit einer Obergrenze von 200.000
   Tokens pro Schritt, um die Kosten im Rahmen zu halten), passt sich von selbst an, wenn der Dienst einen Parameter
-  ablehnt, erlaubt längere Durchgänge (120 Schritte) und bietet dem Agenten **Helfer**: Teilaufgaben zum Lesen oder
-  Suchen, die eine weitere Kopie des Modells erledigt und von denen nur der Bericht zurückkommt. Diese Dienste denken
-  nach, ohne es zu zeigen, und liefern jede Aktion auf einmal; der Chat kann daher eine Weile melden, dass der Dienst
-  die Antwort vorbereitet. Bleibt eine Anfrage hängen, bricht Jayth sie ab und bittet das Modell fortzufahren.
+  ablehnt, erlaubt längere Durchgänge (120 Schritte) und bietet dem Agenten **Helfer**: Teilaufgaben, die eine
+  weitere Kopie des Modells erledigt und von denen nur der Bericht zurückkommt. Der Agent legt fest, was jeder
+  Helfer tun darf (nur lesen und suchen, auch Dateien in bestimmten Ordnern ändern oder zusätzlich Befehle
+  ausführen), und steht dafür ein: Was der Helfer tut, ist im Chat zu sehen, lässt sich rückgängig machen, und
+  braucht er eine Freigabe des Nutzers, wird sie ihm verweigert und der Agent erledigt es selbst. Der Auftrag bittet
+  den Nutzer so um Erlaubnis, wie es die entsprechende Aktion täte. Derselbe Dialog zeigt den **Verbrauch** jedes
+  gespeicherten Dienstes: Anfragen, Tokens und ungefähre Kosten von heute, der letzten 30 Tage und insgesamt, pro
+  Modell; die Limits des Kontos laut der letzten Antwort des Dienstes; das Guthaben, falls der Dienst es angibt
+  (OpenRouter, DeepSeek); und er weist auf neue oder eingestellte Modelle hin. **Offizieller Verbrauch** öffnet die
+  Seite des Dienstes mit der tatsächlichen Zahl und dem Tarif (Jayth zählt nur, was von diesem Computer gesendet
+  wurde), und mit **Preis eines Modells…** gibst du den Preis eines Modells ein, das Jayth nicht kennt. Im Chat
+  endet jeder Durchgang mit einem API-Modell mit der Angabe, wie viele Tokens er verbraucht hat und was das ungefähr
+  kostet. Diese Dienste denken nach, ohne es zu zeigen, und liefern jede Aktion auf einmal; der Chat kann daher
+  eine Weile melden, dass der Dienst die Antwort vorbereitet. Bleibt eine Anfrage hängen, bricht Jayth sie ab und
+  bittet das Modell fortzufahren.
 - **Modell starten oder stoppen:** Modell-Chip › **Engine** oder die Schaltfläche **Modell starten** im Hinweis.
   Gestartet belegt es Speicher und antwortet sofort; gestoppt gibt es den Speicher frei.
 - Downloads zeigen Prozent, Geschwindigkeit und Restzeit, werden fortgesetzt, wenn sie abbrechen, und mit SHA-256

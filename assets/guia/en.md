@@ -224,9 +224,18 @@ limited); listing windows requires `wmctrl`.
   **Settings › Models › Provider** (URL, model name and key). With an API model, Jayth asks the service how much
   context and output that model supports and uses them (capped at 200,000 tokens per step to keep costs down),
   adapts on its own if the service rejects a parameter, allows longer turns (120 steps) and offers the agent
-  **helpers**: reading or search subtasks done by another copy of the model, from which only the report comes back.
-  These services think without showing it and deliver each action all at once, so the chat may spend a while saying
-  that the service is preparing the response; if a request hangs, Jayth cuts it off and asks the model to continue.
+  **helpers**: subtasks done by another copy of the model, from which only the report comes back. The agent decides
+  what each helper may do (only read and search, also change files in specific folders, or run commands as well) and
+  answers for it: what the helper does is shown in the chat, can be undone and, if it needs a permission from the
+  user, it is denied and the agent does it instead. Delegating asks the user for permission just as the equivalent
+  action would. The same dialog shows the **usage** of each saved service: requests, tokens and approximate cost for
+  today, the last 30 days and in total, per model; the account limits according to the service's last response; the
+  balance, if the service provides it (OpenRouter, DeepSeek); and it flags new or withdrawn models. **Official
+  usage** opens the service's page with the actual figure and plan (Jayth only counts what was sent from this
+  computer) and **Model price…** lets you enter the price of a model Jayth doesn't know. In the chat, each turn with
+  an API model ends by saying how many tokens it used and their approximate cost. These services think without
+  showing it and deliver each action all at once, so the chat may spend a while saying that the service is preparing
+  the response; if a request hangs, Jayth cuts it off and asks the model to continue.
 - **Start or stop the model:** model chip › **Engine**, or the **Start model** button in the notice. When it's on,
   it takes up memory and responds instantly; turning it off frees that memory.
 - Downloads show percentage, speed and time remaining, resume if interrupted, and are verified with SHA-256.

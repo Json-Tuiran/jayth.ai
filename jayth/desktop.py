@@ -628,7 +628,10 @@ class StepRow(QWidget):
         self.dl = QVBoxLayout(self.details)
         self.dl.setContentsMargins(30, 2, 6, 8)
         self.dl.setSpacing(6)
-        self._args(ev["name"], ev.get("args") or {})
+        # el detalle (los datos de la acción y su resultado) se monta la primera vez que se despliega: casi nunca se
+        # mira, y en una conversación larga eran cientos de cajas de texto ocultas que costaban segundos al abrirla
+        self._filled = False
+        self._later = []
         self.details.hide()
         v.addWidget(self.details)
         self.approval = None
@@ -668,12 +671,33 @@ class StepRow(QWidget):
             wl.addWidget(self.approval)
             v.addWidget(wrap)
             self.approval_wrap = wrap
-            self.details.show()
+            self.open_details()
             self._set("pending")
         elif ev["approval"] == "blocked":
             self._set("blocked")
         else:
             self._set("run")
+
+    def fill(self):
+        """Monta el detalle si aún no lo está: primero los datos de la acción y luego lo que haya llegado después."""
+        if self._filled:
+            return
+        self._filled = True
+        self._args(self.ev["name"], self.ev.get("args") or {})
+        later, self._later = self._later, []
+        for make in later:
+            self.dl.addWidget(make())
+
+    def add_detail(self, make):
+        """Añade una pieza al detalle: ya, si está montado; si no, cuando se despliegue."""
+        if self._filled:
+            self.dl.addWidget(make())
+        else:
+            self._later.append(make)
+
+    def open_details(self):
+        self.fill()
+        self.details.show()
 
     def _args(self, name, a):
         kv = lambda k, val: TextView("<span style='color:%s'>%s:</span> %s" % (C["faint"], k, str(val).replace("&", "&amp;").replace("<", "&lt;")), "html")
@@ -720,10 +744,14 @@ class StepRow(QWidget):
         self._chev()
 
     def _chev(self):
-        self.chev.setPixmap(pix("ui_chevron_abajo" if self.details.isVisible() else "ui_chevron_derecha", C["faint"], 10))
+        # (isHidden y no isVisible: dentro de un resumen plegado nada «es visible», pero el detalle sí puede estar abierto)
+        self.chev.setPixmap(pix("ui_chevron_derecha" if self.details.isHidden() else "ui_chevron_abajo", C["faint"], 10))
 
     def toggle(self):
-        self.details.setVisible(not self.details.isVisible())
+        opening = self.details.isHidden()
+        if opening:
+            self.fill()
+        self.details.setVisible(opening)
         self._chev()
 
     def _decide(self, d, cb):
@@ -781,16 +809,17 @@ class StepRow(QWidget):
                 self.head.setToolTip(t)
         denied = self.phase == "denied"           # «No se permitió…» ya lo dice; el texto para el modelo sobra
         if text and not denied:
-            self.dl.addWidget(mono(text, max_h=300))
-        if image:                             # la imagen queda a la vista bajo las acciones (también con el resumen plegado)
+            self.add_detail(lambda: mono(text, max_h=300))
+        if image and self.ev["name"] != "show_canvas":     # (la captura del lienzo es para el modelo: el usuario ya tiene el lienzo)
+            # la imagen queda a la vista bajo las acciones (también con el resumen plegado)
             p = os.path.join(paths.IMG_DIR, image)
             if self.box is not None:
                 self.box.add_preview(p)
             else:
-                self.dl.addWidget(ImageLabel(p))
-                self.details.show()
+                self.add_detail(lambda: ImageLabel(p))
+                self.open_details()
         if not ok and not denied:
-            self.details.show()
+            self.open_details()
         if ok and self.ev["name"] == "create_document" and self.box is not None:
             m = re.search(r"documento \w+ (.+?\.(?:docx|xlsx|pptx|pdf)) \(", text or "", re.I)
             if m:
@@ -1441,6 +1470,7 @@ class StepsBox(QFrame):
             try:
                 if row is not None and copy in shown and card.parent() is not None:
                     self.ev_.removeWidget(card)
+                    row.fill()
                     row.dl.addWidget(card)
                     row._chev()
                     continue
@@ -1545,9 +1575,16 @@ def divider(text, icon_name=None, color=None):
     return w
 
 
-def worked_line(seconds):
-    """«Trabajó durante 3 min 12 s»: la línea que cierra un turno con acciones, debajo de la respuesta final."""
-    return divider(tr("Trabajó durante %s") % CV.fmt_secs(seconds))
+def worked_line(seconds, spent=None):
+    """«Trabajó durante 3 min 12 s»: la línea que cierra un turno con acciones, debajo de la respuesta final. Con un modelo
+    por API añade lo que costó el turno: «· 5,8 M tokens · ≈ 23,40 US$»."""
+    text = tr("Trabajó durante %s") % CV.fmt_secs(seconds)
+    if spent and (spent.get("i") or spent.get("o")):
+        from .providers import tok_short, money
+        text += " · " + tr("%s tokens") % tok_short(spent["i"] + spent["o"])
+        if spent["sin_precio"] < spent["n"]:
+            text += " · " + ("≈ " if spent.get("estimado") else "") + money(spent["usd"])
+    return divider(text)
 
 
 def steer_bubble(ev, compact=False):
@@ -1617,8 +1654,8 @@ class ChangesCard(QFrame):
             for txt, col in (("+%d" % f["add"] if f["add"] else "", C["ok"]), ("−%d" % f["rem"] if f["rem"] else "", C["bad"])):
                 l = QLabel(txt)
                 l.setStyleSheet("color:%s; font-size:9pt" % col)
-                l.setVisible(bool(txt))
                 rh.addWidget(l)
+                l.setVisible(bool(txt))                # (después de colocarla: si no, sale un instante como ventanita)
             b = tbtn("acc_refrescar", tr("Devolver este archivo a como estaba"), lambda _=False, f=f: self.on_undo([f]), size=13)
             rh.addWidget(b)
             row.clicked.connect(lambda f=f: on_open(f["path"]))
@@ -1631,8 +1668,8 @@ class ChangesCard(QFrame):
         self.b_more.setCursor(Qt.PointingHandCursor)
         self.b_more.setStyleSheet("text-align:left; padding:3px 20px; color:%s" % C["mut"])
         self.b_more.clicked.connect(lambda: self.fold(not self.folded))
-        self.b_more.setVisible(self.folded)
         v.addWidget(self.b_more)
+        self.b_more.setVisible(self.folded)
         self.fold(self.folded)
         self.refresh()
 
@@ -1691,58 +1728,122 @@ class AssistantBlock(QWidget):
         self.peek.setObjectName("thinkPeek")
         self.peek.hide()
         v.addWidget(self.peek)
-        self.think_view = CV.ThinkView()
-        self.think_fold = Collapsible(self.think_view, limit=280, fade=C["bg"], slack=80)
-        self.think_fold.hide()
-        v.addWidget(self.think_fold)
         self.p_start = None                      # el modelo escribe los datos de una acción: «Va a escribir · 2 KB»
-        self.prep = CV.ActivityLine()
-        self.prep.hide()
-        v.addWidget(self.prep)
         self.body = md_label()
         self.body.hide()
         v.addWidget(self.body)
         self._read = None                        # avance real de la lectura (tokens leídos, total, velocidad, cuándo)
         self.q_start = None                      # el modelo escribe pero no llega nada visible: se dice, con cuánto lleva
-        self.quiet_line = CV.ActivityLine()
-        self.quiet_line.hide()
-        v.addWidget(self.quiet_line)
-        self.actions = QWidget()
-        ah = QHBoxLayout(self.actions)
+        self.on_regen = None                     # qué hacer al pulsar «Regenerar» (lo pone el panel)
+        self._stats = None                       # cifras del paso, a la espera de que exista la fila de botones
+        self.text = ""
+
+    # El pensamiento desplegable, las líneas de «va a escribir…» y de silencio y la fila de botones casi nunca se ven
+    # (solo la respuesta final lleva botones; el pensamiento se despliega a mano). Se crean la primera vez que alguien
+    # las pide —basta con nombrarlas, como siempre— y ocupan su sitio de siempre. Antes se creaban en cada paso: en una
+    # conversación larga eran miles de piezas ocultas y la mayor parte del tiempo que tardaba en abrirse.
+    _PARTS = {"think_view": "_make_think", "think_fold": "_make_think", "prep": "_make_prep", "quiet_line": "_make_quiet",
+              "actions": "_make_actions", "b_copy": "_make_actions", "b_regen": "_make_actions", "b_report": "_make_actions",
+              "b_undo_all": "_make_actions", "b_speak": "_make_actions", "stats": "_make_actions"}
+
+    def __getattr__(self, name):
+        make = AssistantBlock._PARTS.get(name)
+        if make is None:
+            raise AttributeError(name)
+        getattr(self, make)()
+        return self.__dict__[name]
+
+    def has(self, name):
+        """¿Existe ya esa pieza? (para preguntar por ella sin crearla)"""
+        return name in self.__dict__
+
+    @property
+    def actions(self):                       # (QWidget ya tiene un «actions» propio: sin esto se devolvería ese)
+        if "actions" not in self.__dict__:
+            self._make_actions()
+        return self.__dict__["actions"]
+
+    def _make_think(self):
+        tv = CV.ThinkView()
+        fold = Collapsible(tv, limit=280, fade=C["bg"], slack=80)
+        fold.hide()
+        lay = self.layout()
+        lay.insertWidget(lay.indexOf(self.peek) + 1, fold)       # (colocada antes de poder mostrarse: sin ventanitas)
+        self.__dict__.update(think_view=tv, think_fold=fold)
+
+    def _make_prep(self):
+        w = CV.ActivityLine()
+        w.hide()
+        lay = self.layout()
+        lay.insertWidget(lay.indexOf(self.body), w)
+        self.__dict__["prep"] = w
+
+    def _make_quiet(self):
+        w = CV.ActivityLine()
+        w.hide()
+        lay = self.layout()
+        lay.insertWidget(lay.indexOf(self.body) + 1, w)
+        self.__dict__["quiet_line"] = w
+
+    def _make_actions(self):
+        actions = QWidget()
+        ah = QHBoxLayout(actions)
         ah.setContentsMargins(0, 0, 0, 0)
         ah.setSpacing(2)
-        self.b_copy = tbtn("acc_copiar", tr("Copiar respuesta"), self.copy, size=15)
-        self.b_regen = tbtn("acc_refrescar", tr("Regenerar respuesta"), size=15)
-        self.b_report = tbtn("est_aviso", tr("Informar de un problema con esta respuesta"), self.report, size=15)
-        self.b_undo_all = QPushButton(tr("Deshacer cambios"))
-        self.b_undo_all.setProperty("kind", "flat")
-        self.b_undo_all.setIcon(icon("acc_refrescar", C["mut"], 13))
-        self.b_undo_all.setToolTip(tr("Restaura todos los archivos que el agente cambió en esta respuesta"))
-        self.b_undo_all.hide()
-        self.b_speak = tbtn("voz_altavoz", tr("Leer en voz alta"), self.speak, size=15)
-        self.b_speak.setVisible(speaker_available())
-        ah.addWidget(self.b_copy)
-        ah.addWidget(self.b_speak)
-        ah.addWidget(self.b_regen)
-        ah.addWidget(self.b_report)
-        ah.addWidget(self.b_undo_all)
+        b_copy = tbtn("acc_copiar", tr("Copiar respuesta"), self.copy, size=15)
+        b_regen = tbtn("acc_refrescar", tr("Regenerar respuesta"), size=15)
+        b_regen.clicked.connect(lambda *_: self.on_regen() if self.on_regen else None)
+        b_report = tbtn("est_aviso", tr("Informar de un problema con esta respuesta"), self.report, size=15)
+        b_undo_all = QPushButton(tr("Deshacer cambios"))
+        b_undo_all.setProperty("kind", "flat")
+        b_undo_all.setIcon(icon("acc_refrescar", C["mut"], 13))
+        b_undo_all.setToolTip(tr("Restaura todos los archivos que el agente cambió en esta respuesta"))
+        b_undo_all.hide()
+        b_speak = tbtn("voz_altavoz", tr("Leer en voz alta"), self.speak, size=15)
+        ah.addWidget(b_copy)
+        ah.addWidget(b_speak)
+        # visible u oculto, pero ya colocado: una pieza sin sitio que se hace visible es, por un instante, una ventanita suelta
+        b_speak.setVisible(speaker_available())
+        ah.addWidget(b_regen)
+        ah.addWidget(b_report)
+        ah.addWidget(b_undo_all)
         ah.addStretch(1)
-        self.stats = FitLabel()              # una sola linea: si no cabe, una version mas corta
-        self.stats.setObjectName("stats")
-        self.stats.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        ah.addWidget(self.stats, 1)
-        self.actions.hide()
-        v.addWidget(self.actions)
-        self.text = ""
+        stats = FitLabel()                   # una sola linea: si no cabe, una version mas corta
+        stats.setObjectName("stats")
+        stats.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        ah.addWidget(stats, 1)
+        actions.hide()
+        self.layout().addWidget(actions)     # al final: lo que va «sobre los botones» ya está antes
+        self.__dict__.update(actions=actions, b_copy=b_copy, b_regen=b_regen, b_report=b_report, b_undo_all=b_undo_all,
+                             b_speak=b_speak, stats=stats)
+        if self._stats:
+            stats.set_options(*self._stats)
+
+    def set_stats(self, options, tip):
+        """Cifras del paso (tokens, velocidad, coste) para la fila de botones; si aún no existe, se guardan."""
+        self._stats = (options, tip)
+        if self.has("stats"):
+            self.stats.set_options(options, tip)
+
+    def set_actions(self, on):
+        """Enseña u oculta la fila de botones de la respuesta (sin crearla solo para ocultarla)."""
+        if on or self.has("actions"):
+            self.actions.setVisible(on)
+            self.b_regen.hide()
+            self.b_undo_all.hide()
+
+    def _above_actions(self):
+        lay = self.layout()
+        return lay.indexOf(self.actions) if self.has("actions") else lay.count()
 
     def tick(self, now):
         if self.act.live:
             if self._read and self.r_start is None:
                 self.act.extra = self._read_text(now)
             self.act.tick(now)
-        if self.prep.live:
+        if self.has("prep") and self.prep.live:
             self.prep.tick(now)
-        if self.quiet_line.live:
+        if self.has("quiet_line") and self.quiet_line.live:
             self.quiet_line.tick(now)
 
     def reading(self, done, total, tps, ts):
@@ -1795,7 +1896,7 @@ class AssistantBlock(QWidget):
                 self.act.run(CV.think_phrases(self.kind), ts, "ia_controlador", live=live)
                 self.act.set_expandable(True)
             self.reasoning += text
-            if self.think_fold.isVisible():
+            if self.has("think_fold") and self.think_fold.isVisible():
                 self.think_view.append(text)
             elif self.act.live:
                 self._peek()
@@ -1880,8 +1981,7 @@ class AssistantBlock(QWidget):
 
     def add_extra(self, w):
         """Algo bajo la respuesta y sobre sus botones (el resumen de los cambios)."""
-        lay = self.layout()
-        lay.insertWidget(lay.indexOf(self.actions), w)
+        self.layout().insertWidget(self._above_actions(), w)
         return w
 
     def add_gallery(self, paths_):
@@ -1893,8 +1993,7 @@ class AssistantBlock(QWidget):
         fl = FlowLayout(self.gallery, spacing=8)
         for p in paths_:
             fl.addWidget(Preview(p, 340 if len(paths_) == 1 else 220, 210 if len(paths_) == 1 else 140))
-        lay = self.layout()
-        lay.insertWidget(lay.indexOf(self.actions), self.gallery)
+        self.layout().insertWidget(self._above_actions(), self.gallery)
 
     def copy(self):
         QGuiApplication.clipboard().setText(self.text)
@@ -2384,6 +2483,13 @@ class ComposerEdit(QPlainTextEdit):
 class ChatPanel(QWidget):
     changed = Signal()            # cambia la conversacion o su estado (para refrescar listas y cabecera)
     file_written = Signal(str)    # el agente escribio/edito un archivo (ruta absoluta)
+    _load = 0                     # número de apertura: lo que quede pendiente de una anterior no toca la actual
+    _loading = None               # apertura que aún se está montando (su número), o None
+    _plan_late = None             # último plan visto mientras se monta: se pinta una vez, al final
+    _veil = None                  # velo que tapa el chat mientras se monta una conversación larga
+    _load_t = None                # temporizador que va montando los trozos
+    LOAD_FIRST = 0.12             # segundos montando de un tirón antes de enseñar el velo (las cortas caben de sobra)
+    LOAD_SLICE = 0.02             # y después, por trozos así de cortos: la ventana sigue respondiendo
 
     def __init__(self, main, compact=False):
         super().__init__()
@@ -2426,7 +2532,9 @@ class ChatPanel(QWidget):
         self.scroll.setWidget(holder)
         self.stick = True
         sb = self.scroll.verticalScrollBar()
-        sb.rangeChanged.connect(lambda lo, hi: self.stick and sb.setValue(hi))
+        # mientras una acción espera tu permiso (o una pregunta, tu respuesta) el chat no sigue el final: su tarjeta se queda
+        # quieta bajo el ratón aunque llegue contenido debajo (antes se movía justo cuando ibas a pulsar «Permitir»)
+        sb.rangeChanged.connect(lambda lo, hi: self.stick and not getattr(self, "waiting", 0) and sb.setValue(hi))
         sb.valueChanged.connect(lambda val: setattr(self, "stick", val >= sb.maximum() - 60))
         v.addWidget(self.scroll, 1)
         v.addWidget(self._composer())
@@ -2690,6 +2798,126 @@ class ChatPanel(QWidget):
         return w
 
     def open_session(self, sid):
+        """Abre una conversación sin enseñarla a medias: se monta sin pintar, sin animaciones de entrada, y aparece
+        entera y ya colocada al final. Una corta cabe en un instante; una larga se monta por trozos cortos detrás de
+        un velo («Abriendo la conversación…») para que la ventana no se quede congelada. Antes se veía vaciarse,
+        rellenarse por tandas de 400 eventos (cada una, un parón) y saltar la barra mientras cada pieza tomaba su
+        tamaño: el chat cargaba «a tirones»."""
+        self._load += 1                                          # deja sin efecto lo pendiente de la apertura anterior
+        self._loading = None
+        self._plan_late = None
+        nxt = core.SESSIONS.get(sid) if sid else None
+        if nxt is None or not nxt.events:                        # vacía: no hay nada que esconder
+            self._open(sid)
+            self._unveil()
+            return
+        self.scroll.setUpdatesEnabled(False)
+        self._open(sid)
+        self._loading = self._load
+        self._load_step(self._load, self.LOAD_FIRST)
+
+    def _load_step(self, load, budget):
+        """Monta otro trozo de la conversación que se está abriendo; al acabar, la coloca y la enseña."""
+        try:
+            if load != self._load or self._loading != load:      # ya se abrió otra: se encarga la suya
+                return
+            s = self.session()
+            if budget != self.LOAD_FIRST and self._load_waits(s):
+                return                                           # sigue al entrar en este panel (showEvent)
+            end = time.time() + budget
+            while s is not None and self.ev_i < len(s.events) and time.time() < end:
+                before = self.ev_i
+                self._feed(s, end)
+                if self.ev_i == before:
+                    break
+            if s is not None and self.ev_i < len(s.events):
+                self._veil_on()
+                if self._load_t is None:                 # un solo temporizador: si no, cada llamada abriría otra cadena
+                    self._load_t = QTimer(self, singleShot=True, interval=1)
+                    self._load_t.timeout.connect(lambda: self._loading is not None and self._load_step(self._loading, self.LOAD_SLICE))
+                return self._load_t.start()
+            self._loading = None
+            if self._plan_late is not None:
+                self.plan_panel.set_items(self._plan_late, live=s is not None and s.run is not None)
+                self._plan_late = None
+            self.stick = True
+            self.pump()                                          # lo que haya llegado entretanto y el estado (ocupado, cola)
+            QTimer.singleShot(0, lambda: self._settle(load, 0, -1))
+        except RuntimeError:
+            pass
+
+    def _load_waits(self, s):
+        """¿Puede esperar el resto de la carga? Sí mientras la ventana esté a la vista pero este panel no (al arrancar en
+        Chat, el de Code; y al revés) y su agente no esté trabajando: montarlo entonces solo restaría fluidez a lo que
+        sí se ve. Se retoma al entrar en el panel."""
+        try:
+            return (not self.isVisible()) and self.window().isVisible() and not self.window().isMinimized() \
+                and (s is None or s.run is None)
+        except RuntimeError:
+            return False
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if self._loading is not None:                            # se quedó a medias mientras no se veía: ahora sí
+            QTimer.singleShot(0, lambda: self._loading is not None and self._load_step(self._loading, self.LOAD_SLICE))
+
+    def _settle(self, load, n, last):
+        """Fin de una apertura: espera a que el contenido deje de cambiar de alto (cada pieza toma su tamaño en las
+        vueltas siguientes), se coloca al final y solo entonces vuelve a pintar. Como mucho, medio segundo."""
+        try:
+            if load != self._load:                               # ya se abrió otra conversación: se encarga la suya
+                return
+            sb = self.scroll.verticalScrollBar()
+            hi = sb.maximum()
+            if self.stick and not self.waiting:
+                sb.setValue(hi)
+            if hi != last and n < 14:
+                return QTimer.singleShot(35, lambda: self._settle(load, n + 1, hi))
+            self._unveil()
+            self.scroll.viewport().update()
+        except RuntimeError:
+            pass
+
+    def _veil_on(self):
+        """Tapa el chat mientras se monta una conversación larga: en vez de verla a medias, el fondo liso y, si se
+        alarga, un aviso discreto (en una conversación mediana el aviso solo sería un parpadeo)."""
+        if self._veil is None:
+            self._veil = w = QWidget(self)
+            w.setAttribute(Qt.WA_StyledBackground, True)
+            vl = QVBoxLayout(w)
+            self._veil_msg = msg = QWidget()
+            row = QHBoxLayout(msg)
+            row.setSpacing(8)
+            self._veil_spin = Spinner(size=16)
+            row.addStretch(1)
+            row.addWidget(self._veil_spin)
+            lab = QLabel(tr("Abriendo la conversación…"))
+            lab.setObjectName("faint")
+            row.addWidget(lab)
+            row.addStretch(1)
+            vl.addStretch(1)
+            vl.addWidget(msg)
+            vl.addStretch(1)
+            msg.hide()
+            w.hide()
+        self._veil.setGeometry(self.scroll.geometry())
+        if self._veil.isHidden():
+            self._veil_t0 = time.time()
+            self._veil.setStyleSheet("background:%s" % C["bg"])
+            self._veil.raise_()
+            self._veil.show()
+        elif self._veil_msg.isHidden() and time.time() - self._veil_t0 > 0.4:
+            self._veil_msg.show()
+            self._veil_spin.start()
+
+    def _unveil(self):
+        if self._veil is not None and not self._veil.isHidden():
+            self._veil_spin.stop()
+            self._veil_msg.hide()
+            self._veil.hide()
+        self.scroll.setUpdatesEnabled(True)
+
+    def _open(self, sid):
         old = core.SESSIONS.get(self.sid) if self.sid else None
         if old is not None and old.temp and old.id != sid:      # al salir de un chat temporal, desaparece
             if old.run:
@@ -2752,21 +2980,31 @@ class ChatPanel(QWidget):
                 return w
         return None
 
-    def pump(self):
-        s = self.session()
-        if not s:
-            return
-        if self.ev_i > len(s.events):          # la conversacion se recorto (regenerar): reconstruir
-            return self.reload_quiet()
+    def _feed(self, s, end=None):
+        """Pasa al chat los eventos que falten (hasta 400, o hasta la hora «end» si se da)."""
         with s.cond:
             new = s.events[self.ev_i:self.ev_i + 400]
+        n = 0
         for ev in new:
             try:
                 self._live = ev.get("ts", 0) > time.time() - 3
                 self.handle(ev)
             except Exception as e:
                 print("evento", ev.get("t"), e, file=sys.stderr)
-        self.ev_i += len(new)
+            n += 1
+            if end is not None and time.time() >= end:
+                break
+        self.ev_i += n
+
+    def pump(self):
+        if self._loading is not None:          # aún se está montando: otro trozo y nada más (el estado, al acabar)
+            return self._load_step(self._loading, self.LOAD_SLICE)
+        s = self.session()
+        if not s:
+            return
+        if self.ev_i > len(s.events):          # la conversacion se recorto (regenerar): reconstruir
+            return self.reload_quiet()
+        self._feed(s)
         if T.PROGRESS:                                   # acciones largas en curso (crear una imagen): su avance
             for cid, info in list(T.PROGRESS.items()):
                 r = self.rows.get(cid)
@@ -2805,6 +3043,7 @@ class ChatPanel(QWidget):
             self.turn_images = []
             self.turn_rows = []
             self.turn_t0 = ev["ts"]
+            self.turn_spent = None                      # modelo por API: tokens y coste de este turno
             self.last_tool = None
             if ev.get("marker") == "plan":              # «Ejecutar el plan»: una marca, no un mensaje tuyo con texto interno
                 for c in getattr(self, "_plan_cards", []):   # la tarjeta «Plan listo» ya está respondida
@@ -2843,12 +3082,30 @@ class ChatPanel(QWidget):
         elif t == "stats":
             if ev.get("ctx_used") and ev.get("ctx_max"):       # memoria de la conversación: en el anillo junto al cuadro de texto
                 self.ctx_ring.set_value(int(ev["ctx_used"]) + int(ev.get("gen_n") or 0), int(ev["ctx_max"]))
+            if ev.get("tok_in") or ev.get("tok_out"):   # modelo por API: lo que gastó este paso se suma al turno
+                sp = getattr(self, "turn_spent", None) or {"n": 0, "i": 0, "o": 0, "usd": 0.0, "sin_precio": 0, "estimado": False}
+                sp["n"] += 1
+                sp["i"] += int(ev.get("tok_in") or 0)
+                sp["o"] += int(ev.get("tok_out") or 0)
+                if ev.get("usd") is None:
+                    sp["sin_precio"] += 1
+                else:
+                    sp["usd"] += float(ev["usd"])
+                    sp["estimado"] = sp["estimado"] or ev.get("usd_src") != "servicio"
+                self.turn_spent = sp
+                if self.cur is not None and not ev.get("gen_n"):
+                    from .providers import tok_short, money
+                    cost = (" · " + ("≈ " if ev.get("usd_src") != "servicio" else "") + money(float(ev["usd"]))) if ev.get("usd") is not None else ""
+                    full = tr("%s tokens leídos · %s escritos") % (tok_short(ev.get("tok_in")), tok_short(ev.get("tok_out"))) + cost
+                    self.cur.set_stats([full, (cost[3:] or full), cost[3:] or "%s tok" % tok_short(ev.get("tok_out"))],
+                                       tr("Tokens que el servicio cobró por este paso (lo que leyó y lo que escribió) y su coste "
+                                          "aproximado. El detalle por servicio está en «Modelos por API…»."))
             if self.cur is not None and ev.get("gen_n"):
                 tok = "%s tok" % ev["gen_n"]
                 tps = (" · %s tok/s" % i18n.number(ev["tps"])) if ev.get("tps") else ""
                 cut = tr(" · cortado por límite") if ev.get("finish") == "length" else ""
-                self.cur.stats.set_options([tok + tps + cut, (tps[3:] or tok) + cut, cut[3:] or tok],
-                                           tr("Tokens que escribió el modelo en este paso y a qué velocidad."))
+                self.cur.set_stats([tok + tps + cut, (tps[3:] or tok) + cut, cut[3:] or tok],
+                                   tr("Tokens que escribió el modelo en este paso y a qué velocidad."))
         elif t == "ctx":                                # tras recortar o resumir: lo que ocupa ahora
             self.ctx_ring.set_value(int(ev.get("used") or 0), int(ev.get("max") or 0))
         elif t in ("trimmed", "compact_end"):
@@ -2864,14 +3121,17 @@ class ChatPanel(QWidget):
                 else:
                     self.blocks.append(self.cur)
                     self.turn_blocks = getattr(self, "turn_blocks", []) + [self.cur]
-                    self.cur.b_regen.clicked.connect(self.regenerate)
+                    self.cur.on_regen = self.regenerate
                     if not self.cur.thought_only():   # solo pensó: su «Pensó 4 s ›» irá dentro de las acciones que siguen
                         self._end_steps()
                 self.cur = None
         elif t == "tool_call" and ev["name"] in ("update_plan", "use_tools"):     # plan: en su panel; activar herramientas: interno
             pass                                        # se muestra en el panel del plan (evento «plan»)
         elif t == "plan":
-            self.plan_panel.set_items(ev.get("items") or [], live=getattr(self, "_live", False))
+            if self._loading is not None:      # al abrir una conversación solo cuenta el último plan: se pinta al final
+                self._plan_late = ev.get("items") or []
+            else:
+                self.plan_panel.set_items(ev.get("items") or [], live=getattr(self, "_live", False))
         elif t == "question":
             card = QuestionCard(ev, self.answer, live=getattr(self, "_live", False) or self.busy)
             self.questions[ev["id"]] = card
@@ -2880,12 +3140,14 @@ class ChatPanel(QWidget):
             if card.inputs.isVisible():
                 self.waiting += 1
                 self.sync()
+                self._show_waiting(card)
                 self.main.notify_pending(tr("tiene una pregunta: %s") % ev["question"], ev["ts"], self.sid)
         elif t == "answer":
             q = self.questions.get(ev["id"])
             if q:
                 if q.inputs.isVisible():
                     self.waiting = max(0, self.waiting - 1)
+                    self._follow_again()
                 q.answered(ev.get("text", ""))
                 self.sync()
         elif t == "undo":
@@ -2945,6 +3207,9 @@ class ChatPanel(QWidget):
         elif t == "tool_call":
             self.last_tool = ev["name"]
             row = StepRow(ev, self.decide)
+            if ev.get("sub"):                           # lo hizo un ayudante: sangrado bajo el encargo del agente principal
+                row.setContentsMargins(18, 0, 0, 0)
+                row.setToolTip((tr("Acción del ayudante «%s»") % ev["sub"]) if isinstance(ev["sub"], str) else tr("Acción de un ayudante"))
             self.rows[ev["id"]] = row
             self.turn_rows = getattr(self, "turn_rows", []) + [row]
             th = self._last_visible()                   # lo que pensó justo antes: dentro del grupo, no suelto en el chat
@@ -2962,12 +3227,14 @@ class ChatPanel(QWidget):
             if row.pending:
                 self.waiting += 1
                 self.sync()
+                self._show_waiting(row)
                 self.main.notify_pending(describe(ev["name"], ev.get("args"), "pending"), ev["ts"], self.sid)
         elif t == "approval":
             r = self.rows.get(ev["id"])
             if r:
                 if r.pending:
                     self.waiting = max(0, self.waiting - 1)
+                    self._follow_again()
                 r.resolved(ev["decision"])
                 r.box.refresh()
                 self.sync()
@@ -3076,10 +3343,8 @@ class ChatPanel(QWidget):
             for b in self.blocks:
                 # sin texto (el turno acabó en un error tras una acción) no hay nada que copiar ni escuchar: sin la fila,
                 # que si no quedaba en medio, antes de esa acción
-                b.actions.setVisible(getattr(b, "final", True) and bool((b.text or "").strip()))
-                b.b_regen.hide()
-                b.b_undo_all.hide()
-            if self.blocks:
+                b.set_actions(getattr(b, "final", True) and bool((b.text or "").strip()))
+            if self.blocks and self.blocks[-1].has("actions"):
                 self.blocks[-1].b_regen.show()      # solo la ultima respuesta se puede regenerar
                 if self.turn_undo and not getattr(self, "_turn_card", None):   # (con tarjeta de cambios, va en ella)
                     last = self.blocks[-1]
@@ -3110,6 +3375,23 @@ class ChatPanel(QWidget):
                 pass
         return b if i > last else None
 
+    def _follow_again(self):
+        """Ya no se espera nada del usuario: el chat vuelve a seguir lo que va llegando."""
+        if not self.waiting:
+            self.stick = True
+            sb = self.scroll.verticalScrollBar()
+            QTimer.singleShot(0, lambda: sb.setValue(sb.maximum()))
+
+    def _show_waiting(self, w):
+        """Lo que espera al usuario (un permiso, una pregunta) se lleva a la vista una vez y ahí se queda."""
+        def show():
+            try:
+                if self.waiting and w.isVisible():
+                    self.scroll.ensureWidgetVisible(w, 0, 60)
+            except RuntimeError:
+                pass
+        QTimer.singleShot(140, show)
+
     def _turn_summary(self, ev, anchor):
         """Al terminar un turno con acciones: «Trabajó durante 3 min 12 s» antes de la respuesta y, bajo ella, los archivos
         que cambió (para abrirlos o deshacerlos)."""
@@ -3135,7 +3417,7 @@ class ChatPanel(QWidget):
                 self.add(card)
         t0 = getattr(self, "turn_t0", None)
         if t0 and ev["ts"] - t0 >= 1:                # cierra el turno: va debajo de todo, también de la respuesta final
-            self._worked = self.add(worked_line(ev["ts"] - t0))
+            self._worked = self.add(worked_line(ev["ts"] - t0, getattr(self, "turn_spent", None)))
 
     def _abs(self, p):
         p = str(p or "")
@@ -3314,7 +3596,8 @@ class ChatPanel(QWidget):
             return
         files = s.undo_turn()
         for b in self.blocks:                # ya no queda nada que deshacer en esta respuesta
-            b.b_undo_all.hide()
+            if b.has("b_undo_all"):
+                b.b_undo_all.hide()
         if files:
             self.main.toast((tr("Deshecho %d cambio de archivo.") if len(files) == 1 else tr("Deshechos %d cambios de archivos.")) % len(files),
                             icon_name="acc_refrescar", color=C["ok"])
@@ -3362,30 +3645,8 @@ class ChatPanel(QWidget):
 
     def reload_quiet(self):
         """Vuelve a montar la conversación tras recortarla (regenerar, reenviar, volver a un mensaje) sin que se note:
-        no se pinta nada hasta que está entera, sin animaciones de entrada, y queda mostrando el final. Antes se veía
-        vaciarse y rellenarse a tirones."""
-        self.scroll.setUpdatesEnabled(False)
-        try:
-            self.open_session(self.sid)
-            s = self.session()
-            guard = 0
-            while s is not None and self.ev_i < len(s.events) and guard < 500:
-                guard += 1
-                before = self.ev_i
-                self.pump()
-                if self.ev_i == before:
-                    break
-            self.stick = True
-        finally:
-            def done():
-                try:
-                    sb = self.scroll.verticalScrollBar()
-                    sb.setValue(sb.maximum())
-                    self.scroll.setUpdatesEnabled(True)
-                    self.scroll.viewport().update()
-                except RuntimeError:
-                    pass
-            QTimer.singleShot(40, done)             # un instante para que todo tome su tamaño antes de pintarlo
+        no se pinta nada hasta que está entera, sin animaciones de entrada, y queda mostrando el final."""
+        self.open_session(self.sid)                 # ya monta la conversación entera antes de enseñarla
 
     def regenerate(self):
         s = self.session()
@@ -4300,6 +4561,9 @@ class Main(QMainWindow):
         self.browser = None
         self.browser_bridge = BrowserBridge(self.browser_panel)
         T.BROWSER = self.browser_bridge
+        from .canvas import CanvasBridge         # el lienzo devuelve al agente una captura de lo que muestra
+        self.canvas_bridge = CanvasBridge(self)
+        T.CANVAS = self.canvas_bridge
         from .browser import HiddenSearch, _view_class
         if _view_class():                       # búsquedas sin clave con el motor del navegador (si este equipo lo tiene)
             self.searcher = HiddenSearch()

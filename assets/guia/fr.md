@@ -253,8 +253,19 @@ l'ordinateur**. Sous macOS, il faut accorder à Jayth les autorisations **Enregi
   dans **Paramètres › Modèles › Fournisseur** (URL, nom du modèle et clé). Avec un modèle par API, Jayth demande au
   service combien de contexte et de sortie ce modèle accepte et utilise ces valeurs (avec un plafond de 200 000
   tokens par étape pour contenir la dépense), s'adapte tout seul si le service refuse un paramètre, autorise des
-  tours plus longs (120 étapes) et propose à l'agent des **sous-agents** : des sous-tâches de lecture ou de recherche
-  effectuées par une autre copie du modèle, dont seul le rapport revient. Ces services réfléchissent sans le montrer
+  tours plus longs (120 étapes) et propose à l'agent des **sous-agents** : des sous-tâches effectuées par une autre
+  copie du modèle, dont seul le rapport revient. L'agent décide de ce que chaque sous-agent peut faire (seulement
+  lire et rechercher, modifier aussi des fichiers dans certains dossiers précis, ou en plus exécuter des commandes)
+  et en répond : ce que fait le sous-agent est visible dans le chat, peut être annulé et, s'il a besoin d'une
+  autorisation de l'utilisateur, elle lui est refusée et c'est l'agent qui s'en charge. Cette délégation demande
+  l'autorisation à l'utilisateur comme le ferait l'action équivalente. La même boîte de dialogue affiche la
+  **consommation** de chaque service enregistré : requêtes, tokens et coût approximatif d'aujourd'hui, des 30
+  derniers jours et au total, par modèle ; les limites du compte d'après la dernière réponse du service ; le solde,
+  si le service le fournit (OpenRouter, DeepSeek) ; et elle signale les modèles nouveaux ou retirés. **Consommation
+  officielle** ouvre la page du service avec le chiffre et le forfait réels (Jayth ne compte que ce qui a été envoyé
+  depuis cet ordinateur) et **Prix d'un modèle…** sert à saisir le prix d'un modèle que Jayth ne connaît pas. Dans
+  le chat, chaque tour avec un modèle par API se termine en indiquant combien de tokens il a consommés et leur coût
+  approximatif. Ces services réfléchissent sans le montrer
   et livrent chaque action d'un seul coup ; le chat peut donc passer un moment à indiquer que le service prépare la
   réponse ; si une requête reste bloquée, Jayth l'interrompt et demande au modèle de continuer.
 - **Démarrer ou arrêter le modèle :** pastille du modèle › **Moteur**, ou le bouton **Démarrer le modèle** de l'avis.

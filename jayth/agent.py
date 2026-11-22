@@ -7,6 +7,7 @@ from collections import Counter
 from . import tools as T
 from . import harness as H
 from . import apis as API
+from . import consumo as USAGE
 from . import osys
 from . import i18n
 from .i18n import tr
@@ -58,11 +59,26 @@ CORE = ["read_file", "write_file", "edit_file", "multi_edit", "replace_in_files"
 # solo su informe. Sirve para que una búsqueda o una lectura larga no llene la conversación del agente principal.
 SUB_OFF = {"delegate", "ask_user", "update_plan", "remember", "forget", "schedule_task", "cancel_task", "list_tasks", "connect_service",
            "generate_image", "show_canvas", "use_skill", "open_target"}
-SUB_BRIEF = ("\n\n## Eres un ayudante\nTrabajas para el agente principal de Jayth, que te encargó una subtarea y no ve lo que haces: "
-             "solo recibirá tu último mensaje. Puedes leer, buscar y consultar la web, pero no cambiar nada (ni archivos ni programas) ni "
-             "preguntar al usuario. Haz la subtarea completa y termina con un informe para el agente principal: lo que encontraste, con "
-             "rutas, números de línea, direcciones y datos concretos; lo que no pudiste averiguar y por qué. No expliques los pasos que "
-             "diste ni ofrezcas seguir: solo el resultado.")
+SUB_BRIEF = ("\n\n## Eres un ayudante\nTrabajas para el agente principal de Jayth, que te encargó una subtarea y responde de lo que "
+             "hagas: solo recibirá tu último mensaje. %s No puedes preguntar al usuario ni pedirle permisos: si algo queda fuera de lo "
+             "que se te permite, no busques otra forma de hacerlo; dilo en tu informe. Haz la subtarea completa y termina con un informe "
+             "para el agente principal: lo que encontraste o hiciste, con rutas, números de línea, direcciones y datos concretos; lo que "
+             "no pudiste hacer y por qué. No expliques los pasos que diste ni ofrezcas seguir: solo el resultado.")
+# Lo que puede hacer un ayudante lo decide el agente principal al encargarle la subtarea (y el usuario aprueba ese encargo
+# como aprobaría la acción equivalente): modo → (categoría con la que se pide permiso, categorías de herramientas, texto).
+SUB_MODES = {
+    "read": ("agent", {"read", "agent", "net"}, "Puedes leer, buscar y consultar la web, pero no cambiar nada (ni archivos ni programas)."),
+    "edit": ("write", {"read", "agent", "net", "write"},
+             "Puedes leer, buscar, consultar la web y crear o cambiar archivos, solo dentro de: %s. No puedes ejecutar comandos."),
+    "full": ("exec", {"read", "agent", "net", "write", "exec"},
+             "Puedes leer, buscar, consultar la web, ejecutar comandos y crear o cambiar archivos, estos solo dentro de: %s."),
+}
+
+
+def sub_mode(v):
+    m = str(v or "read").strip().lower()
+    m = {"write": "edit", "editar": "edit", "escribir": "edit", "work": "full", "todo": "full", "completo": "full", "lectura": "read", "leer": "read"}.get(m, m)
+    return m if m in SUB_MODES else "read"
 
 
 def subagents_on(cfg):
@@ -662,9 +678,10 @@ def all_schemas(cfg):
         off.add("delegate")
     mode = cfg.get("mode")
     cats = {"read", "agent"} if mode == "readonly" else {"read", "agent", "net"} if mode == "plan" else None
-    if cfg.get("_sub"):                          # un ayudante: solo lee, busca y consulta la web; sin las cosas del agente principal
+    if cfg.get("_sub"):                          # un ayudante: lo que le permitió el agente principal, y nunca más que a él
         off |= SUB_OFF
-        cats = {"read", "agent"} if mode == "readonly" else {"read", "agent", "net"}
+        allowed = SUB_MODES[sub_mode(cfg["_sub"])][1]
+        cats = allowed & (cats if cats is not None else allowed)
     out = [s for s in T.schemas(cats) if s["function"]["name"] not in off]
     if mode not in ("readonly", "plan") and not cfg.get("_sub"):
         out += H.mcp_schemas()
@@ -814,6 +831,7 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
         if resp.status != 200:
             raise LLMError("HTTP %d: %s" % (resp.status, resp.read(2000).decode("utf-8", "replace")))
         content, reasoning, tcs, finish, timings, usage = [], [], {}, None, None, None
+        heads = {k.lower(): v for k, v in resp.getheaders() if "ratelimit" in k.lower() or k.lower() == "retry-after"}
         holder["rx"], holder["rx_n"], holder["t_gen"] = time.time(), 0, None      # último trozo visible (lo mira el vigilante)
         while True:
             try:
@@ -871,7 +889,7 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
                 if c.get("finish_reason"):
                     finish = c["finish_reason"]
         return {"content": "".join(content), "reasoning": "".join(reasoning), "tool_calls": [tcs[k] for k in sorted(tcs)],
-                "finish": finish, "timings": timings, "usage": usage}
+                "finish": finish, "timings": timings, "usage": usage, "headers": heads}
     finally:
         try:
             conn.close()
@@ -884,14 +902,18 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
 def ext_stream(base_url, api_key, payload, holder, on_delta):
     """llm_stream para un servicio por API: no le repite lo que ya rechazó y, si rechaza un parámetro opcional o el límite
     de salida (HTTP 400), se adapta y repite la petición en vez de dejar al usuario con el error."""
+    def noted(res):
+        if isinstance(res, dict) and res.get("finish") != "cut":
+            res["spent"] = USAGE.record(base_url, payload.get("model"), res.get("usage"), res.get("headers"), holder.get("_sid", ""))
+        return res
     for _ in range(6):
         sent = API.adapt(base_url, payload)
         try:
-            return llm_stream(base_url, api_key, sent, holder, on_delta)
+            return noted(llm_stream(base_url, api_key, sent, holder, on_delta))
         except LLMError as e:
             if not API.learn(base_url, sent, str(e)):
                 raise
-    return llm_stream(base_url, api_key, API.adapt(base_url, payload), holder, on_delta)
+    return noted(llm_stream(base_url, api_key, API.adapt(base_url, payload), holder, on_delta))
 
 
 def drop_connection(holder):
@@ -1026,7 +1048,7 @@ def make_title(cfg, messages):
     else:              # sin razonamiento: el titulo debe salir en un instante
         payload.update({"temperature": 0.3, "cache_prompt": False, "chat_template_kwargs": {"enable_thinking": False, "reasoning_effort": "low"}})
     try:
-        return clean_title((ext_stream if external else llm_stream)(base, key, payload, {}, lambda k, t: None)["content"])
+        return clean_title((ext_stream if external else llm_stream)(base, key, payload, {"_sid": cfg.get("_sid", "")}, lambda k, t: None)["content"])
     except Exception:
         return ""
 
@@ -1045,7 +1067,7 @@ class Run:
         self.images_dir = images_dir
         self.stop = threading.Event()
         self.pending = {}           # tool_call_id -> {event, decision}
-        self.holder = {}
+        self.holder = {"_sid": settings.get("_sid", "")}      # (la conversación, para anotar su consumo)
         self.sid = settings.get("_sid", "sin_sesion")
         self.ctx = T.Ctx(settings["workspace"], self.stop, images_dir, int(settings["max_tool_output"]),
                          {"sid": self.sid, "brave_key": settings.get("brave_key"), "search_provider": settings.get("search_provider", "auto"),
@@ -1589,9 +1611,8 @@ class Run:
             ans = d[7:]
             self.emit({"t": "answer", "id": cid, "text": ans})
             return True, "Respuesta del usuario: " + ans, None, {}
-        if name == "delegate":                          # un ayudante hace la subtarea y devuelve su informe
-            self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": "agent", "approval": "auto"})
-            return self._delegate(args)
+        if name == "delegate":                          # el permiso que se pide es el de lo que podrá hacer el ayudante
+            tool = dict(tool, category=SUB_MODES[sub_mode(args.get("mode"))][0])
         approval = self._needs_approval(tool, name, args)
         if approval == "pending" and self.cfg.get("_sub"):     # un ayudante no puede pedir permisos al usuario
             self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": tool["category"], "approval": "blocked"})
@@ -1616,6 +1637,15 @@ class Run:
                     return False, ("El usuario no permitió esta acción y te dice qué hacer en su lugar: «%s». Hazle caso y "
                                    "sigue la tarea así." % said), None, {}
                 return False, "El usuario denegó esta acción.", None, {}
+        if name == "delegate":                          # un ayudante hace la subtarea y devuelve su informe
+            return self._delegate(args)
+        roots = self.cfg.get("_sub_paths")
+        if roots and tool["category"] == "write" and name != "undo_changes":     # un ayudante solo cambia lo que se le encargó
+            norm = lambda p: os.path.normcase(os.path.abspath(p))
+            out = [f for f in self._files_of(name, args) if not any((norm(f) + os.sep).startswith(norm(r) + os.sep) or norm(f) == norm(r) for r in roots)]
+            if out:
+                return False, ("Fuera de tu encargo: solo puedes cambiar archivos dentro de %s, y esto tocaría %s. No lo intentes de otra "
+                               "forma: dilo en tu informe para que lo decida el agente principal." % (", ".join(roots), ", ".join(out[:4]))), None, {}
         extra = {}
         if name in T.WRITE_TOOLS:
             try:
@@ -1689,13 +1719,28 @@ class Run:
                 other()
             except Exception:
                 pass
+        mode = sub_mode(args.get("mode"))
+        roots = None
+        if mode != "read":                           # dónde puede cambiar archivos: lo que diga el agente principal o, si no, el proyecto
+            want = args.get("paths") or []
+            want = [want] if isinstance(want, str) else list(want)
+            roots = [self.ctx.path(str(p)) for p in want if str(p).strip()] or [os.path.abspath(self.ctx.workspace)]
         cfg = dict(self.cfg)
-        cfg.update({"_sub": True, "_temp": True, "_before_llm": None, "_after_llm": None,
-                    "max_steps": min(int(cfg.get("max_steps") or 30), 40),
-                    "custom_instructions": ((cfg.get("custom_instructions") or "") + SUB_BRIEF).strip()})
-        data = {"messages": [], "allowed": [], "tool_groups": [g for g in self.groups if g in ("web", "navegador", "documentos", "conocimiento")]}
+        brief = SUB_BRIEF % (SUB_MODES[mode][2] % ", ".join(roots) if roots else SUB_MODES[mode][2])
+        cfg.update({"_sub": mode, "_sub_paths": roots, "_temp": True, "_before_llm": None, "_after_llm": None,
+                    "max_steps": min(int(cfg.get("max_steps") or 30), 40 if mode == "read" else 60),
+                    "custom_instructions": ((cfg.get("custom_instructions") or "") + brief).strip()})
+        # el encargo ya pasó por los permisos del usuario: dentro de él, el ayudante no vuelve a preguntar (lo peligroso se le niega)
+        data = {"messages": [], "allowed": {"read": [], "edit": ["write"], "full": ["write", "exec"]}[mode],
+                "tool_groups": [g for g in self.groups if g in ("web", "navegador", "documentos", "conocimiento", "procesos")]}
         log = []
-        sub = Run(data, cfg, log.append, self.images_dir)
+        title = str(args.get("title") or "").strip()[:60]
+
+        def emit(ev):                                # lo que hace el ayudante se ve en el chat (y se puede deshacer) como lo del principal
+            log.append(ev)
+            if ev.get("t") in ("tool_call", "tool_result", "undo") and ev.get("name") != "use_tools":
+                self.emit(dict(ev, sub=title or True))
+        sub = Run(data, cfg, emit, self.images_dir)
         sub.stop = self.stop                         # «Parar» detiene también al ayudante…
         sub.ctx.stop = self.stop
         sub.holder = self.holder                     # …y corta su petición en curso
@@ -1704,15 +1749,32 @@ class Run:
             sub.run(task)
         except Exception as e:
             return False, "El ayudante falló: %s: %s" % (type(e).__name__, e), None, {}
+        done = [it for it in data.get("_undo") or [] if H.has_snapshot(self.sid, it["cid"])]
+        self.s.setdefault("_undo", []).extend(done)  # el agente principal puede deshacer lo que hizo su ayudante (undo_changes)
         if self.stop.is_set():
             return False, "Cancelado por el usuario.", None, {}
         report = next((_plain(m.get("content")).strip() for m in reversed(data["messages"])
                        if m["role"] == "assistant" and _plain(m.get("content")).strip()), "")
         used = Counter(e.get("name") for e in log if e.get("t") == "tool_call")
         errs = [str(e.get("text"))[:300] for e in log if e.get("t") == "error"]
-        tail = "\n\n[Ayudante: %d acciones (%s) en %d s%s]" % (
+        denied = sum(1 for e in log if e.get("t") == "tool_call" and e.get("approval") == "blocked")
+        tail = "\n\n[Ayudante: %d acciones (%s) en %d s%s%s]" % (
             sum(used.values()), ", ".join("%s ×%d" % (k, v) for k, v in used.most_common(6)) or "ninguna", time.time() - t0,
+            ("; %d acciones se le negaron por necesitar permiso del usuario" % denied) if denied else "",
             ("; terminó con un error: " + errs[-1]) if errs else "")
+        if done:                                     # lo que cambió, para que el agente principal lo revise: responde de ello
+            ws = os.path.abspath(self.ctx.workspace)
+            files = []
+            for it in done:
+                for e in H.snapshot_files(self.sid, it["cid"]):
+                    p = e["path"]
+                    rel = os.path.relpath(p, ws) if os.path.abspath(p).lower().startswith(ws.lower() + os.sep) else p
+                    rel += "" if e.get("existed", True) else " (nuevo)"
+                    if rel not in files:
+                        files.append(rel)
+            tail += ("\n[El ayudante cambió %d archivos en %d acciones: %s%s. Eres responsable de esos cambios: revísalos (read_file) antes "
+                     "de darlos por buenos; undo_changes(count=%d) los deshace todos.]"
+                     % (len(files), len(done), ", ".join(files[:20]), " …" if len(files) > 20 else "", len(done)))
         if not report:
             return False, "El ayudante no devolvió ningún informe." + tail, None, {}
         return True, T.clip(report, max(self.ctx.max_out, 12000)) + tail, None, {}
@@ -1892,9 +1954,11 @@ class Run:
                         after(int((res.get("usage") or {}).get("prompt_tokens") or 0) + int(tm.get("predicted_n") or 0))
                     except Exception:
                         pass
+                spent = res.get("spent") or {}       # servicio por API: tokens y coste de este paso (lo anotó ext_stream)
                 self.emit({"t": "stats", "prompt_n": tm.get("prompt_n"), "prompt_ms": tm.get("prompt_ms"), "gen_n": tm.get("predicted_n"),
                            "tps": tm.get("predicted_per_second"), "finish": res["finish"],
-                           "ctx_used": (res.get("usage") or {}).get("prompt_tokens"), "ctx_max": int(self.cfg["n_ctx"])})
+                           "ctx_used": (res.get("usage") or {}).get("prompt_tokens"), "ctx_max": int(self.cfg["n_ctx"]),
+                           "tok_in": spent.get("i"), "tok_out": spent.get("o"), "usd": spent.get("usd"), "usd_src": spent.get("p")})
                 am = {"role": "assistant", "content": text_out}
                 if calls:
                     am["tool_calls"] = calls

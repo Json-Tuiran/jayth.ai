@@ -1852,6 +1852,70 @@ def _ui_read(hwnd, title, limit=150):
     return json.loads(out)
 
 
+def _unminimize(hwnd):
+    """Si la ventana está minimizada la restaura sin activarla (Windows). Devuelve True si lo hizo."""
+    if not osys.WIN:
+        return False
+    try:
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 4)               # SW_SHOWNOACTIVATE: vuelve a su sitio sin robar el foco
+            time.sleep(0.6)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _elevated(hwnd):
+    """¿La ventana es de un programa abierto como administrador? (Windows no deja a un programa normal leerlo ni manejarlo.)"""
+    if not osys.WIN:
+        return False
+    try:
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        k = ctypes.windll.kernel32
+        k.OpenProcess.restype = wintypes.HANDLE
+        h = k.OpenProcess(0x1000, False, pid.value)   # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return True
+        try:
+            tok = wintypes.HANDLE()
+            if not ctypes.windll.advapi32.OpenProcessToken(wintypes.HANDLE(h), 0x0008, ctypes.byref(tok)):
+                return True                           # ni siquiera deja consultar: es de más privilegio
+            try:
+                val, got = wintypes.DWORD(), wintypes.DWORD()
+                ok = ctypes.windll.advapi32.GetTokenInformation(tok, 20, ctypes.byref(val), ctypes.sizeof(val), ctypes.byref(got))   # TokenElevation
+                return bool(ok and val.value)
+            finally:
+                k.CloseHandle(tok)
+        finally:
+            k.CloseHandle(wintypes.HANDLE(h))
+    except Exception:
+        return False
+
+
+def _ui_empty_reason(hwnd, title):
+    """Por qué una ventana no dio ningún elemento, dicho con la causa real y lo que se puede hacer."""
+    if osys.WIN and _elevated(hwnd) and not _elevated_self():
+        return ("«%s» es de un programa abierto como administrador: Windows no deja que Jayth lea su interfaz ni la maneje (ni con "
+                "clics ni con el teclado). Pide al usuario que lo haga él, o usa una orden de la terminal que consiga lo mismo." % title)
+    try:
+        if osys.WIN and user32.IsIconic(hwnd):
+            return ("«%s» está minimizada y no se pudo restaurar, así que no expone nada. Restáurala con window_action "
+                    "(action=restore) y vuelve a leerla." % title)
+    except Exception:
+        pass
+    return ("«%s» no expone ningún elemento a la accesibilidad del sistema (pasa con juegos y con algunos programas que dibujan su "
+            "propia interfaz). Si ves imágenes, usa screenshot y click con coordenadas; si no, el teclado: press_keys y type_text." % title)
+
+
+def _elevated_self():
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
 def _ui_line(k, it):
     name = " ".join(str(it.get("n") or "").split())[:80]
     val = " ".join(str(it.get("v") or "").split())[:80]
@@ -1873,9 +1937,15 @@ def _ui_text(title, items):
       {"window": S("Parte del título de la ventana"), "filter": S("Mostrar solo los que contengan este texto (opcional)")}, ["window"])
 def ui_elements(a, ctx):
     hwnd, title = _win(str(a["window"]), ctx)
+    restored = _unminimize(hwnd)                     # minimizada no expone nada: se restaura (sin quitar el foco a lo que haya delante)
     every = _ui_read(hwnd, title)
+    if not every and restored:                       # recién restaurada: a veces aún no ha dibujado su contenido
+        time.sleep(0.8)
+        every = _ui_read(hwnd, title)
     f = str(a.get("filter") or "").strip().lower()
     items = _ui_filter(every, f)
+    if not every:
+        raise ToolError(_ui_empty_reason(hwnd, title))
     if f and every and not items:                    # no es que la ventana no tenga nada: es el filtro
         raise ToolError("Ninguno de los %d elementos de «%s» encaja con «%s». Lista sin filtro o filtra por parte de su nombre "
                         "(«Guardar») o por tipo (botón, texto, menú…)." % (len(every), title, a["filter"]))
@@ -2089,6 +2159,7 @@ def clipboard(a, ctx):
 
 # ---------------------------------------------------------------- navegador integrado de Jayth
 BROWSER = None      # puente con el panel del navegador (lo pone la ventana; sin ventana, no hay navegador)
+CANVAS = None       # puente con el lienzo: lo muestra y devuelve una captura (lo pone la ventana)
 
 
 def _web(op, ctx, timeout=45, **args):
@@ -2390,8 +2461,18 @@ def show_canvas(a, ctx):
     p = os.path.join(d, "%s_v%d%s" % (slug, ver, ext))
     _write_text(p, content)
     what = {"html": "página web", "markdown": "documento", "svg": "dibujo", "code": "código"}[kind]
-    return {"text": "Mostrado en el lienzo: «%s» (%s, versión %d). El usuario ya lo ve; no repitas el contenido en tu respuesta." % (title, what, ver),
-            "ui": {"canvas": {"title": title, "kind": kind, "path": p, "version": ver, "slug": slug, "language": lang}}}
+    item = {"title": title, "kind": kind, "path": p, "version": ver, "slug": slug, "language": lang}
+    res = {"text": "Mostrado en el lienzo: «%s» (%s, versión %d). El usuario ya lo ve; no repitas el contenido en tu respuesta." % (title, what, ver),
+           "ui": {"canvas": item}}
+    if CANVAS is not None and kind != "code":        # cómo se ve de verdad, para que el modelo lo compruebe (antes lo mostraba a ciegas)
+        try:
+            shot = CANVAS.shot(item, ctx.stop)
+        except Exception:
+            shot = None
+        if shot:
+            res["image"] = shot
+            res["text"] += " Te llega una captura de cómo se ve: compruébala y, si algo no quedó bien, corrígelo con una versión nueva."
+    return res
 
 
 @tool("schedule_task", "agent",
@@ -2475,13 +2556,20 @@ def undo_changes(a, ctx):
 
 
 @tool("delegate", "agent",
-      "Encarga una subtarea de investigación a un ayudante: otra copia de ti, con la memoria en blanco, que lee archivos, busca y "
-      "consulta la web por su cuenta y te devuelve solo su informe. Úsalo cuando haya que leer o buscar mucho y solo te importe la "
-      "conclusión (explorar un proyecto grande, localizar dónde se usa algo, comparar documentación, investigar un tema), para no "
-      "llenar tu conversación con todo lo leído. El ayudante no ve esta conversación ni puede cambiar nada ni preguntar al usuario: "
-      "dale en 'task' todo el contexto, qué debe averiguar, dónde y qué quieres que te devuelva. No lo uses para algo que resuelves "
-      "con una o dos lecturas.",
-      {"task": S("La subtarea completa, con su contexto y lo que debe devolver"), "title": S("Nombre corto de la subtarea (lo ve el usuario)")},
+      "Encarga una subtarea a un ayudante: otra copia de ti, con la memoria en blanco, que trabaja por su cuenta y te devuelve solo "
+      "su informe. Úsalo cuando haya que leer o buscar mucho y solo te importe la conclusión (explorar un proyecto grande, localizar "
+      "dónde se usa algo, comparar documentación, investigar un tema) o para una parte del trabajo bien delimitada (escribir las "
+      "pruebas de un módulo, aplicar un cambio mecánico en una carpeta), para no llenar tu conversación con todo el detalle. No lo "
+      "uses para algo que resuelves con una o dos acciones. El ayudante no ve esta conversación ni puede preguntar al usuario: dale "
+      "en 'task' todo el contexto, qué debe hacer, dónde y qué quieres que te devuelva. Tú decides hasta dónde llega con 'mode' y "
+      "'paths' y respondes de lo que haga: dale solo el permiso que la subtarea necesite; al volver verás qué archivos cambió: "
+      "revísalos antes de darlos por buenos y, si no te convencen, deshazlos con undo_changes. Lo que necesite permiso del usuario "
+      "se le niega y te lo dice en su informe, para que lo hagas tú.",
+      {"task": S("La subtarea completa, con su contexto y lo que debe devolver"), "title": S("Nombre corto de la subtarea (lo ve el usuario)"),
+       "mode": S("Qué puede hacer: read (por defecto: leer, buscar y consultar la web), edit (además crear y cambiar archivos) o full "
+                 "(además ejecutar comandos)"),
+       "paths": {"type": "array", "items": {"type": "string"},
+                 "description": "Con edit o full: carpetas o archivos que puede cambiar (por defecto, toda la carpeta de trabajo)"}},
       ["task"])
 def delegate(a, ctx):
     return "(lo gestiona el agente)"

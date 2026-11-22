@@ -6,8 +6,8 @@
 - Las páginas web se muestran con el navegador integrado (Qt WebEngine) si está disponible; si no, se abren en el
   navegador del sistema con un clic.
 """
-import os, re, glob, shutil
-from PySide6.QtCore import Qt, QUrl, Signal
+import os, re, glob, time, shutil, threading
+from PySide6.QtCore import Qt, QUrl, Signal, QObject, QTimer, QBuffer, QByteArray, QIODevice
 from PySide6.QtGui import QGuiApplication, QFont, QTransform
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QStackedWidget, QPlainTextEdit, QScrollArea, QFileDialog, QFrame, QPushButton
 from . import osys
@@ -53,6 +53,69 @@ def _tb(ico, tip, cb, size=15):
     b.setAutoRaise(True)
     b.clicked.connect(lambda *_: cb())
     return b
+
+
+class CanvasBridge(QObject):
+    """Puente entre el hilo del agente y el lienzo: muestra un contenido y devuelve una captura de cómo queda, para que el
+    modelo pueda comprobar lo que el usuario ve (antes lo mostraba a ciegas)."""
+    sig = Signal(object)
+
+    def __init__(self, main):
+        super().__init__()
+        self.main = main
+        self.sig.connect(self._run, Qt.QueuedConnection)
+
+    def shot(self, item, stop=None, timeout=20):
+        """Desde cualquier hilo: abre `item` en el lienzo y devuelve su captura en PNG (None si no se pudo)."""
+        job = {"item": dict(item), "ev": threading.Event(), "res": None}
+        self.sig.emit(job)
+        end = time.time() + timeout
+        while not job["ev"].wait(0.2):
+            if (stop is not None and stop.is_set()) or time.time() > end:
+                return None
+        return job["res"]
+
+    def _run(self, job):
+        try:
+            self.main.open_canvas(job["item"])
+            panel = self.main.canvas
+        except Exception:
+            job["ev"].set()
+            return
+        done = []
+
+        def grab():
+            if done:
+                return
+            done.append(1)
+            try:
+                w = panel.stack.currentWidget()
+                img = w.grab().toImage()
+                if img.width() > 1024:
+                    img = img.scaledToWidth(1024, Qt.SmoothTransformation)
+                ba = QByteArray()
+                buf = QBuffer(ba)
+                buf.open(QIODevice.WriteOnly)
+                img.save(buf, "PNG")
+                buf.close()
+                if img.width() > 40 and img.height() > 40:
+                    job["res"] = bytes(ba.data())
+            except Exception:
+                pass
+            finally:
+                job["ev"].set()
+        web = panel.web if job["item"].get("kind") in ("html", "svg") else None
+        if web is not None:                          # una página: cuando termine de cargar, y un momento más para que pinte
+            def loaded(_ok=True):
+                try:
+                    web.loadFinished.disconnect(loaded)
+                except Exception:
+                    pass
+                QTimer.singleShot(700, grab)
+            web.loadFinished.connect(loaded)
+            QTimer.singleShot(6000, grab)            # por si la página nunca dice que terminó
+        else:
+            QTimer.singleShot(650, grab)             # texto: lo que tarda el panel en abrirse y colocarse
 
 
 class CanvasPanel(QWidget):

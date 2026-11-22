@@ -92,6 +92,103 @@ def saved(cfg=None):
     return list((cfg or core.SET.snapshot()).get("providers") or [])
 
 
+# ---------------------------------------------------------------- consumo y novedades (textos para el diálogo y el chat)
+def tok_short(n):
+    """Tokens en corto: 950, 12,3 k, 5,8 M."""
+    from . import i18n
+    n = int(n or 0)
+
+    def short(v, dec):                               # sin ceros de adorno: «50 k», no «50.0 k»
+        s = i18n.number(v, dec)
+        return s.rstrip("0").rstrip(".,") if dec and ("." in s or "," in s) else s
+    if n >= 1_000_000:
+        return short(n / 1e6, 2 if n < 10_000_000 else 1) + " M"
+    if n >= 10_000:
+        return short(n / 1e3, 0 if n >= 100_000 else 1) + " k"
+    return i18n.number(n, 0)
+
+
+def money(usd):
+    """Un importe en dólares: «≈ 4,85 US$», «< 0,01 US$»."""
+    from . import i18n
+    if usd is None:
+        return ""
+    if 0 < usd < 0.01:
+        return "< %s US$" % i18n.number(0.01, 2)
+    return "%s US$" % i18n.number(usd, 2)
+
+
+def spent_text(t):
+    """«12 peticiones · 345 k tokens de entrada · 12 k de salida · ≈ 1,43 US$» a partir de un total de consumo."""
+    if not t or not t.get("n"):
+        return tr("nada")
+    s = (tr("%d petición") if t["n"] == 1 else tr("%d peticiones")) % t["n"]
+    s += " · " + tr("%s tokens de entrada · %s de salida") % (tok_short(t["i"]), tok_short(t["o"]))
+    if t["sin_precio"] < t["n"]:
+        s += " · " + ("≈ " if t.get("estimado") else "") + money(t["usd"])
+        if t["sin_precio"]:
+            s += " " + tr("(sin contar %d de precio desconocido)") % t["sin_precio"]
+    return s
+
+
+def usage_html(url, models=(), saldo=None):
+    """El bloque de consumo de un servicio para el diálogo «Modelos por API»."""
+    import html, time
+    from . import consumo as U, i18n
+    sm = U.summary(url)
+    esc = html.escape
+    out = ["<b>%s</b>" % esc(tr("Consumo desde este equipo"))]
+    if not sm["todo"]["n"]:
+        out.append(esc(tr("Todavía no has usado este servicio desde Jayth.")))
+    else:
+        out.append(esc(tr("Hoy: %s") % spent_text(sm["hoy"])))
+        out.append(esc(tr("Últimos 30 días: %s") % spent_text(sm["30d"])))
+        since = time.strftime("%d/%m/%Y", time.localtime(sm["desde"])) if sm["desde"] else ""
+        out.append(esc(tr("Total desde el %s: %s") % (since, spent_text(sm["todo"]))))
+        for m, t in sm["modelos"][:4]:
+            pr = U.price(url, m)
+            src = {"tuyo": tr("precio que escribiste"), "servicio": tr("precio que publica el servicio"),
+                   "lista": tr("precio de lista del %s") % U.PRICES_DATE}.get(pr[2], "") if pr else tr("precio desconocido: escríbelo con «Precio de un modelo…»")
+            out.append("&nbsp;&nbsp;" + esc("%s: %s (%s)" % (m, spent_text(t), src)))
+    lim = U.LIMITS.get(url.rstrip("/"))
+    if lim:
+        parts = []
+        for kind, name in (("requests", tr("peticiones")), ("tokens", tr("tokens"))):
+            if kind in lim:
+                left, top, _reset = lim[kind]
+                parts.append((tr("%s de %s %s") % (i18n.number(left, 0), i18n.number(top, 0), name)) if top else "%s %s" % (i18n.number(left, 0), name))
+        if parts:
+            mins = max(0, int((time.time() - lim["t"]) / 60))
+            out.append(esc(tr("Límites de tu cuenta (según la última respuesta, hace %d min): te quedan %s en la ventana actual.") % (mins, tr(" y ").join(parts))))
+    if isinstance(saldo, dict):
+        if saldo.get("queda") is not None and saldo.get("moneda"):
+            out.append(esc(tr("Saldo de la cuenta: %s %s") % (i18n.number(float(saldo["queda"]), 2), saldo["moneda"])))
+        elif saldo.get("usado") is not None:
+            line = tr("Gastado en la cuenta según el servicio: %s") % money(float(saldo["usado"]))
+            if saldo.get("queda") is not None:
+                line += " · " + tr("te quedan %s de tu tope") % money(float(saldo["queda"]))
+            out.append(esc(line))
+    out.append("<span style='color:%s'>%s</span>" % (C["faint"], esc(tr(
+        "Jayth cuenta solo lo que se envió desde este equipo; la cifra oficial y tu plan están en la página del servicio."))))
+    return "<br>".join(out)
+
+
+def model_news(p, names):
+    """Compara la lista de modelos del servicio con la que se vio la última vez. Devuelve (aviso o '', lista para guardar)."""
+    names = list(names or [])
+    seen = p.get("seen")
+    if not names or not isinstance(seen, list) or not seen:
+        return "", names or (seen or [])
+    new = [n for n in names if n not in seen]
+    gone = [n for n in (p.get("models") or []) if n not in names]
+    parts = []
+    if new:
+        parts.append(((tr("%d modelo nuevo: %s") if len(new) == 1 else tr("%d modelos nuevos: %s")) % (len(new), ", ".join(new[:6]) + (" …" if len(new) > 6 else ""))))
+    if gone:
+        parts.append(tr("ya no ofrece %s, que tienes marcado: elige otro") % ", ".join(gone[:4]))
+    return (tr("Novedades de este servicio: %s.") % "; ".join(parts)) if parts else "", names
+
+
 def use(provider, model):
     """Activa un modelo de un proveedor guardado (apaga el modelo local para liberar memoria)."""
     core.LLM_MGR.stop()
@@ -170,10 +267,26 @@ class ProvidersDialog(QDialog):
         self.models.setObjectName("history")
         v.addWidget(self.models, 1)
         self.msg = lbl("", "faint")
+        self.msg.setWordWrap(True)
         v.addWidget(self.msg)
+        # consumo de este servicio: lo que Jayth envió desde este equipo, los límites de la cuenta y, si el servicio lo da, el saldo
+        self.usage = QLabel("")
+        self.usage.setObjectName("faint")
+        self.usage.setWordWrap(True)
+        self.usage.setTextFormat(Qt.RichText)
+        self.usage.hide()
+        v.addWidget(self.usage)
         foot = QHBoxLayout()
         self.b_del = btn(tr("Quitar servicio"), "danger", self._delete)
         foot.addWidget(self.b_del)
+        self.b_usage = btn(tr("Consumo oficial"), None, self._open_usage, "acc_abrir_externo")
+        self.b_usage.setToolTip(tr("Abre en tu navegador la página del servicio con tu consumo y tu facturación reales"))
+        self.b_usage.hide()
+        foot.addWidget(self.b_usage)
+        self.b_price = btn(tr("Precio de un modelo…"), None, self._set_price)
+        self.b_price.setToolTip(tr("Para que Jayth calcule lo que gastas con un modelo del que no conoce el precio"))
+        self.b_price.hide()
+        foot.addWidget(self.b_price)
         foot.addStretch(1)
         foot.addWidget(btn(tr("Probar"), None, self._test))
         foot.addWidget(btn(tr("Guardar"), "primary", self._save))
@@ -214,6 +327,8 @@ class ProvidersDialog(QDialog):
         self._set_models(p.get("models") or [], p.get("models") or [])
         self.b_del.show()
         self.msg.setText("")
+        self._show_usage(p)
+        self._check_news(p)
 
     def _new(self):
         self.cur = None
@@ -226,6 +341,8 @@ class ProvidersDialog(QDialog):
         self._template(0)
         self._set_models([], [])
         self.b_del.hide()
+        for w in (self.usage, self.b_usage, self.b_price):
+            w.hide()
         self.msg.setText(tr("Elige el servicio, pega tu clave y pulsa «Ver modelos disponibles»."))
 
     def _template(self, i):
@@ -287,6 +404,83 @@ class ProvidersDialog(QDialog):
             self.msg.setText(("✗ %s" % r) if isinstance(r, Exception) else tr("✓ %s responde: %s") % (models[0], str(r)[:120]))
         run_bg(lambda: test_chat(url, key, models[0]), done)
 
+    # ---- consumo, límites, saldo y novedades del servicio
+    def _show_usage(self, p):
+        """Lo gastado con este servicio desde este equipo, los límites de la cuenta y (si el servicio lo dice) el saldo."""
+        from . import consumo as U
+        url = p["url"]
+        self.usage.setText(usage_html(url, p.get("models") or []))
+        self.usage.show()
+        self.b_usage.setVisible(bool(U.usage_page(url)))
+        self.b_price.show()
+        pid = p["id"]
+
+        def done(r):                                   # el saldo llega después (hay que pedírselo al servicio)
+            if isinstance(r, dict) and self.cur == pid:
+                self.usage.setText(usage_html(url, p.get("models") or [], saldo=r))
+        if p.get("key"):
+            run_bg(lambda: U.balance(url, p.get("key")), done)
+
+    def _open_usage(self):
+        from . import consumo as U
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        page = U.usage_page(self.e_url.text().strip())
+        if page:
+            QDesktopServices.openUrl(QUrl(page))
+
+    def _set_price(self):
+        """El usuario escribe el precio de un modelo (US$ por millón de tokens) para que Jayth pueda calcular su gasto."""
+        from PySide6.QtWidgets import QInputDialog
+        from . import consumo as U
+        p = next((x for x in saved() if x["id"] == self.cur), None)
+        models = self._checked() or (p or {}).get("models") or []
+        if not p or not models:
+            return self.msg.setText(tr("Guarda primero el servicio con algún modelo marcado."))
+        model, ok = QInputDialog.getItem(self, tr("Precio de un modelo"), tr("Modelo:"), models, 0, False)
+        if not ok or not model:
+            return
+        known = U.price(p["url"], model)
+        text, ok = QInputDialog.getText(self, tr("Precio de un modelo"), tr(
+            "Precio de %s en US$ por millón de tokens: entrada y salida, separados por un espacio (por ejemplo «3 15»). "
+            "Déjalo vacío para quitar tu precio.") % model, text=("%g %g" % known[:2]) if known else "")
+        if not ok:
+            return
+        nums = [x for x in text.replace(",", ".").replace(";", " ").split() if x]
+        ps = saved()
+        mine = next(x for x in ps if x["id"] == p["id"])
+        prices = dict(mine.get("prices") or {})
+        if not nums:
+            prices.pop(model, None)
+        else:
+            try:
+                a, b = float(nums[0]), float(nums[1] if len(nums) > 1 else nums[0])
+            except ValueError:
+                return self.msg.setText(tr("No entiendo ese precio: escribe dos números, entrada y salida."))
+            prices[model] = [a, b]
+        mine["prices"] = prices
+        core.SET.update({"providers": ps})
+        self._show_usage(mine)
+        self.msg.setText(tr("✓ Precio guardado. Se aplica a lo que gastes desde ahora."))
+
+    def _check_news(self, p):
+        """Al abrir un servicio guardado se mira su lista de modelos: avisa de los nuevos y de los que ya no ofrece."""
+        pid, url, key = p["id"], p["url"], p.get("key", "")
+
+        def done(r):
+            if isinstance(r, Exception) or self.cur != pid:
+                return
+            text, seen = model_news(p, r)
+            ps = saved()
+            mine = next((x for x in ps if x["id"] == pid), None)
+            if mine is not None and mine.get("seen") != seen:
+                mine["seen"] = seen
+                core.SET.update({"providers": ps})
+            if text:
+                self.msg.setText(text)
+                self._set_models(r, self._checked())
+        run_bg(lambda: list_models(url, key), done)
+
     # ---- guardar / quitar
     def _save(self):
         name, url = self.e_name.text().strip(), self.e_url.text().strip().rstrip("/")
@@ -301,6 +495,9 @@ class ProvidersDialog(QDialog):
             p = {"id": uuid.uuid4().hex[:8]}
             ps.append(p)
         p.update({"name": name, "url": url, "key": self.e_key.text().strip(), "models": models})
+        listed = [self.models.item(i).text() for i in range(self.models.count())]
+        if len(listed) > len(models):                  # la lista del servicio tal como se vio: para avisar de novedades la próxima vez
+            p["seen"] = listed
         core.SET.update({"providers": ps})
         self.cur = p["id"]
         cfg = core.SET.snapshot()
@@ -310,6 +507,7 @@ class ProvidersDialog(QDialog):
         self._reload(p["id"])
         self.b_del.show()
         self.msg.setText(tr("✓ Guardado. Sus modelos ya aparecen en el menú de modelos."))
+        self._show_usage(p)
 
     def _delete(self):
         p = next((x for x in saved() if x["id"] == self.cur), None)

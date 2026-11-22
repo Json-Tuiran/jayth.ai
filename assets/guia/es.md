@@ -220,7 +220,16 @@ sesiones X11 (en Wayland el control global está limitado); para listar ventanas
   **Ajustes › Modelos › Proveedor** (URL, nombre del modelo y clave). Con un modelo por API, Jayth pregunta al servicio
   cuánto contexto y cuánta salida admite ese modelo y los usa (con un tope de 200 000 tokens por paso para contener el
   gasto), se adapta solo si el servicio rechaza algún parámetro, permite turnos más largos (120 pasos) y ofrece al agente
-  **ayudantes**: subtareas de lectura o búsqueda que hace otra copia del modelo y de las que solo vuelve el informe.
+  **ayudantes**: subtareas que hace otra copia del modelo y de las que solo vuelve el informe. El agente decide qué puede
+  hacer cada ayudante (solo leer y buscar, también cambiar archivos de unas carpetas concretas, o además ejecutar
+  comandos) y responde de ello: lo que hace el ayudante se ve en el chat, se puede deshacer y, si necesita un permiso
+  del usuario, se le niega y lo hace el agente. El encargo pide permiso al usuario como lo pediría la acción equivalente.
+  El mismo diálogo muestra el **consumo** de cada servicio guardado: peticiones, tokens y coste aproximado de hoy, de
+  los últimos 30 días y en total, por modelo; los límites de la cuenta según la última respuesta del servicio; el saldo,
+  si el servicio lo da (OpenRouter, DeepSeek); y avisa de los modelos nuevos o retirados. **Consumo oficial** abre la
+  página del servicio con la cifra y el plan reales (Jayth solo cuenta lo enviado desde este equipo) y **Precio de un
+  modelo…** sirve para escribir el precio de un modelo que Jayth no conoce. En el chat, cada turno con un modelo por API
+  termina diciendo cuántos tokens gastó y su coste aproximado.
   Estos servicios piensan sin mostrarlo y entregan cada acción de una vez, así que el chat puede pasar un rato diciendo
   que el servicio prepara la respuesta; si una petición se queda colgada, Jayth la corta y le pide al modelo continuar.
 - **Encender o apagar el modelo:** chip del modelo › **Motor**, o el botón **Encender modelo** del aviso. Encendido

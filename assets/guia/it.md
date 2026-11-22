@@ -230,10 +230,20 @@ Linux funziona nelle sessioni X11 (su Wayland il controllo globale è limitato);
   **Impostazioni › Modelli › Provider** (URL, nome del modello e chiave). Con un modello via API, Jayth chiede al
   servizio quanto contesto e quanto output ammette quel modello e li usa (con un tetto di 200.000 token per passo
   per contenere la spesa), si adatta da solo se il servizio rifiuta qualche parametro, consente turni più lunghi
-  (120 passi) e offre all'agente gli **aiutanti**: sottoattività di lettura o ricerca svolte da un'altra copia del
-  modello, di cui torna solo il resoconto. Questi servizi ragionano senza mostrarlo e consegnano ogni azione in una
-  volta sola, quindi la chat può passare un po' di tempo a dire che il servizio sta preparando la risposta; se una
-  richiesta resta bloccata, Jayth la interrompe e chiede al modello di continuare.
+  (120 passi) e offre all'agente gli **aiutanti**: sottoattività svolte da un'altra copia del modello, di cui torna
+  solo il resoconto. L'agente decide che cosa può fare ogni aiutante (solo leggere e cercare, anche modificare file
+  di alcune cartelle precise, oppure in più eseguire comandi) e ne risponde: ciò che fa l'aiutante si vede nella
+  chat, si può annullare e, se serve un'autorizzazione dell'utente, gli viene negata e lo fa l'agente. L'incarico
+  chiede l'autorizzazione all'utente come la chiederebbe l'azione equivalente. La stessa finestra mostra il
+  **consumo** di ogni servizio salvato: richieste, token e costo approssimativo di oggi, degli ultimi 30 giorni e
+  in totale, per modello; i limiti dell'account secondo l'ultima risposta del servizio; il saldo, se il servizio lo
+  fornisce (OpenRouter, DeepSeek); e segnala i modelli nuovi o ritirati. **Consumo ufficiale** apre la pagina del
+  servizio con la cifra e il piano reali (Jayth conta solo ciò che è stato inviato da questo computer) e **Prezzo
+  di un modello…** serve a scrivere il prezzo di un modello che Jayth non conosce. Nella chat, ogni turno con un
+  modello via API termina indicando quanti token ha consumato e il loro costo approssimativo. Questi servizi
+  ragionano senza mostrarlo e consegnano ogni azione in una volta sola, quindi la chat può passare un po' di tempo
+  a dire che il servizio sta preparando la risposta; se una richiesta resta bloccata, Jayth la interrompe e chiede
+  al modello di continuare.
 - **Avviare o arrestare il modello:** chip del modello › **Motore**, o il pulsante **Avvia modello** dell'avviso.
   Avviato occupa memoria e risponde subito; arrestato la libera.
 - I download mostrano percentuale, velocità e tempo, riprendono se si interrompono e vengono verificati con SHA-256.

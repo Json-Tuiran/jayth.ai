@@ -83,7 +83,9 @@ def fetch(url, key, model, timeout=8):
     url = (url or "").rstrip("/")
     ctx = out = 0
     try:
-        ctx, out = read_limits(_get(url + "/models/" + urllib.parse.quote(model, safe=""), key, timeout))
+        obj = _get(url + "/models/" + urllib.parse.quote(model, safe=""), key, timeout)
+        ctx, out = read_limits(obj)
+        _note_price(url, model, obj)
     except Exception:
         pass
     if not ctx:
@@ -94,10 +96,47 @@ def fetch(url, key, model, timeout=8):
                 if isinstance(it, dict) and (it.get("id") or it.get("name") or "") in (model, "models/" + model):
                     c, o = read_limits(it)
                     ctx, out = c or ctx, o or out
+                    _note_price(url, model, it)
                     break
         except Exception:
             pass
     return ctx, out
+
+
+_PRICES = {}               # (dirección, modelo) → (entrada, salida) en US$ por millón de tokens, si el servicio lo publica
+
+
+def read_prices(obj):
+    """Precio que publica el servicio en la ficha del modelo, en US$ por millón de tokens (entrada, salida), o None.
+    OpenRouter lo da por token («0.000003»); otros, ya por millón."""
+    pr = obj.get("pricing") if isinstance(obj, dict) else None
+    if not isinstance(pr, dict):
+        return None
+    try:
+        a = float(pr.get("prompt") or pr.get("input") or 0)
+        b = float(pr.get("completion") or pr.get("output") or 0)
+    except (TypeError, ValueError):
+        return None
+    if a <= 0 and b <= 0:
+        return None
+    return (a * 1e6, b * 1e6) if max(a, b) < 0.01 else (a, b)
+
+
+def _note_price(url, model, obj):
+    pr = read_prices(obj)
+    if pr:
+        _PRICES[((url or "").rstrip("/"), model)] = pr
+
+
+def prices(url, model):
+    """Precio publicado por el servicio para ese modelo (lo que se supo al preguntarle por sus límites), o None."""
+    k = ((url or "").rstrip("/"), model)
+    if k in _PRICES:
+        return _PRICES[k]
+    with _LOCK:
+        _load()
+        got = _INFO.get("%s|%s" % k) or {}
+    return (float(got["pin"]), float(got["pout"])) if got.get("pin") is not None and got.get("pout") is not None else None
 
 
 def limits(url, key, model, ask=False):
@@ -112,6 +151,9 @@ def limits(url, key, model, ask=False):
         if ctx or out or not got:
             got = {"ctx": ctx or int(got.get("ctx") or 0), "out": out or int(got.get("out") or 0),
                    "t": time.time() if (ctx or out) else time.time() - 6 * 86400}    # sin respuesta: se reintenta mañana
+            pr = _PRICES.get(((url or "").rstrip("/"), model))
+            if pr:
+                got["pin"], got["pout"] = pr
             with _LOCK:
                 _INFO[k] = got
                 _store()

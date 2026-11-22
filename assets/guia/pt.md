@@ -225,10 +225,19 @@ funciona em sessões X11 (no Wayland o controle global é limitado); para listar
   **Configurações › Modelos › Provedor** (URL, nome do modelo e chave). Com um modelo por API, o Jayth pergunta ao
   serviço quanto contexto e quanta saída esse modelo aceita e usa esses valores (com um teto de 200.000 tokens por
   passo para conter o gasto), se adapta sozinho se o serviço rejeitar algum parâmetro, permite turnos mais longos
-  (120 passos) e oferece ao agente **ajudantes**: subtarefas de leitura ou pesquisa feitas por outra cópia do modelo,
-  das quais só volta o relatório. Esses serviços pensam sem mostrar e entregam cada ação de uma vez, então o chat
-  pode passar um tempo dizendo que o serviço está preparando a resposta; se uma solicitação travar, o Jayth a
-  interrompe e pede ao modelo que continue.
+  (120 passos) e oferece ao agente **ajudantes**: subtarefas feitas por outra cópia do modelo, das quais só volta o
+  relatório. O agente decide o que cada ajudante pode fazer (só ler e pesquisar, também alterar arquivos de algumas
+  pastas específicas, ou ainda executar comandos) e responde por isso: o que o ajudante faz aparece no chat, pode
+  ser desfeito e, se precisar de uma permissão do usuário, ela é negada e o próprio agente faz. A delegação pede
+  permissão ao usuário como a ação equivalente pediria. O mesmo diálogo mostra o **consumo** de cada serviço salvo:
+  solicitações, tokens e custo aproximado de hoje, dos últimos 30 dias e no total, por modelo; os limites da conta
+  segundo a última resposta do serviço; o saldo, se o serviço informar (OpenRouter, DeepSeek); e avisa sobre os
+  modelos novos ou retirados. **Consumo oficial** abre a página do serviço com o valor e o plano reais (o Jayth só
+  conta o que foi enviado a partir deste computador) e **Preço de um modelo…** serve para informar o preço de um
+  modelo que o Jayth não conhece. No chat, cada turno com um modelo por API termina dizendo quantos tokens gastou e
+  o custo aproximado. Esses serviços pensam sem mostrar e entregam cada ação de uma vez, então o chat pode passar
+  um tempo dizendo que o serviço está preparando a resposta; se uma solicitação travar, o Jayth a interrompe e pede
+  ao modelo que continue.
 - **Ligar ou desligar o modelo:** chip do modelo › **Motor**, ou o botão **Ligar modelo** do aviso. Ligado, ele
   ocupa memória e responde na hora; desligado, libera a memória.
 - Os downloads mostram porcentagem, velocidade e tempo, continuam de onde pararam se forem interrompidos e são
