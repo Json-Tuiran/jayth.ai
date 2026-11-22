@@ -1576,6 +1576,12 @@ class Run:
                 payload["tools"] = self.tools
                 for k in ("cut", "cut_tokens", "quiet_max", "rx", "rx_n", "t_gen"):
                     self.holder.pop(k, None)
+                hook = self.cfg.get("_before_llm")
+                if callable(hook) and not external:
+                    try:
+                        hook()
+                    except Exception:
+                        pass
                 watched = threading.Event()
                 threading.Thread(target=self._watch, args=(external, watched), daemon=True).start()
                 try:

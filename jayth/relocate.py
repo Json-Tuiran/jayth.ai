@@ -488,6 +488,22 @@ def discover(folders, models, ignored=(), depth=3):
     return out
 
 
+def internal_model(m):
+    """¿Es un modelo interno de Jayth (búsqueda en tus archivos, imágenes) y no uno para conversar?"""
+    path = m.get("path") or ""
+    parent = os.path.basename(os.path.dirname(path)).lower()
+    return parent in ("conocimiento", "imagen") or (bool(m.get("found")) and "embedding" in os.path.basename(path).lower())
+
+
+def drop_internal():
+    """Quita de la lista (no del disco) los modelos internos que una versión anterior añadió como si fueran de chat."""
+    from . import core
+    gone = [m for m in core.SET.snapshot()["models"] if internal_model(m)]
+    for m in gone:
+        core.SET.remove_model(m["id"])
+    return [m.get("name") or m["id"] for m in gone]
+
+
 # ---------------------------------------------------------------- todo junto, sobre los ajustes guardados
 def run(level="quick", folders=None, add_new=False, explicit=False, stop=None):
     """Arregla lo que se pueda y lo guarda.
@@ -496,6 +512,10 @@ def run(level="quick", folders=None, add_new=False, explicit=False, stop=None):
     Devuelve un informe con listas de títulos: fixed, vision, copying, missing, offline, added, lost_vision;
     models_dir (nueva carpeta de descargas, si cambió) y pending (si queda algo sin resolver)."""
     from . import core
+    try:
+        drop_internal()          # los modelos internos que quedaron en la lista por una versión anterior
+    except Exception:
+        pass
     cfg = core.SET.snapshot()
     models = cfg["models"]
     rep = {"fixed": [], "vision": [], "copying": [], "missing": [], "offline": [], "added": [], "lost_vision": [],

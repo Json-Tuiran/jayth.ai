@@ -525,6 +525,17 @@ def same_python_pip(cmd):
         "[Jayth ejecutó «pip» como «%s -m pip» para que el paquete quede en el mismo Python que usa «%s».]" % (py, py)
 
 
+_PS_WHERE = re.compile(r"(^|[;&|]\s*)(where|which)(\s+(?:/[rRqQfFtT]\s+)*[\w.\-]+\s*)(?=$|[;&|])")
+
+
+def ps_lookup(cmd):
+    """En PowerShell «where» es otra cosa (filtra objetos) y «which» no existe: «where python» no devolvía nada y el
+    modelo se quedaba sin saber dónde está el programa. Se ejecuta el buscador de Windows, where.exe."""
+    if not osys.WIN or not _PS_WHERE.search(cmd):
+        return cmd
+    return _PS_WHERE.sub(lambda m: m.group(1) + "where.exe" + m.group(3), cmd)
+
+
 def pip_hint(out, cmd):
     """Tras «No module named X»: cómo instalarlo en el Python que de verdad se está usando."""
     m = re.search(r"No module named '([\w.]+)'", out or "")
@@ -569,7 +580,7 @@ def run_command(a, ctx):
     timeout = min(max(int(a.get("timeout") or (ctx.extras or {}).get("command_timeout") or 60), 1), 900)
     cwd = ctx.path(a["cwd"]) if a.get("cwd") else ctx.workspace
     os.makedirs(cwd, exist_ok=True)
-    cmd, pip_note = same_python_pip(cmd)
+    cmd, pip_note = same_python_pip(ps_lookup(cmd))
     if a.get("background"):
         from . import harness
         pid = harness.bg_start(cmd, cwd)

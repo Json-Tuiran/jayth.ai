@@ -212,9 +212,10 @@ class WaveBars(QWidget):
 class Toast(QFrame):
     """Aviso flotante dentro de la ventana (abajo a la derecha) con accion opcional."""
 
-    def __init__(self, parent, text, action=None, on_action=None, ms=7000, icon_name="est_info", color=None):
+    def __init__(self, parent, text, action=None, on_action=None, ms=7000, icon_name="est_info", color=None, above=None):
         super().__init__(parent)
         self.setObjectName("toast")
+        self.above = above                    # función que da la altura (en la ventana) por encima de la cual debe quedar
         h = QHBoxLayout(self)
         h.setContentsMargins(12, 10, 8, 10)
         h.setSpacing(10)
@@ -239,7 +240,14 @@ class Toast(QFrame):
 
     def _place(self, dy=0):
         p = self.parentWidget()
-        self.move(p.width() - self.width() - 22, p.height() - self.height() - 120 - dy)
+        y = p.height() - self.height() - 120 - dy
+        try:                                   # el cuadro de mensaje crece al escribir: el aviso queda siempre por encima
+            top = self.above() if self.above else None
+            if top is not None:
+                y = min(y, int(top) - self.height() - 12)
+        except Exception:
+            pass
+        self.move(p.width() - self.width() - 22, max(48, y))
 
     def _anim(self, to, done=None):
         a = QPropertyAnimation(self.eff, b"opacity", self)
@@ -4717,7 +4725,15 @@ class Main(QMainWindow):
         self._save_layout_soon()
 
     def toast(self, text, action=None, on_action=None, ms=7000, icon_name="est_info", color=None):
-        return Toast(self.centralWidget(), text, action, on_action, ms, icon_name, color)
+        return Toast(self.centralWidget(), text, action, on_action, ms, icon_name, color, above=self._composer_top)
+
+    def _composer_top(self):
+        """Altura, dentro de la ventana, donde empieza el cuadro de mensaje del panel a la vista (None si no se ve)."""
+        box = getattr(self.current_panel(), "input", None)
+        if box is None or not box.isVisible():
+            return None
+        frame = box.parentWidget() or box
+        return frame.mapTo(self.centralWidget(), QPoint(0, 0)).y()
 
     # ---- novedades: versiones nuevas de Jayth y de los modelos
     def check_news(self, manual=False):
@@ -5343,8 +5359,13 @@ class Main(QMainWindow):
         cfg = core.SET.snapshot()
         mine = core.LLM_MGR.mine()
         # precalentamiento: en cuanto el modelo propio esta listo, procesar instrucciones y herramientas en segundo plano
-        if st.get("state") == "ready" and mine and cfg["warmup"] and not core.LLM_MGR.warm and cfg["llm_mode"] == "local":
-            threading.Thread(target=core.LLM_MGR.warmup, daemon=True).start()
+        if st.get("state") == "ready" and mine and cfg["warmup"] and not core.LLM_MGR.warm and cfg["llm_mode"] == "local" \
+                and not any(s.run for s in core.SESSIONS.values()):      # si ya hay una tarea en marcha, ella misma lo deja leído
+            try:                                   # con las instrucciones y herramientas de la conversación abierta
+                open_s = core.SESSIONS.get(getattr(self.current_panel(), "sid", None))
+            except Exception:
+                open_s = None
+            threading.Thread(target=core.LLM_MGR.warmup, args=(open_s,), daemon=True).start()
         # apagar el modelo tras un tiempo sin uso (libera memoria)
         idle = int(cfg.get("idle_unload") or 0)
         if idle and mine and st.get("state") == "ready" and not any(s.run for s in core.SESSIONS.values()) \

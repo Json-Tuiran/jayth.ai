@@ -875,6 +875,7 @@ class Session:
         cfg["_sid"] = self.id
         cfg["_temp"] = self.temp
         cfg["n_ctx"] = effective_ctx(cfg)        # el agente mide la conversación con el contexto real (también en automático)
+        cfg["_before_llm"] = LLM_MGR.yield_warm  # un mensaje real no espera detrás del precalentamiento
         cfg["_model_title"] = model_title(active_model(cfg)) if cfg["llm_mode"] == "local" else (cfg.get("external_model") or "")
         return cfg
 
@@ -1269,25 +1270,59 @@ class LLM:
     # --- precalentamiento: procesa una vez las instrucciones y herramientas fijas para que el primer mensaje sea rapido
     warm = ""          # "" | "warming" | "warm"
 
-    def warmup(self):
+    _warm_sock = None
+
+    def warmup(self, session=None):
+        """Lee por adelantado las instrucciones y herramientas. Con `session` (la conversación abierta) usa las suyas:
+        en un proyecto las instrucciones empiezan por su carpeta, y precalentar las generales no servía de nada (el
+        motor volvía a leerlo todo, minutos en un equipo sin gráfica)."""
         if self.warm:
             return
         self.warm = "warming"
         try:
-            cfg = SET.snapshot()
+            cfg = session._run_cfg() if session is not None else SET.snapshot()
+            groups = list((session.data.get("tool_groups") or []) if session is not None else [])
             payload = {"model": "local", "stream": False, "max_tokens": 1, "cache_prompt": True, "temperature": 0,
                        "messages": [{"role": "system", "content": A.system_prompt(cfg)}, {"role": "user", "content": "hola"}],
-                       "tools": A.tool_schemas(cfg), "chat_template_kwargs": {"enable_thinking": effort_of(cfg) != "low",
-                                                                               "reasoning_effort": effort_of(cfg)}}
+                       "tools": A.tool_schemas(cfg, groups), "chat_template_kwargs": {"enable_thinking": effort_of(cfg) != "low",
+                                                                                       "reasoning_effort": effort_of(cfg)}}
             c = http.client.HTTPConnection("127.0.0.1", int(cfg["llm_port"]), timeout=10)
             c.connect()
             c.sock.settimeout(None)
+            self._warm_sock = c.sock
             c.request("POST", "/v1/chat/completions", json.dumps(payload).encode("utf-8"), {"Content-Type": "application/json"})
-            c.getresponse().read()
-            c.close()
+            # la respuesta llega cuando el motor termina de leer. Se espera a trozos cortos para poder ceder el paso:
+            # cerrar el enchufe desde otro hilo no despierta en Windows una lectura bloqueada
+            import socket
+            c.sock.settimeout(0.5)
+            while not self._warm_yielded:
+                try:
+                    c.sock.recv(65536)           # cualquier dato (o el cierre) = el motor ya contestó
+                    break
+                except socket.timeout:
+                    continue
+            c.close()                            # si se cedió el paso, al cerrar el motor abandona la lectura
             self.warm = "warm"
         except Exception:
-            self.warm = ""
+            # falló o se le cedió el paso a un mensaje real (yield_warm): ese mensaje ya deja leído lo suyo
+            self.warm = "warm" if self._warm_yielded else ""
+        finally:
+            self._warm_sock = None
+
+    _warm_yielded = False
+
+    def yield_warm(self):
+        """Llega un mensaje de verdad mientras se precalienta: se corta el precalentamiento para que el mensaje no espere
+        detrás (el motor atiende una petición cada vez) y el chat muestre su avance desde el primer momento. Lo que el
+        motor ya había leído sigue en su memoria y se reutiliza si coincide."""
+        if self.warm == "warming" and self._warm_sock is not None:
+            self._warm_yielded = True            # el hilo del precalentamiento lo ve enseguida y cierra su conexión
+            for _ in range(40):                  # se le da un momento (hasta 2 s) para que el motor quede libre
+                if self.warm != "warming":
+                    break
+                time.sleep(0.05)
+            return True
+        return False
 
     def start(self):
         cfg = SET.snapshot()
