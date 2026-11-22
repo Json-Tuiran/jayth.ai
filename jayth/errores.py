@@ -60,10 +60,31 @@ def message(body):
     return re.sub(r"\s+", " ", msg).strip()[:400]
 
 
+_WAIT = re.compile(r"(?:retry|try again)(?: after| in)?\s+(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|sec|secs|seconds?|m|min|minutes?)\b|"
+                   r"\"retryDelay\"\s*:\s*\"(\d+(?:\.\d+)?)s\"", re.I)
+_FREE = re.compile(r"free[_ ]tier", re.I)
+
+
+def hinted_wait(body):
+    """Segundos de espera que el servicio indica en el propio texto del error («Please retry in 37.2s», «try again in
+    20s», «"retryDelay": "41s"»), o None. Muchos lo dicen ahí y no en la cabecera Retry-After."""
+    text = body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else str(body or "")
+    m = _WAIT.search(text)
+    if not m:
+        return None
+    if m.group(3):
+        return float(m.group(3))
+    n, unit = float(m.group(1)), m.group(2).lower()
+    return n / 1000.0 if unit.startswith("m") and unit not in ("m", "min", "minute", "minutes") else n * 60 if unit in ("m", "min", "minute", "minutes") else n
+
+
 def kind(status, body=""):
     """De qué tipo es el error (ver TRANSIENT)."""
     text = message(body) + " " + (body if isinstance(body, str) else "")
     s = int(status or 0)
+    w = hinted_wait(body)
+    if s == 429 and w is not None and w <= 120:   # un límite por minuto (aunque hable de «cuota»): esperar lo que dice
+        return "rate"
     if s in (401, 403) and not _QUOTA.search(text):
         return "auth"
     if _QUOTA.search(text) and s in (0, 400, 402, 403, 429):
@@ -114,6 +135,8 @@ def friendly(status, body="", model="", tries=0):
     """El error explicado en una frase, más el detalle del servicio (corto). tries: cuántas veces se reintentó."""
     k = kind(status, body)
     detail = message(body)
+    if k == "quota" and _FREE.search(str(body or "")):
+        k = "free"
     again = (tr(" Jayth lo reintentó %d veces.") % tries) if tries else ""
     text = {
         "busy": tr("El servicio está saturado ahora mismo (no es un fallo de Jayth ni de tu clave).%s Prueba de nuevo en unos "
@@ -124,6 +147,8 @@ def friendly(status, body="", model="", tries=0):
         "timeout": tr("El servicio tardó demasiado en responder.%s Puede estar saturado: pulsa «Reintentar» en un momento.") % again,
         "quota": tr("Tu cuenta en el servicio no tiene saldo o cuota suficiente. Revísalo en la página del servicio (en "
                     "«Modelos por API…», «Consumo oficial»)."),
+        "free": tr("Llegaste al límite de la capa gratuita del servicio para este modelo. Se renueva con el tiempo (en muchos "
+                   "servicios, al día siguiente); mientras, elige otro modelo o activa un plan de pago en el servicio."),
         "auth": tr("El servicio rechazó la clave de API. Revisa que esté bien copiada y activa en «Modelos por API…»."),
         "model": (tr("El servicio no encuentra el modelo «%s» o tu cuenta no tiene acceso a él. Elige otro en «Modelos por "
                      "API…».") % model) if model else tr("El servicio no encuentra ese modelo o tu cuenta no tiene acceso a él."),

@@ -3443,7 +3443,8 @@ class ChatPanel(QWidget):
             if ev.get("ts", 0) > time.time() - 10:
                 self.main.toast(ev["text"], tr("Ajustes"), lambda: self.main.settings("Modelos"), icon_name="est_aviso", color=C["warn"])
         elif t in ("info", "error"):
-            w = self.add(note(tr("Detenido por ti.") if (t == "info" and ev["text"] == "Detenido.") else ev["text"], t == "error"))
+            w = self.add(note(tr("Detenido por ti.") if (t == "info" and ev["text"] == "Detenido.") else ev["text"],
+                              t == "error" or bool(ev.get("warn"))))      # warn: un aviso que no debe pasar desapercibido
             if t == "error" and "i" in ev:
                 # un error se puede reintentar o quitar (p. ej. «no puedo conectar con el modelo» una vez encendido)
                 h = w.layout()

@@ -229,6 +229,58 @@ NUDGE_WRITTEN = ("[Aviso automático de Jayth, no lo escribió el usuario] Escri
                  "corrige lo que le dijiste al usuario y termina, en el idioma del usuario. No respondas a este aviso ni lo menciones.")
 
 
+# Lo dicho frente a lo hecho: el modelo termina diciendo que creó o guardó archivos que no existen (pasa con modelos
+# pequeños que escriben la acción como texto y se inventan el resultado). Se comprueba en el disco, no con sus palabras.
+# (en español, solo el pasado: «creé», no «cree», que también es «¿quieres que cree…?»)
+_CLAIM = re.compile(r"(?<!\w)(?:creé|he creado|generé|he generado|escribí|he escrito|guardé|he guardado|implementé|"
+                    r"he implementado|añadí|he añadido|ejecuté|he ejecutado|he completado|completé la tarea|"
+                    r"created|have created|wrote|have written|saved|generated|implemented|completed the task|"
+                    r"criei|gerei|escrevi|salvei|implementei|j'ai (?:créé|écrit|enregistré|généré)|"
+                    r"ich habe\b.{0,60}\b(?:erstellt|geschrieben|gespeichert|erzeugt)|ho (?:creato|scritto|salvato|generato))\b|"
+                    r"作成しました|保存しました|書きました|已创建|创建了|已保存|写好了", re.I)
+_FILE_EXT = ("py", "js", "ts", "jsx", "tsx", "html", "htm", "css", "md", "json", "txt", "csv", "xlsx", "docx", "pptx", "pdf", "java",
+             "c", "cpp", "h", "cs", "go", "rs", "rb", "php", "sh", "ps1", "bat", "yml", "yaml", "toml", "ini", "sql", "xml", "svg")
+_FILE_RX = re.compile(r"(?<![\w/\\:.@-])((?:[A-Za-z]:[\\/])?(?:[\w.-]+[\\/])*[\w-][\w.-]*\.(?:%s))(?!\w|\.\w)" % "|".join(_FILE_EXT), re.I)
+NUDGE_CLAIM = ("[Aviso automático de Jayth, no lo escribió el usuario] Dices que creaste o guardaste %s, pero no existe en la "
+               "carpeta de trabajo: en este turno no se hizo. Hazlo de verdad llamando a las herramientas (write_file, "
+               "run_command…), comprueba el resultado y solo entonces díselo al usuario. Si no puedes, díselo tal cual. No "
+               "respondas a este aviso ni lo menciones.")
+
+
+def claimed_missing(text, ctx, limit=3000):
+    """Archivos que la respuesta dice haber creado o guardado y que no existen (ni con ese nombre en ninguna subcarpeta de
+    la carpeta de trabajo, por si los nombra sin su carpeta). [] si no afirma nada de eso."""
+    text = str(text or "")
+    if not _CLAIM.search(re.sub(r"```.*?(```|$)", " ", text, flags=re.S)) or asks_user(text):
+        return []
+    cands = []
+    for c in re.findall(r"`([^`\n]{2,200})`", text) + _FILE_RX.findall(text):
+        c = c.strip().strip("\"'.,;:()[]")
+        if re.search(r"\.(%s)$" % "|".join(_FILE_EXT), c, re.I) and "://" not in c and " " not in c.strip() and c not in cands:
+            cands.append(c)
+    if not cands:
+        return []
+    names, n = set(), 0
+    root = getattr(ctx, "workspace", "") or "."
+    for r, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in T._SKIP_DIRS and not d.startswith(".")]
+        names.update(f.lower() for f in files)
+        n += len(files)
+        if n > limit:
+            return []                           # carpeta enorme: no se puede comprobar en un momento (mejor no acusar)
+    out = []
+    for c in cands:
+        try:
+            p = ctx.path(c)
+        except Exception:
+            continue
+        if os.path.exists(p) or os.path.basename(c.replace("\\", "/")).lower() in names:
+            continue
+        if os.path.basename(c) not in [os.path.basename(x) for x in out]:
+            out.append(c)
+    return out
+
+
 NUDGE_EMPTY = ("[Aviso automático de Jayth, no lo escribió el usuario] Tu última respuesta llegó vacía. Sigue con la tarea donde "
                "la dejaste, con las herramientas que hagan falta, o, si ya terminaste, da el resultado al usuario, en su idioma. "
                "No respondas a este aviso ni lo menciones.")
@@ -1367,6 +1419,7 @@ class Run:
         self._sig_epoch = {}
         self.truncated = False
         self._deltas = 0                  # trozos de respuesta recibidos (si ya llegó algo, un error no se reintenta: se duplicaría)
+        self._claim_nudged = False        # ya se le dijo que lo que afirma haber hecho no existe (ver claimed_missing)
         self._cut_ids = set()             # acciones que llegaron cortadas por el límite de salida (no se ejecutan)
         self._cut_nudges = 0
         self._read_ev, self._ptps = 0.0, 0.0           # avance de lectura: último aviso y velocidad medida (tok/s)
@@ -2224,8 +2277,9 @@ class Run:
                     err.tries = tries
                 raise err
             wait = float(RETRY_WAITS[tries])
-            if getattr(err, "retry_after", None):
-                wait = min(120.0, max(wait, err.retry_after))
+            asked = getattr(err, "retry_after", None) or (ERR.hinted_wait(err.body) if isinstance(err, LLMError) else None)
+            if asked:                                   # lo que pide el servicio (cabecera o su propio texto), hasta 120 s
+                wait = min(120.0, max(wait, asked + 1))
             tries += 1
             k = ERR.kind(err.status, err.body) if isinstance(err, LLMError) else "timeout"
             what = {"busy": tr("El servicio está saturado"), "rate": tr("El servicio pide esperar (límite por minuto)"),
@@ -2477,6 +2531,18 @@ class Run:
                 if not calls:
                     if self.queued():                   # te escribió mientras acababa: sigue, con su mensaje
                         continue
+                    miss = [] if self.cfg.get("mode") == "plan" or self.cfg.get("_sub") else claimed_missing(text_out, self.ctx)
+                    if miss:                            # dice haber creado archivos que no existen: se comprueba en el disco
+                        shown = ", ".join("«%s»" % m for m in miss[:3])
+                        if not self._claim_nudged:
+                            self._claim_nudged = True
+                            msgs.append({"role": "user", "_auto": True, "content": NUDGE_CLAIM % ", ".join(miss[:5])})
+                            self.emit({"t": "info", "text": tr("El modelo dice haber creado %s, pero no existe: se lo indico para que "
+                                                               "lo haga de verdad.") % shown})
+                            continue
+                        self.emit({"t": "info", "warn": True,
+                                   "text": tr("Atención: el modelo dice haber creado %s, pero no existe en la carpeta de trabajo. Lo "
+                                              "que afirma haber hecho en este turno no se hizo.") % shown})
                     if not text_out.strip():
                         self.emit({"t": "info", "text": (tr("El modelo no escribió respuesta (se alcanzó el límite de tokens; sube «longitud máxima» o desactiva el pensamiento).")
                                                        if res["finish"] == "length" else tr("El modelo no escribió respuesta."))})
