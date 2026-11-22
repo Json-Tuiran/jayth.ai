@@ -2369,8 +2369,30 @@ class ContextRing(QToolButton):
         pct = int(round(100 * self.frac()))
         self.setFixedSize(60 if self.frac() >= self.TRIM else 32, 32)     # cerca del tope, también el número
         self.setToolTip(tr("Memoria de la conversación: %s de %s tokens (%d %%).\nCerca del tope, Jayth recorta y resume lo "
-                           "antiguo para no perderlo. Pulsa para ver más.") % (self._k(self.used), self._k(self.max), pct))
+                           "antiguo para no perderlo. Pulsa para ver más.") % (self._k(self.used), self._k(self.max), pct)
+                        + (("\n" + self.cost_text()) if self.cost_text() else ""))
         self.update()
+
+    def cost_text(self):
+        """Con un modelo por API: lo que lleva gastado esta conversación y cuánto de lo leído salió de la caché (lo que
+        sale de la caché se cobra a una fracción). Se recalcula como mucho cada 5 s."""
+        sid = getattr(self.panel, "sid", None)
+        now = time.time()
+        if getattr(self, "_cost_at", (None, 0))[0] != sid or now - self._cost_at[1] > 5:
+            from . import consumo as U
+            try:
+                s = U.session_summary(sid)
+            except Exception:
+                s = None
+            if s:
+                from .providers import money
+                self._cost = (tr("Esta conversación: %d peticiones") % s["n"]
+                              + ((" · ≈ " + money(s["usd"])) if s["usd"] is not None else "")
+                              + (tr(" · %d %% leído de la caché") % round(s["cache"])))
+            else:
+                self._cost = ""
+            self._cost_at = (sid, now)
+        return self._cost
 
     @staticmethod
     def _k(n):
@@ -2382,6 +2404,10 @@ class ContextRing(QToolButton):
         pct = int(round(100 * self.frac()))
         a = m.addAction(tr("Memoria de la conversación: %s de %s tokens (%d %%)") % (self._k(self.used), self._k(self.max), pct))
         a.setEnabled(False)
+        self._cost_at = (None, 0)
+        if self.cost_text():                             # con un modelo por API: lo gastado y cuánto salió de la caché
+            c = m.addAction(self.cost_text())
+            c.setEnabled(False)
         left = self.SUMMARY - self.frac()
         info = (tr("Va sobrada: queda mucho antes del tope.") if self.frac() < 0.5 else
                 tr("Al llegar al %d %%, Jayth recortará las salidas antiguas de las herramientas y, si no basta, resumirá lo "

@@ -298,7 +298,7 @@ exato):
 - **Modelos:** o modelo ativo, **Gerenciar modelos…**, **Adicionar modelo…**, **Assistente de configuração…** e “Pasta
   onde os modelos são baixados”.
   - **Provedor:** “Qual motor o agente usa?” (local ou servidor externo), “URL do servidor externo (termina em /v1)”,
-    “Nome do modelo nesse servidor”, “Chave de API (se o servidor pedir)” e **Testar conexão**.
+    “Nome do modelo nesse servidor”, “Chave de API (se o servidor pedir)” e **Testar conexão**. A chave fica guardada criptografada no computador, não no arquivo de configurações.
 - **Geração:** “Pensar a fundo por padrão (respostas melhores, mais lento)”, “Parâmetros de amostragem” (recomendados
   para o modelo ativo ou personalizados), “Temperatura”, “Tamanho máximo de cada resposta (tokens)”.
   - **Amostragem avançada:** “Top-p”, “Top-k”, “Min-p”, “Penalidade de repetição”, “Semente” e **Restaurar valores

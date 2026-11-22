@@ -326,7 +326,7 @@ Du öffnest sie über das Profilmenü (**Einstellungen**). Änderungen werden au
 - **Modelle:** das aktive Modell, **Modelle verwalten…**, **Modell hinzufügen…**, **Einrichtungsassistent…** und
   „Ordner, in den Modelle heruntergeladen werden“.
   - **Anbieter:** „Welche Engine nutzt der Agent?“ (lokal oder externer Server), „URL des externen Servers (endet auf
-    /v1)“, „Modellname auf diesem Server“, „API-Schlüssel (falls der Server einen verlangt)“ und **Verbindung testen**.
+    /v1)“, „Modellname auf diesem Server“, „API-Schlüssel (falls der Server einen verlangt)“ und **Verbindung testen**. Der Schlüssel wird verschlüsselt auf dem Computer gespeichert, nicht in der Einstellungsdatei.
 - **Generierung:** „Standardmäßig gründlich nachdenken (bessere Antworten, langsamer)“, „Sampling-Parameter“ (empfohlen
   für das aktive Modell oder benutzerdefiniert), „Temperatur“, „Maximale Länge jeder Antwort (Tokens)“.
   - **Erweitertes Sampling:** „Top-p“, „Top-k“, „Min-p“, „Wiederholungsstrafe“, „Seed“ und **Empfohlene Werte

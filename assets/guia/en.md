@@ -294,7 +294,7 @@ names):
 - **Models:** the active model, **Manage models…**, **Add model…**, **Setup wizard…** and “Folder where models are
   downloaded”.
   - **Provider:** “Which engine does the agent use?” (local or external server), “External server URL (ends in
-    /v1)”, “Model name on that server”, “API key (if the server requires it)” and **Test connection**.
+    /v1)”, “Model name on that server”, “API key (if the server requires it)” and **Test connection**. The key is stored encrypted on the computer, not in the settings file.
 - **Generation:** “Think deeply by default (better answers, slower)”, “Sampling parameters” (recommended for the
   active model or custom), “Temperature”, “Maximum length of each response (tokens)”.
   - **Advanced sampling:** “Top-p”, “Top-k”, “Min-p”, “Repetition penalty”, “Seed” and **Reset to recommended

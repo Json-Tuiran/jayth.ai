@@ -168,7 +168,11 @@ for _g, _p in _HINTS_MORE.items():
 
 
 def on_demand(cfg):
-    return (cfg or {}).get("tools_mode", "auto") != "all"
+    """¿Herramientas por grupos, según lo que pide cada mensaje? Con los modelos locales ahorra memoria y tiempo de
+    lectura. Con un modelo por API no: activar un grupo cambia la lista de herramientas, que es lo primero que lee el
+    servicio, y anula toda su caché (cada paso se cobraría entero); se ofrecen todas desde el principio."""
+    cfg = cfg or {}
+    return cfg.get("tools_mode", "auto") != "all" and cfg.get("llm_mode") != "external"
 
 
 # El modelo anuncia una acción («Voy a ejecutarlo:» + el comando) y termina sin llamar a la herramienta: pasa con modelos
@@ -574,7 +578,8 @@ def volatile_parts(cfg):
     """Lo que las instrucciones del sistema llevan y cambia solo, sin que el usuario toque los ajustes: la fecha, la lista
     de archivos del proyecto y la memoria."""
     mem = "" if (cfg.get("_temp") or not cfg.get("memory_enabled", True)) else H.memory_text()
-    return {"date": datetime.date.today().isoformat(), "repo": H.repo_map(cfg["workspace"]) if cfg.get("_project") else "", "mem": mem}
+    return {"date": datetime.date.today().isoformat(), "repo": H.repo_map(cfg["workspace"]) if cfg.get("_project") else "", "mem": mem,
+            "ctx": H.context_files(cfg["workspace"])}
 
 
 def changes_note(now, seen):
@@ -587,6 +592,8 @@ def changes_note(now, seen):
         notes.append("Estructura actual de la carpeta del proyecto:\n" + now["repo"])
     if now.get("mem") != seen.get("mem"):
         notes.append("Memoria actual (lo que el usuario te pidió recordar):\n" + (now.get("mem") or "(vacía)"))
+    if "ctx" in seen and now.get("ctx") != seen.get("ctx"):
+        notes.append("Instrucciones del proyecto actualizadas (sustituyen a las del inicio):\n" + (now.get("ctx") or "(ya no hay)"))
     return ("\n\n[Datos actualizados por Jayth desde el inicio de la conversación]\n" + "\n".join(notes)) if notes else ""
 
 
@@ -599,7 +606,10 @@ def system_prompt(cfg, frozen=None):
     svc = osys.synced_service(cfg["workspace"])      # p. ej. Documentos dentro de OneDrive: que no ponga ahí lo que la sincronización daña
     ws = cfg["workspace"] + ((" (esta carpeta se sincroniza con %s: no crees dentro bases de datos en uso, entornos virtuales ni "
                               "node_modules sin avisar al usuario de que la sincronización puede dañarlos)" % svc) if svc else "")
-    p = WORKFLOW % {"os": osys.os_label(), "shell": osys.shell_label(), "date": parts.get("date") or datetime.date.today().isoformat(), "ws": ws,
+    # (la fecha es la del día en que empezó la conversación: así no cambia el principio de lo que lee el modelo; si
+    # cambia el día, el mensaje nuevo lo dice)
+    p = WORKFLOW % {"os": osys.os_label(), "shell": osys.shell_label(), "date": (parts.get("date") or datetime.date.today().isoformat())
+                    + " (el día en que empezó esta conversación; si un mensaje trae otra fecha, esa es la de hoy)", "ws": ws,
                     "python": "python" if osys.WIN else "python3", "example": "D:\\Trabajo" if osys.WIN else "~/Trabajo",
                     "fence": "powershell" if osys.WIN else "bash", "tools": _tools_text(cfg)}
     lang = {"es": "español", "en": "inglés", "pt": "portugués", "fr": "francés", "de": "alemán", "it": "italiano", "ja": "japonés",
@@ -638,7 +648,7 @@ def system_prompt(cfg, frozen=None):
         sk = ""
     if sk:
         p += "\n\n## Habilidades\n" + sk
-    ctx = H.context_files(cfg["workspace"])
+    ctx = parts["ctx"] if "ctx" in parts else H.context_files(cfg["workspace"])    # (congeladas como la fecha)
     if ctx:
         p += "\n\n## Instrucciones del proyecto\n" + ctx
     if cfg.get("_project"):
@@ -852,6 +862,12 @@ def local_think(effort, style, budgets=None):
 
 
 INTERRUPTED = "Interrumpido."
+CUT_CALL = ("No se ejecutó: tu respuesta se cortó por el límite de salida a mitad de esta acción y sus datos llegaron "
+            "incompletos (hacerla así habría dejado, por ejemplo, un archivo a medias). Divídela en partes más pequeñas: "
+            "escribe el archivo en varias veces (write_file con la primera parte y luego edit_file o multi_edit para añadir "
+            "el resto) o haz menos cosas en cada llamada.")
+CUT_TEXT = ("[Aviso de Jayth: tu respuesta se cortó por el límite de salida. Continúa exactamente donde lo dejaste, sin "
+            "repetir lo ya escrito.]")
 RECOVERED = "\n[Jayth se cerró justo después de esta acción; este resultado se recuperó de su registro.]"
 
 
@@ -1283,6 +1299,8 @@ class Run:
         self.calls_seen = Counter()
         self.fails_seen = Counter()
         self.truncated = False
+        self._cut_ids = set()             # acciones que llegaron cortadas por el límite de salida (no se ejecutan)
+        self._cut_nudges = 0
         self._read_ev, self._ptps = 0.0, 0.0           # avance de lectura: último aviso y velocidad medida (tok/s)
         self._cuts = 0                                 # respuestas cortadas por generar sin producir nada visible
         self._split = None                             # ¿texto y acción en mensajes separados? (se averigua una vez)
@@ -1469,11 +1487,9 @@ class Run:
 
     def _to_llm(self, msgs=None):
         msgs = self.s["messages"] if msgs is None else msgs
-        refs = [(i, j) for i, m in enumerate(msgs) if isinstance(m.get("content"), list)
-                for j, p in enumerate(m["content"]) if p.get("type") == "image_ref"]
         # solo si el modelo de verdad ve (tiene proyector de visión): si no, el motor rechaza la petición entera (HTTP 500)
         see = can_see(self.cfg)
-        keep = set(refs[-int(self.cfg["keep_images"]):]) if see and self.cfg["keep_images"] else set()
+        keep = self._images_kept(msgs) if see else set()
         out = []
         for i, m in enumerate(msgs):
             c = m.get("content")
@@ -1482,7 +1498,7 @@ class Run:
                 for j, p in enumerate(c):
                     if p.get("type") != "image_ref":
                         parts.append(p)
-                    elif (i, j) in keep and os.path.isfile(os.path.join(self.images_dir, p["name"])):
+                    elif (i, j) in keep and not p.get("_omit") and os.path.isfile(os.path.join(self.images_dir, p["name"])):
                         with open(os.path.join(self.images_dir, p["name"]), "rb") as f:
                             raw = f.read()
                         if not T.image_mime(raw):          # un formato que los modelos no admiten (bmp, tiff…): como PNG
@@ -1501,9 +1517,34 @@ class Run:
             self._split = text_then_call_apart(self.cfg)
         return split_text_and_calls(out) if self._split else out
 
+    IMAGE_BATCH = 3     # con un modelo por API, imágenes antiguas de más que se toleran antes de omitirlas de golpe
+
+    def _images_kept(self, msgs):
+        """Qué imágenes ve el modelo. Siempre las del último mensaje que trae imágenes y las de después de su última
+        respuesta (las del paso en curso: antes, de 3 en un mismo paso solo llegaba la última). De las anteriores, las
+        `keep_images` más recientes. Con un modelo por API, las sobrantes se omiten por tandas y la decisión se guarda
+        en el mensaje (_omit): omitir una imagen cambia lo ya enviado y anula la caché desde ahí, mejor de vez en cuando."""
+        refs = [(i, j) for i, m in enumerate(msgs) if isinstance(m.get("content"), list)
+                for j, p in enumerate(m["content"]) if p.get("type") == "image_ref" and not p.get("_omit")]
+        if not refs:
+            return set()
+        last_asst = max((i for i, m in enumerate(msgs) if m.get("role") == "assistant"), default=-1)
+        newest = refs[-1][0]
+        protected = {r for r in refs if r[0] > last_asst or r[0] == newest}
+        older = [r for r in refs if r not in protected]
+        n = max(0, int(self.cfg.get("keep_images") or 0))
+        slack = self.IMAGE_BATCH if self.cfg.get("llm_mode") == "external" else 0
+        if len(older) > n + slack:
+            for i, j in older[:len(older) - n]:
+                msgs[i]["content"][j] = dict(msgs[i]["content"][j], _omit=True)
+            older = older[len(older) - n:]
+        return protected | set(older if n else [])
+
     # ---- memoria de la conversación (contexto): recortar y resumir antes de llegar al tope
     TRIM_AT = 0.70      # a partir de aquí se recortan las salidas antiguas de las herramientas (sin llamar al modelo)
+    TRIM_TO = 0.45      # …de una vez, hasta aquí: así no se vuelve a recortar en cada paso (cada recorte anula la caché)
     SUMMARY_AT = 0.85   # y si aun así no baja, el modelo resume lo antiguo
+    KEEP_STEPS = 3      # los resultados de los últimos pasos no se recortan nunca
 
     def ctx_used(self, msgs=None):
         """Tokens que ocupa la conversación (estimados) y el máximo del modelo."""
@@ -1514,18 +1555,31 @@ class Run:
         used, mx = self.ctx_used()
         self.emit({"t": "ctx", "used": used, "max": mx})
 
-    def _trim_old_results(self, msgs, keep=3):
-        """Sin llamar al modelo: las salidas largas de herramientas antiguas (todas menos las últimas `keep`) se quedan en
-        su principio, con una nota. Es lo que más ocupa (archivos, páginas web) y casi nunca vuelve a hacer falta entera.
-        Se hace de una vez al cruzar el umbral, no en cada paso (así no se pierde la caché del motor a cada rato)."""
-        idx = [i for i, m in enumerate(msgs) if m["role"] == "tool"]
+    def _trim_old_results(self, msgs, budget=None, keep=None):
+        """Sin llamar al modelo: las salidas largas de herramientas antiguas se quedan en su principio, con una nota que
+        dice dónde está entera (se guarda en un archivo). Es lo que más ocupa (archivos, páginas web) y casi nunca vuelve
+        a hacer falta entera. Se recorta de una vez, de lo más antiguo a lo más nuevo, hasta bajar a TRIM_TO del
+        presupuesto: cada recorte cambia lo ya enviado y anula la caché desde ese punto, así que mejor pocas veces.
+        Nunca se tocan los resultados de los últimos KEEP_STEPS pasos ni los que el modelo aún no ha visto."""
+        keep = self.KEEP_STEPS if keep is None else keep
+        if budget and self._estimate(msgs) <= self.TRIM_TO * budget:
+            return 0                                    # ya está por debajo: recortar ahora solo anularía la caché
+        asst = [i for i, m in enumerate(msgs) if m.get("role") == "assistant"]
+        limit = asst[-keep] if keep and len(asst) >= keep else (asst[0] if keep and asst else len(msgs))
+        idx = [i for i, m in enumerate(msgs) if m["role"] == "tool" and i < limit]
         cut = 0
-        for i in idx[:-keep] if keep else idx:
+        for i in idx:
             c = msgs[i].get("content")
-            if isinstance(c, str) and len(c) > 700 and not msgs[i].get("_trimmed"):
-                msgs[i] = dict(msgs[i], content=c[:400] + "\n[… salida antigua recortada para ahorrar memoria (%d caracteres en total). "
-                                                        "Si la necesitas entera, vuelve a pedirla.]" % len(c), _trimmed=True)
-                cut += len(c) - 400
+            if not isinstance(c, str) or len(c) <= 700 or msgs[i].get("_trimmed"):
+                continue
+            where = T.spill(c, "recorte")
+            note = ("\n[… salida antigua recortada para ahorrar memoria (%d caracteres en total). %s]" % (
+                len(c), ("Está entera en %s: léela con read_file (con offset) si la necesitas." % where) if where else
+                "Si la necesitas entera, vuelve a pedirla."))
+            msgs[i] = dict(msgs[i], content=c[:400] + note, _trimmed=True)
+            cut += len(c) - 400
+            if budget and self._estimate(msgs) <= self.TRIM_TO * budget:
+                break
         return cut
 
     @staticmethod
@@ -1581,7 +1635,12 @@ class Run:
             return False
         changed = False
         if not force:
-            cut = self._trim_old_results(msgs)
+            cut = self._trim_old_results(msgs, budget)
+            if self._estimate(msgs) > self.SUMMARY_AT * budget:
+                # no basta respetando los últimos pasos: también ellos, salvo lo que el modelo aún no ha visto. Queda
+                # guardado (como el resto del recorte): si no, _fit recortaría una copia distinta en cada petición y la
+                # caché se perdería en cada paso de un turno largo (en un turno con un solo mensaje no hay nada que resumir)
+                cut += self._trim_old_results(msgs, budget, keep=1)
             if cut:
                 changed = True
                 self.emit({"t": "trimmed", "chars": cut})
@@ -1653,7 +1712,8 @@ class Run:
         msgs = [dict(m) for m in msgs]
         for m in msgs:                                    # 1) recortar salidas antiguas de herramientas
             if m["role"] == "tool" and len(m.get("content") or "") > 400:
-                m["content"] = m["content"][:300] + "\n...[recortado para ahorrar contexto]"
+                note = re.search(r"\n\[… salida antigua recortada[^\n]*\]$", m["content"])     # la nota con la ruta, siempre
+                m["content"] = m["content"][:300] + "\n...[recortado para ahorrar contexto]" + (note.group(0) if note else "")
                 if self._estimate(msgs) <= budget:
                     return msgs
         while self._estimate(msgs) > budget and len(msgs) > 2:   # 2) ultimo recurso: descartar lo mas antiguo
@@ -2153,6 +2213,8 @@ class Run:
                 text_out = res["content"]
                 if not calls and "<tool_call>" in text_out:
                     calls, text_out = parse_text_tool_calls(text_out)
+                if self.truncated and calls:     # la última acción pudo quedar a medias: no se ejecuta (ver CUT_CALL)
+                    self._cut_ids.add(calls[-1]["id"])
                 tm = res.get("timings") or {}
                 speed = self.cfg.get("_note_speed")
                 if callable(speed) and not external and int(tm.get("predicted_n") or 0) >= 32 and tm.get("predicted_per_second"):
@@ -2200,6 +2262,11 @@ class Run:
                     msgs.append({"role": "user", "content": NUDGE_EMPTY})
                     self.emit({"t": "nudge", "written": "", "empty": True})
                     continue
+                if not calls and res["finish"] == "length" and text_out.strip() and self._cut_nudges < 2:
+                    self._cut_nudges += 1           # se cortó a mitad de escribir: que siga (dos veces como mucho)
+                    msgs.append({"role": "user", "_auto": True, "content": CUT_TEXT})
+                    self.emit({"t": "info", "text": tr("La respuesta se cortó por el límite de salida: le pido al modelo que continúe.")})
+                    continue
                 if not calls:
                     if self.queued():                   # te escribió mientras acababa: sigue, con su mensaje
                         continue
@@ -2211,6 +2278,12 @@ class Run:
                 for call in calls:
                     if self.stop.is_set():
                         msgs.append({"role": "tool", "tool_call_id": call["id"], "content": "Cancelado por el usuario."})
+                        continue
+                    if call["id"] in self._cut_ids:     # llegó cortada por el límite de salida: no se hace a medias
+                        self.emit({"t": "info", "text": tr("La acción «%s» llegó cortada por el límite de salida y no se ejecutó: "
+                                                           "el modelo la repetirá en partes.") % T.TOOL_LABELS.get(call["function"]["name"],
+                                                                                                    call["function"]["name"])})
+                        msgs.append({"role": "tool", "tool_call_id": call["id"], "content": CUT_CALL})
                         continue
                     ok, out, img, extra = self._exec(call)
                     names = []

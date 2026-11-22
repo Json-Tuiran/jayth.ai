@@ -79,13 +79,13 @@ def clip(s, n=MAX_OUT, where=""):
 
 def spill(text, kind="salida"):
     """Guarda entera una salida que no cabe en la respuesta, para que el modelo pueda leer lo que falta con read_file.
-    Devuelve la ruta ('' si no se pudo). Se conservan las 20 últimas."""
+    Devuelve la ruta ('' si no se pudo). Se conservan las 100 últimas."""
     try:
         from . import paths
         d = os.path.join(paths.HOME, "cache", "salidas")
         os.makedirs(d, exist_ok=True)
         old = sorted((os.path.join(d, f) for f in os.listdir(d)), key=os.path.getmtime)
-        for f in old[:-19]:
+        for f in old[:-99]:                 # (los recortes del historial también van aquí: que duren lo bastante)
             os.remove(f)
         p = os.path.join(d, "%s_%s_%04d.txt" % (kind, time.strftime("%Y%m%d_%H%M%S"), int(time.time() * 1000) % 10000))
         with open(p, "w", encoding="utf-8", newline="\n") as f:
@@ -234,11 +234,45 @@ DANGEROUS_CMD = [r"\bRemove-Item\b", r"(^|[\s;|&(])(del|erase|rmdir|rd|rm|ri)\s"
                  r"(curl|wget)\b.*\|\s*(sudo\s+)?(ba|z)?sh\b", r">\s*/dev/(sd|nvme|disk)", r"\bfind\b.*\s-delete\b",
                  r"\bgit\s+(clean\s+-\w*f|reset\s+--hard|push\s+.*(--force|-f\b))"]
 PROTECTED_PATHS = osys.protected_paths()
+# Datos privados de Jayth: los ajustes (y sus respaldos) y la bóveda de credenciales. Las claves ya no están en claro
+# (van cifradas en la bóveda), pero el agente no tiene por qué leerlos sin que el usuario lo vea y lo apruebe.
+_PRIVATE_RX = re.compile(r"settings[^\\/\s\"']*\.json|[\\/]respaldos([\\/\s\"']|$)|[\\/]credenciales([\\/\s\"']|$)", re.I)
+
+
+def _private(p):
+    """True si la ruta (absoluta) es de los datos privados de Jayth."""
+    from . import paths
+    data = os.path.normcase(os.path.normpath(paths.DATA))
+    p = os.path.normcase(os.path.normpath(p))
+    if p == data:
+        return True                             # la carpeta entera (buscar en ella también lee los ajustes)
+    if not p.startswith(data + os.sep):
+        return False
+    rest = p[len(data) + 1:]
+    top = rest.split(os.sep)[0]
+    return top in ("respaldos", "credenciales") or (top.startswith("settings") and top.endswith(".json"))
+
+
+def _mentions_private(text):
+    """Un comando o script que nombra los datos privados de Jayth (su carpeta y uno de esos archivos)."""
+    from . import paths
+    t = str(text)
+    data = os.path.normpath(paths.DATA).lower()
+    low = t.lower().replace("/", os.sep) if os.sep == "\\" else t.lower()
+    near = data in low or "jayth_home" in low or re.search(r"jayth\W{1,3}data", low)
+    return bool(near and _PRIVATE_RX.search(t))
 
 
 def is_dangerous(name, args, ctx):
     """Acciones que siempre piden confirmacion, incluso en modo automatico."""
     try:
+        if name in ("run_command", "run_python") and _mentions_private(args.get("command") or args.get("code") or ""):
+            return True                         # leer los ajustes o la bóveda de Jayth: lo aprueba el usuario
+        if isinstance(args, dict):
+            ps = [v for k in ("path", "source", "dest", "folder") for v in [args.get(k)] if isinstance(v, str) and v]
+            ps += [v for v in args.get("paths") or [] if isinstance(v, str)] if isinstance(args.get("paths"), list) else []
+            if any(_private(ctx.path(p)) for p in ps):
+                return True
         if name == "run_command":
             cmd = str(args.get("command", ""))
             return any(re.search(p, cmd, re.I) for p in DANGEROUS_CMD)
@@ -253,7 +287,7 @@ def is_dangerous(name, args, ctx):
             return True                         # borrar siempre se confirma
         if name in ("write_file", "edit_file", "multi_edit", "download_file", "move_path"):
             ps = [args.get("path") or args.get("dest") or args.get("source") or "x"] + ([args["dest"]] if args.get("dest") else [])
-            return any(ctx.path(p).lower().startswith(x) for p in ps for x in PROTECTED_PATHS)
+            return any(ctx.path(p).lower().startswith(x) or _private(ctx.path(p)) for p in ps for x in PROTECTED_PATHS)
         if name == "open_target":
             return bool(args.get("args"))
     except Exception:

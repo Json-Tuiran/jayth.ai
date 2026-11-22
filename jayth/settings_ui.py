@@ -662,7 +662,11 @@ class SettingsDialog(QDialog):
                    choices=[(tr("Recomendados para el modelo activo (automático)"), "auto"), (tr("Personalizados (los de abajo)"), "custom")],
                    help=tr("Automático usa los valores que publica cada laboratorio (Qwen, Gemma, Llama, Mistral, DeepSeek…) según si piensa o no."))
         self.field(v, "temperature", tr("Temperatura"), "float", min=0, max=2, help=tr("Más alta = más creativa y variada; más baja = más precisa y estable."))
-        self.field(v, "max_tokens", tr("Longitud máxima de cada respuesta (tokens)"), "int", min=64, max=65536)
+        self.field(v, "max_tokens", tr("Longitud máxima de cada respuesta (tokens)"), "int", min=64, max=65536,
+                   help=tr("Con el modelo de este equipo. Con un modelo por API se piden al menos 32 000 (o lo que admita el "
+                           "servicio, si es menos), porque una acción larga, como escribir un archivo entero, no cabría en menos: "
+                           "este valor solo cuenta si es mayor. Si una respuesta se corta por el límite, su última acción no se "
+                           "ejecuta y el modelo la repite en partes."))
         self._section(v, tr("Muestreo avanzado"))
         self.field(v, "top_p", "Top-p", "float", min=0, max=1)
         self.field(v, "top_k", "Top-k", "int", min=0, max=500, special=tr("sin límite"))

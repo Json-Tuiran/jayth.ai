@@ -289,7 +289,7 @@ Se abren desde el menú del perfil (**Ajustes**). Los cambios se guardan solos. 
 - **Modelos:** el modelo activo, **Gestionar modelos…**, **Añadir modelo…**, **Asistente de configuración…** y «Carpeta
   donde se descargan los modelos».
   - **Proveedor:** «¿Qué motor usa el agente?» (local o servidor externo), «URL del servidor externo (termina en /v1)»,
-    «Nombre del modelo en ese servidor», «Clave de API (si el servidor la pide)» y **Probar conexión**.
+    «Nombre del modelo en ese servidor», «Clave de API (si el servidor la pide)» y **Probar conexión**. La clave se guarda cifrada en el equipo, no en el archivo de ajustes.
 - **Generación:** «Pensar a fondo por defecto (mejores respuestas, más lento)», «Parámetros de muestreo» (recomendados
   para el modelo activo o personalizados), «Temperatura», «Longitud máxima de cada respuesta (tokens)».
   - **Muestreo avanzado:** «Top-p», «Top-k», «Min-p», «Penalización por repetición», «Semilla» y **Restablecer valores

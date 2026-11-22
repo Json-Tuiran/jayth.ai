@@ -306,7 +306,7 @@ esatto):
 - **Modelli:** il modello attivo, **Gestisci modelli…**, **Aggiungi modello…**, **Configurazione guidata…** e «Cartella
   in cui vengono scaricati i modelli».
   - **Provider:** «Quale motore usa l'agente?» (locale o server esterno), «URL del server esterno (termina con /v1)»,
-    «Nome del modello su quel server», «Chiave API (se il server la richiede)» e **Prova connessione**.
+    «Nome del modello su quel server», «Chiave API (se il server la richiede)» e **Prova connessione**. La chiave viene salvata cifrata sul computer, non nel file delle impostazioni.
 - **Generazione:** «Ragiona a fondo di default (risposte migliori, più lento)», «Parametri di campionamento» (consigliati
   per il modello attivo o personalizzati), «Temperatura», «Lunghezza massima di ogni risposta (token)».
   - **Campionamento avanzato:** «Top-p», «Top-k», «Min-p», «Penalità di ripetizione», «Seme» e **Ripristina i valori

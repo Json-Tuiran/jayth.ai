@@ -89,9 +89,13 @@ class Highlighter(QSyntaxHighlighter):
         self.com_fmt = _fmt(col["com"], italic=True)
 
     def highlightBlock(self, text):
+        # Qt cuenta en unidades UTF-16 y Python en caracteres: con emojis (fuera del plano básico) hay que convertir
+        wide = any(ord(ch) > 0xFFFF for ch in text)
+        u16 = (lambda i: len(text[:i].encode("utf-16-le")) // 2) if wide else (lambda i: i)
         for rx, f in self.rules:
             for m in rx.finditer(text):
-                self.setFormat(m.start(), m.end() - m.start(), f)
+                a, b = u16(m.start()), u16(m.end())
+                self.setFormat(a, b - a, f)
         if not self.ml:
             return
         a, b = self.ml
@@ -101,9 +105,9 @@ class Highlighter(QSyntaxHighlighter):
             end = text.find(b, start + (0 if self.previousBlockState() == 1 and start == 0 else len(a)))
             if end < 0:
                 self.setCurrentBlockState(1)
-                self.setFormat(start, len(text) - start, self.com_fmt)
+                self.setFormat(u16(start), u16(len(text)) - u16(start), self.com_fmt)
                 break
-            self.setFormat(start, end - start + len(b), self.com_fmt)
+            self.setFormat(u16(start), u16(end + len(b)) - u16(start), self.com_fmt)
             start = text.find(a, end + len(b))
 
 
@@ -219,8 +223,8 @@ class FileTab(QWidget):
     changed = Signal()
     open_file = Signal(str)        # un enlace de la vista previa lleva a otro archivo del proyecto
 
-    def __init__(self, path):
-        super().__init__()
+    def __init__(self, path, parent=None):
+        super().__init__(parent)      # (sin padre sería, un instante, una ventana suelta)
         from . import docview as DV
         self.DV = DV
         self.path = path
@@ -265,7 +269,9 @@ class FileTab(QWidget):
             v.addWidget(self._note(tr("No se muestra: %s (%s).") % (tr("archivo binario") if b"\0" in head else tr("archivo demasiado grande"), _human(size))), 1)
             return
         self.editor = CodeEditor()
-        self.hl = Highlighter(self.editor.document(), ext if ext in LANG else os.path.basename(path).lower())
+        # el resaltado se calcula en Python línea a línea: en archivos grandes, sin colores (sería lentísimo)
+        self.hl = Highlighter(self.editor.document(), ext if ext in LANG else os.path.basename(path).lower()) \
+            if size <= HL_MAX_BYTES else None
         if ext in DV.TEXT_PREVIEW:                           # texto con vista previa: Markdown, HTML, SVG, CSV
             self.kind = "text"
             if ext in (".md", ".markdown"):
@@ -411,18 +417,32 @@ class FileTab(QWidget):
                 p.info.setText(msg)
 
     def reload(self):
+        if self._loading or not _alive(self) or (self.editor is not None and not _alive(self.editor)):
+            return                       # ya se está cargando (reentrada) o la pestaña se cerró
         if not self.editor:
             if self.preview is not None:
                 self.render_preview()
             return
-        with open(self.path, "r", encoding="utf-8", errors="replace", newline="") as f:
-            text = f.read()
+        try:
+            with open(self.path, "r", encoding="utf-8", errors="replace", newline="") as f:
+                text = f.read()
+        except OSError:
+            return
+        if getattr(self, "disk_text", None) == text and self.editor.document().characterCount() > 1:
+            return                       # no cambió: no se toca el editor (cada carga cuesta y mueve el cursor)
         self.disk_text = text
         self._loading = True
         pos = self.editor.textCursor().position()
         sb = self.editor.verticalScrollBar().value()
         hb = self.editor.horizontalScrollBar().value()
-        self.editor.setPlainText(text)
+        _note_load(self.path, text)
+        if self.hl is not None:          # sin resaltado enganchado durante la carga: se aplica después, fuera de esta pila
+            self.hl.setDocument(None)
+        try:
+            self.editor.setPlainText(text)
+        finally:
+            if self.hl is not None:
+                self.hl.setDocument(self.editor.document())
         c = self.editor.textCursor()
         c.setPosition(min(pos, len(text)))
         self.editor.setTextCursor(c)
@@ -436,6 +456,10 @@ class FileTab(QWidget):
 
     def _edited(self):
         if self._loading:
+            return
+        # aplicar los colores también avisa de «texto cambiado»: solo cuenta si el documento cambió de verdad
+        # (setPlainText lo deja como no modificado; escribir lo marca)
+        if self.editor is not None and not self.editor.document().isModified():
             return
         if not self.dirty:
             self.dirty = True
@@ -464,6 +488,7 @@ class FileTab(QWidget):
             f.write(text)
         self.disk_text = text            # el aviso de «cambió fuera» que provoca este guardado se ignora (no recarga)
         self.dirty = False
+        self.editor.document().setModified(False)
         self.save_error = ""
         self.changed.emit()
         return True
@@ -480,6 +505,35 @@ class FileTab(QWidget):
 
 
 AUTOSAVE_MS = 1000
+HL_MAX_BYTES = 300_000          # por encima, el editor muestra el texto sin colores
+
+
+def _alive(w):
+    try:
+        import shiboken6
+        return shiboken6.isValid(w)
+    except Exception:
+        return True
+
+
+def _note_load(path, text):
+    """Antes de cargar un archivo en el editor se anota qué es (tamaño, líneas, la más larga, caracteres fuera del plano
+    básico). Si Jayth se cerrara al cargarlo, data/editor.log dice qué archivo fue. Se queda en los últimos ~100 KB."""
+    try:
+        lines = text.split("\n")
+        wide = sum(1 for ch in text if ord(ch) > 0xFFFF)
+        log = os.path.join(paths.DATA, "editor.log")
+        if os.path.isfile(log) and os.path.getsize(log) > 100_000:
+            with open(log, "rb") as f:
+                keep = f.read()[-50_000:]
+            with open(log, "wb") as f:
+                f.write(keep)
+        with open(log, "a", encoding="utf-8") as f:
+            f.write("%s carga %s · %d bytes · %d líneas · la más larga %d · %d fuera del plano básico\n" % (
+                time.strftime("%Y-%m-%d %H:%M:%S"), path, len(text.encode("utf-8", "replace")), len(lines),
+                max((len(l) for l in lines), default=0), wide))
+    except Exception:
+        pass
 
 
 def autosave_mode():
@@ -499,6 +553,10 @@ class EditorTabs(QTabWidget):
         self.setDocumentMode(True)
         self.watch = QFileSystemWatcher(self)
         self.watch.fileChanged.connect(self._external)
+        # lo que escribe el agente se abre o recarga agrupado y fuera de la pila del chat (ver refresh)
+        self._pending = []
+        self._refresh_t = QTimer(self, singleShot=True, interval=200, timeout=self._do_refresh)
+        self._asking = set()                 # archivos sobre los que ya hay una pregunta abierta
         self.welcome = lbl(tr("Abre un archivo del árbol o pide al agente que cree uno.\nLos cambios del agente aparecen aquí al instante."), "muted")
         self.welcome.setAlignment(Qt.AlignCenter)
         self.addTab(self.welcome, tr("Inicio"))
@@ -561,7 +619,7 @@ class EditorTabs(QTabWidget):
                     self.setCurrentWidget(t)
                 return t
         try:
-            t = FileTab(path)
+            t = FileTab(path, self)
         except OSError as e:
             QMessageBox.warning(self, tr("No se pudo abrir"), str(e))
             return
@@ -591,24 +649,62 @@ class EditorTabs(QTabWidget):
             self.setTabText(i, ("⚠ " if err else "● " if t.dirty else "") + os.path.basename(t.path))
             self.setTabToolTip(i, t.path + ("\n" + err if err else ""))
 
+    def _tab_of(self, path):
+        n = os.path.normcase(os.path.normpath(path))
+        return next((t for t in self.tabs() if os.path.normcase(os.path.normpath(t.path)) == n), None)
+
     def _external(self, path):
-        for t in self.tabs():
-            if os.path.normcase(t.path) == os.path.normcase(path):
-                if not os.path.exists(path) or not t.changed_on_disk():
-                    continue                     # nuestro propio guardado (o solo cambió la fecha o los permisos)
-                if t.dirty:
-                    if QMessageBox.question(self, tr("Archivo modificado"), tr("«%s» cambió fuera del editor (¿el agente?). ¿Recargarlo y perder tus cambios sin guardar?")
-                                            % os.path.basename(path)) != QMessageBox.StandardButton.Yes:
-                        continue
-                t.reload()
         if os.path.exists(path) and path not in self.watch.files():
             self.watch.addPath(path)     # algunos editores reemplazan el archivo: volver a vigilarlo
+        if any(os.path.normcase(p) == os.path.normcase(path) for p, _ in self._pending):
+            return                       # lo escribió el agente: ya lo recarga refresh (una sola vez)
+        t = self._tab_of(path)
+        if t is None or not os.path.exists(path) or not t.changed_on_disk():
+            return                       # nuestro propio guardado (o solo cambió la fecha o los permisos)
+        self._update_tab(t)
 
-    def refresh(self, path):
-        """El agente escribio o edito este archivo: abrirlo o recargarlo."""
-        t = self.open(path, focus=True)
-        if t:
-            QTimer.singleShot(150, t.reload)
+    def _update_tab(self, t):
+        """El archivo de esta pestaña cambió en disco: se recarga; si tienes cambios sin guardar, se pregunta (sin un
+        diálogo que bloquee: con uno modal, el chat seguía trabajando debajo y podía volver a recargarla)."""
+        if not t.dirty:
+            t.reload()
+            return
+        key = os.path.normcase(t.path)
+        if key in self._asking:
+            return
+        self._asking.add(key)
+        box = QMessageBox(QMessageBox.Question, tr("Archivo modificado"),
+                          tr("«%s» cambió fuera del editor (¿el agente?). ¿Recargarlo y perder tus cambios sin guardar?")
+                          % os.path.basename(t.path), QMessageBox.Yes | QMessageBox.No, self)
+
+        def done(btn, t=t, key=key):
+            self._asking.discard(key)
+            if box.standardButton(btn) == QMessageBox.Yes and _alive(t):
+                t.dirty = False
+                t.reload()
+        box.buttonClicked.connect(done)
+        box.open()
+
+    def refresh(self, path, focus=True):
+        """El agente escribió o editó este archivo: abrirlo o recargarlo. Se agrupa (varias escrituras seguidas, una
+        sola carga) y se hace un instante después, fuera de la pila del chat."""
+        p = os.path.normpath(path)
+        self._pending = [(q, f) for q, f in self._pending if os.path.normcase(q) != os.path.normcase(p)] + [(p, focus)]
+        self._refresh_t.start()
+
+    def _do_refresh(self):
+        pending, self._pending = self._pending, []
+        for p, focus in pending:
+            if not os.path.isfile(p):
+                continue
+            t = self._tab_of(p)
+            if t is None:
+                self.open(p, focus=focus)        # nueva: se carga una vez, al crearla
+                continue
+            if focus:
+                self.setCurrentWidget(t)
+            if t.changed_on_disk():
+                self._update_tab(t)
 
     def save_current(self):
         w = self.currentWidget()

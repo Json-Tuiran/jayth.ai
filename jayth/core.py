@@ -221,6 +221,113 @@ class _FileLock:
 
 BACKUPS_KEPT = 10        # copias diarias de los ajustes en data/respaldos
 
+# Claves de API: en settings.json (y en sus respaldos) solo queda esta marca; la clave va cifrada en la bóveda
+# (boveda.py: DPAPI en Windows, atada a la cuenta del usuario). Antes iban en claro y una herramienta del agente que
+# leyera los ajustes las veía (y las mandaba al modelo). En memoria los ajustes siguen teniendo la clave.
+SECRET_KEYS = ("external_key", "brave_key")
+VAULT_REF = "@boveda"
+_VAULT_SEEN = {}         # nombre en la bóveda -> último valor leído o escrito (para no reescribirla en cada guardado)
+
+
+def _vault_name(k, pid=None):
+    return "ajustes:" + k if pid is None else "ajustes:proveedor:" + str(pid)
+
+
+def _vault_get(name):
+    """La clave guardada, o la marca si no se puede leer (otra cuenta u otro equipo): así nunca se pierde por un fallo
+    al leerla (al guardar, la marca se queda como está) y el servicio contesta «clave no válida», que se entiende."""
+    from . import boveda as B
+    d = B.get(name)
+    if isinstance(d, dict) and isinstance(d.get("v"), str):
+        _VAULT_SEEN[name] = d["v"]
+        return d["v"]
+    return VAULT_REF
+
+
+def _vault_put(name, value):
+    from . import boveda as B
+    if _VAULT_SEEN.get(name) == value:
+        return
+    if value:
+        B.put(name, {"v": value})
+    else:
+        B.delete(name)
+    _VAULT_SEEN[name] = value
+
+
+def _reveal(d):
+    """Lo leído del disco, con las claves sacadas de la bóveda."""
+    if not isinstance(d, dict):
+        return d
+    d = dict(d)
+    for k in SECRET_KEYS:
+        if d.get(k) == VAULT_REF:
+            d[k] = _vault_get(_vault_name(k))
+    if isinstance(d.get("providers"), list):
+        d["providers"] = [dict(p, key=_vault_get(_vault_name("key", p.get("id"))))
+                          if isinstance(p, dict) and p.get("key") == VAULT_REF else p for p in d["providers"]]
+    return d
+
+
+def _hide(d, before=None):
+    """Lo que se escribe en el disco: cada clave a la bóveda y en el archivo solo la marca. Las de los proveedores que
+    ya no están se borran de la bóveda."""
+    d = dict(d)
+    for k in SECRET_KEYS:
+        x = d.get(k)
+        if isinstance(x, str) and x != VAULT_REF:
+            _vault_put(_vault_name(k), x)
+            d[k] = VAULT_REF if x else ""
+    if isinstance(d.get("providers"), list):
+        out = []
+        for p in d["providers"]:
+            if isinstance(p, dict) and isinstance(p.get("key"), str) and p["key"] != VAULT_REF:
+                _vault_put(_vault_name("key", p.get("id")), p["key"])
+                p = dict(p, key=VAULT_REF if p["key"] else "")
+            out.append(p)
+        d["providers"] = out
+        now = {p.get("id") for p in out if isinstance(p, dict)}
+        for p in (before or {}).get("providers") or []:
+            if isinstance(p, dict) and p.get("id") not in now:
+                _vault_put(_vault_name("key", p.get("id")), "")
+    return d
+
+
+def _plain_secrets(d):
+    """True si d (tal como está en un archivo) tiene alguna clave en claro."""
+    if not isinstance(d, dict):
+        return False
+    return (any(isinstance(d.get(k), str) and d[k] not in ("", VAULT_REF) for k in SECRET_KEYS)
+            or any(isinstance(p, dict) and isinstance(p.get("key"), str) and p["key"] not in ("", VAULT_REF)
+                   for p in d.get("providers") or [] if isinstance(d.get("providers"), list)))
+
+
+def _scrub_copies():
+    """Quita las claves en claro de los respaldos de los ajustes y de las copias de un archivo dañado (versiones
+    anteriores las guardaban así). Pone la marca: si alguien restaura una copia, usa la clave de la bóveda."""
+    cands = []
+    d = os.path.join(paths.DATA, "respaldos")
+    if os.path.isdir(d):
+        cands += [os.path.join(d, f) for f in os.listdir(d) if f.endswith(".json")]
+    cands += [os.path.join(paths.DATA, f) for f in os.listdir(paths.DATA) if f.startswith("settings.json.danado-")]
+    for f in cands:
+        try:
+            with open(f, "r", encoding="utf-8-sig") as h:
+                data = json.load(h)
+            if not _plain_secrets(data):
+                continue
+            for k in SECRET_KEYS:
+                if isinstance(data.get(k), str) and data[k]:
+                    data[k] = VAULT_REF
+            if isinstance(data.get("providers"), list):
+                data["providers"] = [dict(p, key=VAULT_REF) if isinstance(p, dict) and p.get("key") else p for p in data["providers"]]
+            tmp = f + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as h:
+                h.write(json.dumps(data, indent=2, ensure_ascii=False))
+            os.replace(tmp, f)
+        except (OSError, ValueError):
+            pass
+
 
 class Settings:
     """Ajustes en data/settings.json.
@@ -244,7 +351,8 @@ class Settings:
             for attempt in range(3):          # otro proceso podria estar escribiendolo en ese instante
                 try:
                     with open(self.path, "r", encoding="utf-8-sig") as f:
-                        disk = json.load(f)
+                        raw = json.load(f)
+                    disk = _reveal(raw)
                     self.v.update({k: x for k, x in disk.items() if k in DEFAULTS})
                     self._extra = {k: x for k, x in disk.items() if k not in DEFAULTS}
                     self._base = _plain(self.v)
@@ -268,6 +376,14 @@ class Settings:
         old_ws = os.path.join(os.path.dirname(paths.WORKSPACE_DEFAULT), "AgenteLocal")
         if os.path.normcase(os.path.normpath(self.v["workspace"])) == os.path.normcase(old_ws):
             self.v["workspace"] = paths.WORKSPACE_DEFAULT   # carpeta del nombre provisional anterior (Documentos\AgenteLocal)
+        try:                                    # claves en claro de una versión anterior: a la bóveda, y fuera de las copias
+            if os.path.isfile(self.path) and _plain_secrets(self._read_disk(raw=True)):
+                with self.lock:
+                    self._save()
+                if not self.save_error:
+                    _scrub_copies()
+        except Exception:
+            pass
 
     def update(self, new):
         with self.lock:
@@ -303,11 +419,12 @@ class Settings:
         except OSError:
             return None
 
-    def _read_disk(self):
+    def _read_disk(self, raw=False):
+        """El archivo de ajustes con las claves ya sacadas de la bóveda (raw: tal cual está en el disco)."""
         try:
             with open(self.path, "r", encoding="utf-8-sig") as f:
                 d = json.load(f)
-            return d if isinstance(d, dict) else None
+            return (d if raw else _reveal(d)) if isinstance(d, dict) else None
         except (OSError, ValueError):
             return None
 
@@ -402,7 +519,7 @@ class Settings:
                         else:
                             merged[k] = x
                 self._backup()
-                self._write(merged)
+                self._write(_hide(merged, disk))
                 self.v.update({k: x for k, x in merged.items() if k in DEFAULTS})
                 self._extra = {k: x for k, x in merged.items() if k not in DEFAULTS}
                 self._base = _plain(self.v)

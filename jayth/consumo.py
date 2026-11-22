@@ -175,6 +175,19 @@ def summary(base=None, now=None):
     return out
 
 
+def session_summary(sid):
+    """Lo que lleva una conversación con un modelo por API: {'n': peticiones, 'usd': coste (None si sin precio),
+    'cache': % de lo leído que salió de la caché}, o None si no ha usado ninguno."""
+    rs = [r for r in rows() if r.get("s") == sid] if sid else []
+    if not rs:
+        return None
+    read = sum(int(r.get("i") or 0) for r in rs)
+    cached = sum(int(r.get("c") or 0) for r in rs)
+    priced = [r for r in rs if r.get("usd") is not None]
+    return {"n": len(rs), "usd": sum(float(r["usd"]) for r in priced) if priced else None,
+            "cache": (100.0 * cached / read) if read else 0.0}
+
+
 def session_total(sid):
     """Lo que lleva gastado una conversación."""
     return total([r for r in rows() if r.get("s") == sid]) if sid else total([])

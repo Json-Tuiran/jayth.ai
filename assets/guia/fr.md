@@ -333,7 +333,7 @@ options (avec leur nom exact) :
   « Dossier où sont téléchargés les modèles ».
   - **Fournisseur :** « Quel moteur l'agent utilise-t-il ? » (local ou serveur externe), « URL du serveur externe (se
     termine par /v1) », « Nom du modèle sur ce serveur », « Clé API (si le serveur l'exige) » et **Tester la
-    connexion**.
+    connexion**. La clé est enregistrée chiffrée sur l'ordinateur, pas dans le fichier des réglages.
 - **Génération :** « Réfléchir en profondeur par défaut (meilleures réponses, plus lent) », « Paramètres
   d'échantillonnage » (recommandés pour le modèle actif ou personnalisés), « Température », « Longueur maximale de
   chaque réponse (tokens) ».
