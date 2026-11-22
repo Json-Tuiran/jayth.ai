@@ -166,6 +166,13 @@ seinem eigenen Mauszeiger und einem Leuchten an den Rändern, solange er die Kon
 eingreifen. Passwörter gibt immer der Nutzer selbst ein, und der Agent bittet um Bestätigung, bevor er etwas kauft,
 bezahlt, veröffentlicht oder persönliche Daten sendet.
 
+In seiner Leiste: Zurück, Vorwärts, Neu laden (oder Stoppen, während die Seite lädt), die Adresse (oder ein
+Suchbegriff), **Auf der Seite suchen** (Strg+F), die Seite im Browser des Systems öffnen und ein Menü mit
+**Vergrößern** und **Verkleinern** (Strg++ und Strg+-), **Adresse kopieren**, **Seite als PDF speichern** (Strg+P;
+landet in Downloads) und **Browserdaten löschen** (Cookies, Anmeldungen und Cache). Die rechte Maustaste bietet das
+Übliche für Links, Bilder und Text. Seiten werden in der Sprache der Oberfläche angefordert. Beim Öffnen des
+Browsers werden die anderen Bereiche schmaler, beim Schließen erhalten sie ihre Breite zurück.
+
 ## Canvas
 
 Für Webseiten, lange Dokumente, SVG-Diagramme oder Programme, die der Nutzer sehen möchte: Der Agent zeigt sie in einem
@@ -235,7 +242,13 @@ globale Steuerung eingeschränkt); zum Auflisten von Fenstern wird `wmctrl` ben�
   (config.json + .safetensors), das Jayth auf dem Computer in GGUF umwandelt. Du wählst die Quantisierung (die
   empfohlene ist markiert) und, falls vorhanden, **Vision**, damit das Modell Bilder und Screenshots sieht.
 - **API-Modelle…**: OpenAI, Claude, Gemini, Ollama, LM Studio oder ein anderer OpenAI-kompatibler Server. Auch unter
-  **Einstellungen › Modelle › Anbieter** (URL, Modellname und Schlüssel).
+  **Einstellungen › Modelle › Anbieter** (URL, Modellname und Schlüssel). Bei einem API-Modell fragt Jayth den
+  Dienst, wie viel Kontext und Ausgabe das Modell zulässt, und nutzt diese Werte (mit einer Obergrenze von 200.000
+  Tokens pro Schritt, um die Kosten im Rahmen zu halten), passt sich von selbst an, wenn der Dienst einen Parameter
+  ablehnt, erlaubt längere Durchgänge (120 Schritte) und bietet dem Agenten **Helfer**: Teilaufgaben zum Lesen oder
+  Suchen, die eine weitere Kopie des Modells erledigt und von denen nur der Bericht zurückkommt. Diese Dienste denken
+  nach, ohne es zu zeigen, und liefern jede Aktion auf einmal; der Chat kann daher eine Weile melden, dass der Dienst
+  die Antwort vorbereitet. Bleibt eine Anfrage hängen, bricht Jayth sie ab und bittet das Modell fortzufahren.
 - **Modell starten oder stoppen:** Modell-Chip › **Engine** oder die Schaltfläche **Modell starten** im Hinweis.
   Gestartet belegt es Speicher und antwortet sofort; gestoppt gibt es den Speicher frei.
 - Downloads zeigen Prozent, Geschwindigkeit und Restzeit, werden fortgesetzt, wenn sie abbrechen, und mit SHA-256

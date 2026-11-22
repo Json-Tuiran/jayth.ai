@@ -831,6 +831,11 @@ class ProjectDialog(QDialog):
         f.addRow(self.r_new)
         f.addRow(self.r_old)
         f.addRow(tr("Carpeta:"), browse_row(self.path, folder=True, parent=self))
+        self.sync_note = lbl("", "faint")            # la carpeta se sincroniza con la nube: se avisa, decide el usuario
+        self.sync_note.setWordWrap(True)
+        self.sync_note.setStyleSheet("color:%s" % C["warn"])
+        self.sync_note.hide()
+        f.addRow(self.sync_note)
         self.instr = QPlainTextEdit(proj.get("instructions", "") if proj else "")
         self.instr.setPlaceholderText(tr("Ej.: Es una app web en React con TypeScript. Usa pnpm. Escribe pruebas para cada función nueva."))
         self.instr.setFixedHeight(90)
@@ -844,8 +849,23 @@ class ProjectDialog(QDialog):
         bb.rejected.connect(self.reject)
         v.addWidget(bb)
         self.r_new.toggled.connect(lambda on: self.path.setEnabled(not on))
+        self.r_new.toggled.connect(lambda *_: self._sync_hint())
+        self.path.textChanged.connect(lambda *_: self._sync_hint())
         self.path.setEnabled(not self.r_new.isChecked())
         self.result_project = None
+        self._sync_hint()
+
+    def _sync_hint(self):
+        """Si la carpeta elegida está dentro de OneDrive, Dropbox…, lo dice: con entornos de Python, node_modules o bases de
+        datos en uso la sincronización estorba y puede dañar archivos."""
+        from . import osys
+        where = os.path.join(paths.WORKSPACE_DEFAULT, "Proyectos") if self.r_new.isChecked() else self.path.text().strip()
+        svc = osys.synced_service(where) if where else ""
+        self.sync_note.setVisible(bool(svc))
+        if svc:
+            self.sync_note.setText(tr("Esta carpeta se sincroniza con %s. Si el proyecto va a tener bases de datos, entornos de Python "
+                                      "o node_modules, la sincronización puede estorbar o dañar archivos: en ese caso elige con «Usar una "
+                                      "carpeta existente» una que esté fuera de %s.") % (svc, svc))
 
     def _ok(self):
         name = self.name.text().strip()

@@ -155,6 +155,13 @@ dell'utente, con il proprio puntatore e un bagliore sui bordi mentre ha il contr
 vuole. Le password le scrive sempre l'utente, e l'agente chiede conferma prima di acquistare, pagare, pubblicare o
 inviare dati personali.
 
+Nella sua barra: indietro, avanti, ricarica (o interrompi durante il caricamento), l'indirizzo (o ciò che si vuole
+cercare), **Cerca nella pagina** (Ctrl+F), aprire la pagina nel browser di sistema e un menu con **Ingrandisci** e
+**Riduci** (Ctrl++ e Ctrl+-), **Copia l'indirizzo**, **Salva la pagina come PDF** (Ctrl+P; va in Download) e
+**Cancella i dati del browser** (cookie, accessi e cache). Il tasto destro offre le opzioni tipiche di link,
+immagini e testo. Le pagine vengono richieste nella lingua dell'interfaccia. All'apertura del browser gli altri
+pannelli si restringono e alla chiusura recuperano la loro larghezza.
+
 ## Canvas
 
 Per pagine web, documenti lunghi, diagrammi SVG o programmi che l'utente vuole vedere: l'agente li mostra in un
@@ -220,7 +227,13 @@ Linux funziona nelle sessioni X11 (su Wayland il controllo globale è limitato);
   originale (config.json + .safetensors), che Jayth converte in GGUF sul computer. Si sceglie la quantizzazione (quella
   consigliata è contrassegnata) e, se esiste, la **visione** perché il modello veda immagini e screenshot.
 - **Modelli via API…**: OpenAI, Claude, Gemini, Ollama, LM Studio o un altro server compatibile con OpenAI. Anche in
-  **Impostazioni › Modelli › Provider** (URL, nome del modello e chiave).
+  **Impostazioni › Modelli › Provider** (URL, nome del modello e chiave). Con un modello via API, Jayth chiede al
+  servizio quanto contesto e quanto output ammette quel modello e li usa (con un tetto di 200.000 token per passo
+  per contenere la spesa), si adatta da solo se il servizio rifiuta qualche parametro, consente turni più lunghi
+  (120 passi) e offre all'agente gli **aiutanti**: sottoattività di lettura o ricerca svolte da un'altra copia del
+  modello, di cui torna solo il resoconto. Questi servizi ragionano senza mostrarlo e consegnano ogni azione in una
+  volta sola, quindi la chat può passare un po' di tempo a dire che il servizio sta preparando la risposta; se una
+  richiesta resta bloccata, Jayth la interrompe e chiede al modello di continuare.
 - **Avviare o arrestare il modello:** chip del modello › **Motore**, o il pulsante **Avvia modello** dell'avviso.
   Avviato occupa memoria e risponde subito; arrestato la libera.
 - I download mostrano percentuale, velocità e tempo, riprendono se si interrompono e vengono verificati con SHA-256.

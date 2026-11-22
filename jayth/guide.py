@@ -103,7 +103,12 @@ def live():
     mode_label = re.split("[:：]", A.MODES.get(cfg.get("mode"), cfg.get("mode") or ""))[0]
     autosave = {"delay": tr("al hacer una pausa al escribir"), "focus": tr("al cambiar de pestaña o de ventana"),
                 "off": tr("desactivado")}.get(cfg.get("editor_autosave", "delay"), "")
-    models = [core.model_title(x) or x.get("name") for x in cfg.get("models") or []]
+    models = []                              # cada uno con su variante: dos cuantizaciones del mismo modelo no son un duplicado
+    for x in cfg.get("models") or []:
+        name = core.model_title(x) or x.get("name") or ""
+        q = str(x.get("quant") or "")
+        models.append(name if not q or q.lower() in name.lower() else "%s (%s)" % (name, q))
+    shown = ", ".join(models[:12]) + ((" " + tr("y %d más") % (len(models) - 12)) if len(models) > 12 else "")
     mcp = [s.get("name") for s in cfg.get("mcp_servers") or [] if s.get("enabled", True)]
     lines = [
         "## " + tr("Datos de esta instalación (en vivo)"),
@@ -113,11 +118,13 @@ def live():
         "- " + tr("Carpeta de modelos: %s") % cfg.get("models_dir", ""),
         "- " + tr("Carpeta de trabajo del modo Chat: %s") % cfg.get("workspace", ""),
         "- " + tr("Modelo activo: %s (%s) · esfuerzo: %s") % (model, tr("servidor externo") if ext else tr("local"), eff_label),
-        "- " + tr("Motor: llama.cpp %s · %s") % (cfg.get("llama_tag") or "—", cfg.get("backend") or "cpu"),
+        "- " + (tr("Motor de los modelos locales: llama.cpp %s · %s (ahora no se usa: el modelo activo es de un servicio por API)")
+                if ext else tr("Motor: llama.cpp %s · %s")) % (cfg.get("llama_tag") or "—", cfg.get("backend") or "cpu"),
         "- " + tr("Memoria de la conversación (contexto): %d tokens (%s)") % (
-            core.effective_ctx(cfg), tr("automático: lo que admite el modelo, ajustado a la memoria") if not int(cfg.get("n_ctx") or 0)
+            core.effective_ctx(cfg), tr("lo que admite ese modelo del servicio, con el tope de Jayth") if ext
+            else tr("automático: lo que admite el modelo, ajustado a la memoria") if not int(cfg.get("n_ctx") or 0)
             else tr("fijado en Ajustes")),
-        "- " + tr("Modelos instalados (%d): %s") % (len(models), ", ".join(models[:8]) or tr("ninguno")),
+        "- " + tr("Modelos locales instalados (%d): %s") % (len(models), shown or tr("ninguno")),
         "- " + tr("Permisos por defecto: %s · memoria: %s · internet: %s · control del ordenador: %s") % (
             mode_label, yes if cfg.get("memory_enabled", True) else no, yes if cfg.get("web_access", True) else no,
             yes if cfg.get("computer_control", True) else no),

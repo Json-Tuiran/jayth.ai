@@ -3,6 +3,24 @@
 """Jayth - aplicacion de escritorio. Desde el codigo: pythonw app.py (Windows) o python3 app.py (macOS/Linux)."""
 import os, sys
 
+if "--interrupt" in sys.argv and sys.platform == "win32":
+    # Ayudante de «detener con orden» (osys.interrupt_tree): se engancha a la consola oculta de un proceso en segundo plano
+    # y le manda Ctrl+C, como haría el usuario en una terminal. Va antes de cargar nada más: tiene que ser instantáneo.
+    import ctypes, time
+    k = ctypes.windll.kernel32
+    try:
+        pid = int(sys.argv[sys.argv.index("--interrupt") + 1])
+    except (IndexError, ValueError):
+        sys.exit(2)
+    k.FreeConsole()
+    if not k.AttachConsole(pid):
+        sys.exit(1)
+    k.SetConsoleCtrlHandler(None, True)          # este ayudante no se interrumpe a sí mismo
+    k.GenerateConsoleCtrlEvent(0, 0)             # CTRL_C_EVENT a todos los procesos de esa consola
+    time.sleep(0.4)
+    k.FreeConsole()
+    sys.exit(0)
+
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

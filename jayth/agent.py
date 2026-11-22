@@ -6,6 +6,7 @@ import os, re, json, time, uuid, base64, socket, threading, datetime, http.clien
 from collections import Counter
 from . import tools as T
 from . import harness as H
+from . import apis as API
 from . import osys
 from . import i18n
 from .i18n import tr
@@ -50,8 +51,27 @@ Responde en el idioma del usuario, claro y sin relleno."""
 # detecta Jayth por el mensaje o lo pide el modelo con use_tools). Con modelos locales, ofrecer 50 herramientas gasta
 # ~8000 tokens de contexto y confunde a los modelos pequeños. Los grupos activados se añaden al final de la lista y se
 # conservan en la conversación: así lo ya procesado por el modelo (caché de prompt) sigue valiendo.
-CORE = ["read_file", "write_file", "edit_file", "multi_edit", "list_dir", "search_files", "move_path", "delete_path",
-        "run_command", "open_target", "update_plan", "ask_user", "remember", "jayth_guide"]
+CORE = ["read_file", "write_file", "edit_file", "multi_edit", "replace_in_files", "list_dir", "search_files", "move_path", "delete_path",
+        "run_command", "open_target", "update_plan", "ask_user", "remember", "jayth_guide", "undo_changes", "delegate"]
+
+# ---- ayudantes (subagentes): otra copia del modelo, con la memoria en blanco, que hace una subtarea de lectura y devuelve
+# solo su informe. Sirve para que una búsqueda o una lectura larga no llene la conversación del agente principal.
+SUB_OFF = {"delegate", "ask_user", "update_plan", "remember", "forget", "schedule_task", "cancel_task", "list_tasks", "connect_service",
+           "generate_image", "show_canvas", "use_skill", "open_target"}
+SUB_BRIEF = ("\n\n## Eres un ayudante\nTrabajas para el agente principal de Jayth, que te encargó una subtarea y no ve lo que haces: "
+             "solo recibirá tu último mensaje. Puedes leer, buscar y consultar la web, pero no cambiar nada (ni archivos ni programas) ni "
+             "preguntar al usuario. Haz la subtarea completa y termina con un informe para el agente principal: lo que encontraste, con "
+             "rutas, números de línea, direcciones y datos concretos; lo que no pudiste averiguar y por qué. No expliques los pasos que "
+             "diste ni ofrezcas seguir: solo el resultado.")
+
+
+def subagents_on(cfg):
+    """¿Se ofrece `delegate`? «auto»: solo con modelos por API (con un modelo local cada ayudante relee desde cero las
+    instrucciones y las herramientas, y eso en CPU son minutos). Un ayudante no tiene ayudantes."""
+    if cfg.get("_sub"):
+        return False
+    v = cfg.get("subagents", "auto")
+    return v == "on" or (v == "auto" and cfg.get("llm_mode") == "external")
 GROUPS = {   # grupo: (para qué sirve, herramientas, cómo usarlas: se le da al modelo al activarlo)
     "web": ("buscar en internet, leer páginas y descargar archivos", ["web_search", "web_fetch", "download_file"],
             "- Web (solo con internet): web_search, web_fetch y download_file para buscar y leer."),
@@ -194,6 +214,15 @@ NUDGE_QUIET = ("[Aviso automático de Jayth, no lo escribió el usuario] Tu resp
                "texto ni acción, y Jayth la interrumpió. Continúa la tarea donde ibas: si toca usar una herramienta, llámala ahora "
                "directamente, sin anunciarla; si ya terminaste, da el resultado al usuario, en su idioma. No respondas a este "
                "aviso ni lo menciones.")
+NUDGE_QUIET_API = ("[Aviso automático de Jayth, no lo escribió el usuario] Tu respuesta anterior no llegó: el servicio estuvo "
+                   "varios minutos sin enviar nada y Jayth cortó la petición. Nada de lo que escribías en ella se ejecutó. Continúa "
+                   "la tarea donde ibas; si ibas a escribir un archivo muy largo, hazlo en varias acciones más pequeñas. No "
+                   "respondas a este aviso ni lo menciones.")
+_CUT_TAIL = (" Lo último que ves en la conversación es lo último que se hizo de verdad; lo que estuvieras escribiendo después no "
+             "llegó a ejecutarse. Si retomas la tarea, comprueba primero en qué estado quedó.")
+CUT_SHORT = {"stop": "tu turno anterior no terminó: el usuario pulsó «Parar» mientras trabajabas." + _CUT_TAIL,
+             "error": "tu turno anterior no terminó: se cortó por un error del modelo o de la conexión, y tu última respuesta no llegó." + _CUT_TAIL,
+             "closed": "tu turno anterior no terminó: Jayth se cerró mientras trabajabas." + _CUT_TAIL}
 STEER = ("[Mensaje nuevo del usuario, escrito mientras trabajabas. Tenlo en cuenta desde ahora: si cambia lo que pide, "
          "ajusta lo que queda de la tarea; si solo añade algo, sigue con ello incluido.]\n%s")
 NUDGE_OFFER = ("[Aviso automático de Jayth, no lo escribió el usuario] Le propusiste al usuario «%s» como si fuera un comando, "
@@ -492,9 +521,10 @@ def services_prompt(cfg):
     out = ""
     if off:
         out += ("\n\nServicios externos que el usuario puede conectar con su propia cuenta si lo pide o la tarea lo necesita: %s. "
-                "Para proponerlo usa connect_service (él pulsa «Conectar» e inicia sesión). Lo normal es trabajar en el equipo; "
-                "propón un servicio solo cuando aporte algo que aquí no se puede hacer bien.") % ", ".join(
-            "%s (%s)" % (c["name"], c["id"]) for c in off)
+                "Para proponerlo usa connect_service%s (él pulsa «Conectar» e inicia sesión). Lo normal es trabajar en el equipo; "
+                "propón un servicio solo cuando aporte algo que aquí no se puede hacer bien.") % (
+            ", ".join("%s (%s)" % (c["name"], c["id"]) for c in off),
+            " (si no está en tu lista, activa antes el grupo «agenda» con use_tools)" if on_demand(cfg) else "")
     if higgs:
         out += ("\nHiggsfield está conectado: crea imágenes y vídeos en la nube gastando créditos del usuario. Úsalo solo si lo pide "
                 "o para vídeo; para imágenes, por defecto generate_image (en el equipo y gratis).")
@@ -517,8 +547,10 @@ def group_guide(g):
 def _tools_text(cfg):
     if not on_demand(cfg):                       # todas siempre: las pautas de cada grupo van en las instrucciones
         return "".join(GROUPS[g][2] + "\n" for g in ("documentos", "procesos", "control", "web", "navegador"))
-    return ("- Tienes a mano las herramientas básicas. Para lo demás (web, navegador, control del PC, documentos, Python, "
-            "imágenes, tareas programadas, conectores…) actívalas primero con use_tools; puedes pedir varios grupos a la vez.\n")
+    return ("- Siempre tienes las herramientas básicas. Las demás van por grupos (web, navegador, control del PC, documentos, "
+            "Python, imágenes, tareas programadas, conectores…): Jayth activa solo los que parece pedir cada mensaje (te lo dice "
+            "en él) y esas ya están en tu lista; si necesitas una que no está en tu lista, activa su grupo con use_tools "
+            "(puedes pedir varios a la vez).\n")
 
 
 def volatile_parts(cfg):
@@ -547,7 +579,10 @@ def system_prompt(cfg, frozen=None):
     que devolvió volatile_parts entonces) y sus cambios se le cuentan al modelo en el mensaje nuevo (changes_note).
     No dependen de qué grupos de herramientas estén activos."""
     parts = frozen if isinstance(frozen, dict) else volatile_parts(cfg)
-    p = WORKFLOW % {"os": osys.os_label(), "shell": osys.shell_name(), "date": parts.get("date") or datetime.date.today().isoformat(), "ws": cfg["workspace"],
+    svc = osys.synced_service(cfg["workspace"])      # p. ej. Documentos dentro de OneDrive: que no ponga ahí lo que la sincronización daña
+    ws = cfg["workspace"] + ((" (esta carpeta se sincroniza con %s: no crees dentro bases de datos en uso, entornos virtuales ni "
+                              "node_modules sin avisar al usuario de que la sincronización puede dañarlos)" % svc) if svc else "")
+    p = WORKFLOW % {"os": osys.os_label(), "shell": osys.shell_label(), "date": parts.get("date") or datetime.date.today().isoformat(), "ws": ws,
                     "python": "python" if osys.WIN else "python3", "example": "D:\\Trabajo" if osys.WIN else "~/Trabajo",
                     "fence": "powershell" if osys.WIN else "bash", "tools": _tools_text(cfg)}
     lang = {"es": "español", "en": "inglés", "pt": "portugués", "fr": "francés", "de": "alemán", "it": "italiano", "ja": "japonés",
@@ -590,7 +625,7 @@ def system_prompt(cfg, frozen=None):
     if ctx:
         p += "\n\n## Instrucciones del proyecto\n" + ctx
     if cfg.get("_project"):
-        p += "\n\n## Estructura de la carpeta del proyecto\n" + (parts.get("repo") or "")
+        p += "\n\n## Estructura de la carpeta del proyecto\n" + (parts.get("repo") or "(vacía al empezar la conversación)")
     if cfg.get("custom_instructions"):
         p += "\n\n## Instrucciones adicionales\n" + cfg["custom_instructions"]
     return p
@@ -611,16 +646,27 @@ def all_schemas(cfg):
         off.add("generate_image")
     if not cfg.get("web_access", True):          # los servicios externos necesitan internet
         off.add("connect_service")
+    try:                                         # sin habilidades instaladas, use_skill solo podría fallar
+        from . import assistants as AS
+        if not AS.enabled_skills(cfg):
+            off.add("use_skill")
+    except Exception:
+        pass
     try:                                         # conocimiento local: solo con carpetas elegidas y el buscador instalado
         from . import conocimiento as KN
         if not (KN.folders(cfg) and KN.installed(cfg)):
             off.add("search_knowledge")
     except Exception:
         off.add("search_knowledge")
+    if not subagents_on(cfg):
+        off.add("delegate")
     mode = cfg.get("mode")
     cats = {"read", "agent"} if mode == "readonly" else {"read", "agent", "net"} if mode == "plan" else None
+    if cfg.get("_sub"):                          # un ayudante: solo lee, busca y consulta la web; sin las cosas del agente principal
+        off |= SUB_OFF
+        cats = {"read", "agent"} if mode == "readonly" else {"read", "agent", "net"}
     out = [s for s in T.schemas(cats) if s["function"]["name"] not in off]
-    if mode not in ("readonly", "plan"):
+    if mode not in ("readonly", "plan") and not cfg.get("_sub"):
         out += H.mcp_schemas()
     return out
 
@@ -835,20 +881,40 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
         holder["sock"] = None
 
 
+def ext_stream(base_url, api_key, payload, holder, on_delta):
+    """llm_stream para un servicio por API: no le repite lo que ya rechazó y, si rechaza un parámetro opcional o el límite
+    de salida (HTTP 400), se adapta y repite la petición en vez de dejar al usuario con el error."""
+    for _ in range(6):
+        sent = API.adapt(base_url, payload)
+        try:
+            return llm_stream(base_url, api_key, sent, holder, on_delta)
+        except LLMError as e:
+            if not API.learn(base_url, sent, str(e)):
+                raise
+    return llm_stream(base_url, api_key, API.adapt(base_url, payload), holder, on_delta)
+
+
 def drop_connection(holder):
     """Corta desde otro hilo la petición en curso (Parar, o una respuesta que no avanza)."""
     c = holder.get("conn")          # se toma antes de cortar: al cortar, el otro hilo sigue y puede abrir la petición siguiente
+    socks = []
     for sock in (holder.get("sock"), getattr(c, "sock", None)):
-        if sock is not None:
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-            except Exception:
-                pass
-    if c is not None:
+        if sock is not None and not any(sock is s for s in socks):
+            socks.append(sock)
+    for sock in socks:
         try:
-            c.close()
+            sock.shutdown(socket.SHUT_RDWR)
         except Exception:
             pass
+        # En Windows, shutdown no despierta una lectura pendiente si el otro extremo sigue enviando (un servicio por API manda
+        # «ping» cada pocos segundos): solo cerrar el descriptor lo hace. detach() deja el objeto sin descriptor, para que
+        # no lo cierre otra vez más tarde (para entonces ese número podría ser de otra conexión).
+        try:
+            socket.close(sock.detach())
+        except Exception:
+            pass
+    # Sin c.close() aquí: cerraría el lector de la respuesta, que tiene tomado el hilo que está leyendo, y quien llama (la
+    # interfaz, al pulsar «Parar») se quedaría esperando. El hilo que lee cierra la conexión al despertar (llm_stream).
 
 
 def slot_decoded(port):
@@ -950,15 +1016,17 @@ def make_title(cfg, messages):
     base = cfg["external_url"].rstrip("/") if external else "http://127.0.0.1:%d/v1" % int(cfg["llm_port"])
     key = cfg.get("external_key") if external else ""
     payload = {"model": (cfg.get("external_model") or "local") if external else "local", "stream": True,
-               "max_tokens": 400 if external else 40, "temperature": 0.3,   # fuera no se puede apagar el razonamiento: margen
+               "max_tokens": 2000 if external else 40,   # fuera no se puede apagar el razonamiento: margen
                "messages": [{"role": "system", "content": "Pones títulos breves a conversaciones. Respondes solo con el título."},
                             {"role": "user", "content": "Escribe un título de 2 a 6 palabras, en el idioma del usuario, sin comillas ni punto final, "
                                                         "que resuma de qué trata esta conversación.\n\nUsuario: %s\n\nAgente: %s"
                                                         % (user[:1500], answer[:1000])}]}
-    if not external:   # sin razonamiento: el titulo debe salir en un instante
-        payload.update({"cache_prompt": False, "chat_template_kwargs": {"enable_thinking": False, "reasoning_effort": "low"}})
+    if external:       # sin temperatura propia: hay servicios que la rechazan
+        payload["reasoning_effort"] = "low"
+    else:              # sin razonamiento: el titulo debe salir en un instante
+        payload.update({"temperature": 0.3, "cache_prompt": False, "chat_template_kwargs": {"enable_thinking": False, "reasoning_effort": "low"}})
     try:
-        return clean_title(llm_stream(base, key, payload, {}, lambda k, t: None)["content"])
+        return clean_title((ext_stream if external else llm_stream)(base, key, payload, {}, lambda k, t: None)["content"])
     except Exception:
         return ""
 
@@ -967,7 +1035,13 @@ class Run:
     def __init__(self, session, settings, emit, images_dir):
         self.s = session            # dict con 'messages', 'allowed', 'plan'…
         self.cfg = settings
-        self.emit = emit
+        self._failed = False        # el turno acabó en un error del modelo o del servicio (se le cuenta en su siguiente turno)
+
+        def emit_(ev):
+            if ev.get("t") == "error":
+                self._failed = True
+            return emit(ev)
+        self.emit = emit_
         self.images_dir = images_dir
         self.stop = threading.Event()
         self.pending = {}           # tool_call_id -> {event, decision}
@@ -1088,6 +1162,8 @@ class Run:
     QUIET_CUT = (250, 90)        # …y para cortar la primera vez (lo normal son huecos de 10-30 tokens)
     QUIET_CUT_AGAIN = (1500, 300)   # la segunda, mucho más margen (por si ese modelo entrega las acciones de golpe)
     WATCH_EVERY = 2.0            # segundos entre miradas al motor
+    API_QUIET_SHOW = 20          # servicio por API: segundos sin que llegue nada para decirlo en el chat
+    API_QUIET_CUT = 600          # …y para dar la petición por colgada
 
     def _watch(self, external, done):
         """Hilo que acompaña a cada petición al modelo. El motor local dice cuántos tokens lleva escritos (/slots) aunque
@@ -1107,10 +1183,16 @@ class Run:
                 continue
             n = None if external else slot_decoded(port)
             if n is None:
-                # sin dato del motor (servicio externo): solo se avisa si ya escribía y lleva un rato callado
-                if h.get("t_gen") and now - rx >= 30 and now - last_ev >= 5:
+                # Sin dato del motor. Un servicio por API piensa sin mostrarlo y entrega cada acción de una vez, así que es
+                # normal que calle minutos: se dice en el chat y, si pasa de lo que tardaría en escribir la respuesta más
+                # larga posible, es que la petición se quedó colgada: se corta y se le pide que siga.
+                if (external or h.get("t_gen")) and now - rx >= (self.API_QUIET_SHOW if external else 30) and now - last_ev >= 5:
                     last_ev = now
-                    self.emit({"t": "quiet", "tokens": 0, "secs": int(now - rx)})
+                    self.emit({"t": "quiet", "tokens": 0, "secs": int(now - rx), "api": bool(external)})
+                if external and now - rx >= self.API_QUIET_CUT:
+                    h["cut"], h["cut_tokens"] = "quiet", 0
+                    drop_connection(h)
+                    return
                 continue
             if n <= 0:                           # todavía lee el mensaje
                 mark_n = None
@@ -1146,8 +1228,16 @@ class Run:
     def _fixed_tokens(self):
         return (len(self.system) + len(json.dumps(self.tools, ensure_ascii=False))) / 3.2 * float(self.s.get("_ratio", 1.0))
 
+    def _max_out(self, effort=None):
+        """Tokens de salida que se piden en cada respuesta (con esfuerzo alto, el doble: el pensamiento también cuenta)."""
+        high = (effort or self.cfg.get("effort")) == "high"
+        if self.cfg.get("llm_mode") == "external":
+            return API.max_out(self.cfg, high)             # un servicio por API tiene sus propios límites
+        return int(self.cfg["max_tokens"]) * (2 if high else 1)
+
     def _budget(self):
-        return int(self.cfg["n_ctx"]) - int(self.cfg["max_tokens"]) - self._fixed_tokens() - 300
+        out = self._max_out() if self.cfg.get("llm_mode") == "external" else int(self.cfg["max_tokens"])
+        return int(self.cfg["n_ctx"]) - out - self._fixed_tokens() - 300
 
     def _to_llm(self, msgs=None):
         msgs = self.s["messages"] if msgs is None else msgs
@@ -1166,9 +1256,11 @@ class Run:
                         parts.append(p)
                     elif (i, j) in keep and os.path.isfile(os.path.join(self.images_dir, p["name"])):
                         with open(os.path.join(self.images_dir, p["name"]), "rb") as f:
-                            b64 = base64.b64encode(f.read()).decode()
-                        ext = os.path.splitext(p["name"])[1].lower()
-                        mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}.get(ext, "image/png")
+                            raw = f.read()
+                        if not T.image_mime(raw):          # un formato que los modelos no admiten (bmp, tiff…): como PNG
+                            raw = T.to_png(raw) or raw
+                        b64 = base64.b64encode(raw).decode()
+                        mime = T.image_mime(raw, p["name"])                # el tipo, por su contenido y no por su nombre
                         parts.append({"type": "image_url", "image_url": {"url": "data:%s;base64,%s" % (mime, b64)}})
                     else:
                         parts.append({"type": "text", "text": "[imagen anterior omitida para ahorrar contexto]" if see else
@@ -1235,13 +1327,16 @@ class Run:
         payload = {"model": "local", "stream": True, "max_tokens": out_tok * 2, "temperature": 0.2, "cache_prompt": False,
                    "messages": [{"role": "system", "content": "Resumes conversaciones de trabajo de forma fiel y compacta."},
                                 {"role": "user", "content": ask}]}
-        if self.cfg.get("llm_mode") == "external":
+        external = self.cfg.get("llm_mode") == "external"
+        if external:
             payload["model"] = self.cfg.get("external_model") or "local"
             payload.pop("cache_prompt")
+            payload.pop("temperature")                    # hay servicios que la rechazan
+            payload.update({"max_tokens": out_tok * 2 + 2000, "reasoning_effort": "low"})   # fuera no se apaga el razonamiento: margen
         else:                                             # sin razonar: el resumen sale antes (en CPU cada token cuenta)
             payload["chat_template_kwargs"] = {"enable_thinking": False, "reasoning_effort": "low"}
         try:
-            return (llm_stream(base, key, payload, self.holder, lambda k, t: None)["content"] or "").strip()
+            return ((ext_stream if external else llm_stream)(base, key, payload, self.holder, lambda k, t: None)["content"] or "").strip()
         except Exception:
             return ""
 
@@ -1391,6 +1486,11 @@ class Run:
         return ev["decision"]
 
     def _files_of(self, name, args):
+        if name == "replace_in_files":               # los archivos que va a tocar (para poder deshacerlo): los mismos que cambiará
+            try:
+                return [] if args.get("preview") else [p[0] for p in T.replace_plan(args, self.ctx)[0]][:300]
+            except Exception:
+                return []
         if name == "move_path":
             return [self.ctx.path(args.get("source", "")), self.ctx.path(args.get("dest", ""))]
         if args.get("path"):
@@ -1416,8 +1516,11 @@ class Run:
             (ok_g if g else bad).append(g or str(w))
         if not ok_g:
             return False, "Grupos desconocidos: %s. Disponibles: %s." % (", ".join(bad) or "(ninguno)", ", ".join(g for g, d in available_groups(self.cfg)))
+        had = [g for g in dict.fromkeys(ok_g) if g in self.groups]
         new = self._activate(ok_g)
         txt = ("Activadas: %s. Ya puedes usar sus herramientas." % ", ".join(new)) if new else "Esos grupos ya estaban activos."
+        if new and had:                                 # que no parezca que los demás se ignoraron
+            txt += " (Ya estaban activos: %s.)" % ", ".join(had)
         guides = [group_guide(g) for g in new if group_guide(g)]
         if guides:
             txt += "\n" + "\n".join(guides)
@@ -1486,7 +1589,14 @@ class Run:
             ans = d[7:]
             self.emit({"t": "answer", "id": cid, "text": ans})
             return True, "Respuesta del usuario: " + ans, None, {}
+        if name == "delegate":                          # un ayudante hace la subtarea y devuelve su informe
+            self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": "agent", "approval": "auto"})
+            return self._delegate(args)
         approval = self._needs_approval(tool, name, args)
+        if approval == "pending" and self.cfg.get("_sub"):     # un ayudante no puede pedir permisos al usuario
+            self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": tool["category"], "approval": "blocked"})
+            return False, ("Esta acción necesita el permiso del usuario y un ayudante no puede pedirlo. No la intentes de otra forma: "
+                           "di en tu informe que hace falta, para que la haga el agente principal."), None, {}
         self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": tool["category"], "approval": approval,
                    "danger": T.is_dangerous(name, args, self.ctx), "account": self._account_of(name)})
         if approval == "blocked":
@@ -1517,7 +1627,10 @@ class Run:
             T.CONTROL_RUN = self                     # el botón «Parar» del aviso en pantalla detiene esta tarea
         try:
             self.ctx.call_id = cid                   # las herramientas largas publican su avance con este id
-            r = tool["fn"](args, self.ctx)
+            r = self._undo_changes(args) if name == "undo_changes" else tool["fn"](args, self.ctx)
+            if extra.get("undo"):                    # para que el propio modelo pueda deshacerla (undo_changes)
+                self.s.setdefault("_undo", []).append({"cid": cid, "name": name})
+                del self.s["_undo"][:-200]
             if name == "update_plan":
                 self.s["plan"] = [{"content": str(i.get("content", "")), "status": str(i.get("status", "pending"))} for i in args.get("items") or []]
                 self.emit({"t": "plan", "items": self.s["plan"]})
@@ -1538,6 +1651,71 @@ class Run:
         except Exception as e:
             self.fails_seen[sig] += 1
             return False, "%s: %s%s" % (type(e).__name__, e, note), None, {}
+
+    def _undo_changes(self, args):
+        """Deshace las últimas acciones del agente que cambiaron archivos (las que aún tienen su copia de antes: el usuario
+        puede haber deshecho alguna desde el chat). Cada una avisa a la interfaz como si la hubiera deshecho el usuario."""
+        try:
+            want = max(1, min(50, int(args.get("count") or 1)))
+        except (TypeError, ValueError):
+            want = 1
+        stack = self.s.setdefault("_undo", [])
+        done = []
+        while stack and len(done) < want:
+            it = stack.pop()
+            if not H.has_snapshot(self.sid, it["cid"]):
+                continue                             # ya se deshizo (o su copia ya no existe)
+            files = H.undo(self.sid, it["cid"])
+            if files:
+                self.emit({"t": "undo", "ids": [it["cid"]], "files": files, "by": "agent"})
+                done.append("%s: %s" % (it["name"], ", ".join(os.path.relpath(f, self.ctx.workspace) if os.path.abspath(f).lower().startswith(
+                    os.path.abspath(self.ctx.workspace).lower() + os.sep) else f for f in files[:8]) + (" …" if len(files) > 8 else "")))
+        if not done:
+            raise T.ToolError("No queda ningún cambio tuyo de archivos que se pueda deshacer en esta conversación.")
+        left = sum(1 for it in stack if H.has_snapshot(self.sid, it["cid"]))
+        return "Deshecho (%d):\n%s\nLos archivos están como antes de esas acciones.%s" % (
+            len(done), "\n".join("- " + d for d in done), (" Quedan %d acciones anteriores que también se pueden deshacer." % left) if left else "")
+
+    def _delegate(self, args):
+        """Ejecuta una subtarea con un ayudante: un Run aparte, con la conversación en blanco y solo herramientas de lectura.
+        Devuelve (ok, informe, None, extra) como cualquier herramienta."""
+        task = str(args.get("task") or "").strip()
+        if len(task) < 20:
+            return False, ("Describe la subtarea con todo su contexto en 'task': el ayudante no ve esta conversación. Di qué debe "
+                           "averiguar, dónde buscar y qué debe devolverte."), None, {}
+        other = self.cfg.get("_slot_other")
+        if callable(other):                          # motor local: lo que tenía leído de esta conversación se guarda y se recupera después
+            try:
+                other()
+            except Exception:
+                pass
+        cfg = dict(self.cfg)
+        cfg.update({"_sub": True, "_temp": True, "_before_llm": None, "_after_llm": None,
+                    "max_steps": min(int(cfg.get("max_steps") or 30), 40),
+                    "custom_instructions": ((cfg.get("custom_instructions") or "") + SUB_BRIEF).strip()})
+        data = {"messages": [], "allowed": [], "tool_groups": [g for g in self.groups if g in ("web", "navegador", "documentos", "conocimiento")]}
+        log = []
+        sub = Run(data, cfg, log.append, self.images_dir)
+        sub.stop = self.stop                         # «Parar» detiene también al ayudante…
+        sub.ctx.stop = self.stop
+        sub.holder = self.holder                     # …y corta su petición en curso
+        t0 = time.time()
+        try:
+            sub.run(task)
+        except Exception as e:
+            return False, "El ayudante falló: %s: %s" % (type(e).__name__, e), None, {}
+        if self.stop.is_set():
+            return False, "Cancelado por el usuario.", None, {}
+        report = next((_plain(m.get("content")).strip() for m in reversed(data["messages"])
+                       if m["role"] == "assistant" and _plain(m.get("content")).strip()), "")
+        used = Counter(e.get("name") for e in log if e.get("t") == "tool_call")
+        errs = [str(e.get("text"))[:300] for e in log if e.get("t") == "error"]
+        tail = "\n\n[Ayudante: %d acciones (%s) en %d s%s]" % (
+            sum(used.values()), ", ".join("%s ×%d" % (k, v) for k, v in used.most_common(6)) or "ninguna", time.time() - t0,
+            ("; terminó con un error: " + errs[-1]) if errs else "")
+        if not report:
+            return False, "El ayudante no devolvió ningún informe." + tail, None, {}
+        return True, T.clip(report, max(self.ctx.max_out, 12000)) + tail, None, {}
 
     def _repair(self):
         """Si se corto a mitad, toda llamada a herramienta debe tener su respuesta para que el historial sea valido."""
@@ -1573,6 +1751,13 @@ class Run:
         no_net = T.offline(max_age=30)                  # ¿hay internet? (una comprobación corta; el modelo no puede saberlo solo)
         if no_net:
             body += "\n\n[Aviso de Jayth: " + T.OFFLINE_MSG + "]"
+        # cómo acabó su turno anterior, si no acabó bien: el modelo no lo ve en la conversación y no puede saberlo solo
+        how = "closed" if self.s.pop("_turn_open", None) else self.s.pop("_cut_short", None)
+        self.s.pop("_cut_short", None)
+        if how in CUT_SHORT and msgs:
+            body += "\n\n[Aviso de Jayth: " + CUT_SHORT[how] + "]"
+        self.s["_turn_open"] = True
+        self._failed = False
         content = body if not image_names else [{"type": "text", "text": body}] + [{"type": "image_ref", "name": n} for n in image_names]
         msgs.append({"role": "user", "content": content})
         uev = {"t": "user", "text": text, "images": list(image_names), "files": [l[4:].strip() for l in attachments.splitlines() if l.startswith("### ")]}
@@ -1586,9 +1771,22 @@ class Run:
         key = self.cfg.get("external_key") if external else ""
         e = self.cfg.get("effort") or ""
         effort = e if e in ("low", "medium", "high") else ("medium" if self.cfg.get("thinking") else "low")
+        if external:                # cuánto contexto y cuánta salida admite ese modelo: se le pregunta al servicio (una vez)
+            try:
+                API.limits(base, key, self.cfg.get("external_model") or "", ask=True)
+                self.cfg["n_ctx"] = API.context(self.cfg)
+            except Exception:
+                pass
         nudged = False
+        # El tope de pasos por turno protege de bucles con modelos pequeños. Un modelo por API hace tareas de decenas de
+        # pasos sin perderse y cada parada obliga al usuario a escribir «continúa»: si el tope sigue en su valor de fábrica
+        # (30) se le dan 120; un valor elegido a mano se respeta.
+        steps = int(self.cfg["max_steps"])
+        if external and steps == 30 and not self.cfg.get("_sub"):
+            steps = 120
+        self.cfg["max_steps"] = steps
         try:
-            for step in range(int(self.cfg["max_steps"])):
+            for step in range(steps):
                 if self.stop.is_set():
                     break
                 self._maybe_compact(base, key)
@@ -1600,9 +1798,14 @@ class Run:
                 payload = {"model": (self.cfg.get("external_model") or "local") if external else "local", "stream": True,
                            "stream_options": {"include_usage": True},
                            "messages": [{"role": "system", "content": self.system}] + sent,
-                           "temperature": self.sampling["temperature"], "top_p": self.sampling["top_p"],
-                           "max_tokens": int(self.cfg["max_tokens"]) * (2 if effort == "high" else 1)}
-                if not external:   # parametros propios de llama.cpp (una API estricta podria rechazarlos)
+                           "max_tokens": self._max_out(effort)}
+                if external:       # el esfuerzo, en el formato común; la temperatura, solo si el usuario la fijó a mano
+                    payload["reasoning_effort"] = effort           # (con «automático» cada servicio usa la suya)
+                    if self.cfg.get("sampling", "auto") != "auto":
+                        payload.update({"temperature": self.sampling["temperature"], "top_p": self.sampling["top_p"]})
+                else:              # parametros propios de llama.cpp (una API estricta podria rechazarlos)
+                    payload.update({"temperature": self.sampling["temperature"], "top_p": self.sampling["top_p"]})
+                if not external:
                     # esfuerzo: Qwen/DeepSeek usan enable_thinking; gpt-oss y otros, reasoning_effort (los demas los ignoran)
                     payload.update({"top_k": self.sampling["top_k"], "cache_prompt": True, "min_p": self.sampling["min_p"],
                                     "repeat_penalty": float(self.cfg.get("repeat_penalty", 1.0)),
@@ -1622,7 +1825,7 @@ class Run:
                 watched = threading.Event()
                 threading.Thread(target=self._watch, args=(external, watched), daemon=True).start()
                 try:
-                    res = llm_stream(base, key, payload, self.holder, self._delta)
+                    res = (ext_stream if external else llm_stream)(base, key, payload, self.holder, self._delta)
                 except (ConnectionRefusedError, socket.timeout, OSError) as e:
                     watched.set()
                     self._flush()
@@ -1664,8 +1867,8 @@ class Run:
                         self.emit({"t": "error", "text": tr("El modelo se queda escribiendo sin producir respuesta ni acción. Pulsa "
                                                             "«Reintentar»; si se repite, baja el nivel de razonamiento o prueba otro modelo.")})
                         break
-                    msgs.append({"role": "user", "_auto": True, "content": NUDGE_QUIET})
-                    self.emit({"t": "nudge", "written": "", "quiet": True, "tokens": int(self.holder.get("cut_tokens") or 0)})
+                    msgs.append({"role": "user", "_auto": True, "content": NUDGE_QUIET_API if external else NUDGE_QUIET})
+                    self.emit({"t": "nudge", "written": "", "quiet": True, "api": bool(external), "tokens": int(self.holder.get("cut_tokens") or 0)})
                     continue
                 if int(self.holder.get("quiet_max") or 0) >= self.QUIET_CUT[0] and (res["tool_calls"] or res["content"].strip()):
                     self.s["_quiet_ok"] = True          # este modelo entrega tramos largos de golpe y acaba bien: no cortarle
@@ -1758,6 +1961,9 @@ class Run:
         finally:
             self._flush()
             self._repair()
+            self.s.pop("_turn_open", None)
+            if self.stop.is_set() or self._failed:      # se le cuenta al modelo al empezar su siguiente turno
+                self.s["_cut_short"] = "stop" if self.stop.is_set() else "error"
             if T.CONTROL_RUN is self:                   # una pausa pendiente del aviso en pantalla no pasa a la siguiente tarea
                 T.CONTROL_RUN = None
                 T.PAUSED.clear()

@@ -151,6 +151,13 @@ fill in forms, pages with JavaScript). The agent drives it in plain view, with i
 edges while it has control; the user can step in at any time. Passwords are always typed by the user, and the agent
 asks for confirmation before buying, paying, publishing or sending personal data.
 
+On its bar: back, forward, reload (or stop while loading), the address (or what you want to search for), **Find in
+page** (Ctrl+F), open the page in the system browser, and a menu with **Zoom in** and **Zoom out** (Ctrl++ and
+Ctrl+-), **Copy the address**, **Save the page as PDF** (Ctrl+P; it goes to Downloads) and **Clear browser data**
+(cookies, sign-ins and cache). Right-clicking offers the usual options for links, images and text. Pages are
+requested in the interface language. When the browser opens, the other panels shrink, and when it closes they get
+their width back.
+
 ## Canvas
 
 For web pages, long documents, SVG diagrams or programs the user wants to see: the agent shows them in a panel next
@@ -214,7 +221,12 @@ limited); listing windows requires `wmctrl`.
   which Jayth converts to GGUF on the computer. You pick the quantization (the recommended one is marked) and, if
   available, **vision** so the model can see images and screenshots.
 - **API models…**: OpenAI, Claude, Gemini, Ollama, LM Studio or another OpenAI-compatible server. Also in
-  **Settings › Models › Provider** (URL, model name and key).
+  **Settings › Models › Provider** (URL, model name and key). With an API model, Jayth asks the service how much
+  context and output that model supports and uses them (capped at 200,000 tokens per step to keep costs down),
+  adapts on its own if the service rejects a parameter, allows longer turns (120 steps) and offers the agent
+  **helpers**: reading or search subtasks done by another copy of the model, from which only the report comes back.
+  These services think without showing it and deliver each action all at once, so the chat may spend a while saying
+  that the service is preparing the response; if a request hangs, Jayth cuts it off and asks the model to continue.
 - **Start or stop the model:** model chip › **Engine**, or the **Start model** button in the notice. When it's on,
   it takes up memory and responds instantly; turning it off frees that memory.
 - Downloads show percentage, speed and time remaining, resume if interrupted, and are verified with SHA-256.

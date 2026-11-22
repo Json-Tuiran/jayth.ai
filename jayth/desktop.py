@@ -437,6 +437,10 @@ STEP = {  # herramienta: (infinitivo, pasado, objeto)
     "browser_screenshot": (tr("capturar la página"), tr("Capturó la página"), lambda a: ""),
     "generate_image": (tr("crear la imagen"), tr("Creó la imagen"), lambda a: tr("«%s»") % _q(a.get("prompt"), 50)),
     "connect_service": (tr("proponer conectar"), tr("Propuso conectar"), lambda a: _svc_name(a.get("service"))),
+    "replace_in_files": (tr("reemplazar en varios archivos"), tr("Reemplazó en varios archivos"),
+                         lambda a: tr("«%s» → «%s»") % (_q(a.get("pattern"), 24), _q(a.get("replacement"), 24))),
+    "delegate": (tr("encargar a un ayudante"), tr("Encargó a un ayudante"), lambda a: tr("«%s»") % _q(a.get("title") or a.get("task"), 50)),
+    "undo_changes": (tr("deshacer sus cambios"), tr("Deshizo sus cambios"), lambda a: ""),
 }
 
 
@@ -472,7 +476,8 @@ GERUND = {
     "ui_elements": tr("Leyendo la interfaz de"), "click_element": tr("Pulsando"), "drag": tr("Arrastrando"),
     "browser_open": tr("Abriendo"), "browser_read": tr("Leyendo la página"), "browser_click": tr("Pulsando"), "browser_type": tr("Escribiendo"),
     "browser_screenshot": tr("Capturando la página"), "generate_image": tr("Creando la imagen"), "connect_service": tr("Proponiendo conectar"),
-    "search_knowledge": tr("Buscando en tu conocimiento"),
+    "search_knowledge": tr("Buscando en tu conocimiento"), "replace_in_files": tr("Reemplazando en varios archivos"),
+    "delegate": tr("Un ayudante trabaja en"), "undo_changes": tr("Deshaciendo sus cambios"),
 }
 
 
@@ -1519,7 +1524,7 @@ class StepsBox(QFrame):
 
 
 # acciones que cambian archivos (salen en la tarjeta de cambios de la respuesta)
-CHANGE_TOOLS = ("write_file", "edit_file", "multi_edit", "create_document", "delete_path", "move_path")
+CHANGE_TOOLS = ("write_file", "edit_file", "multi_edit", "replace_in_files", "create_document", "delete_path", "move_path")
 
 
 def divider(text, icon_name=None, color=None):
@@ -1619,7 +1624,28 @@ class ChangesCard(QFrame):
             row.clicked.connect(lambda f=f: on_open(f["path"]))
             v.addWidget(row)
             self.rows.append((f, row, name, note_l, b))
+        # con muchos archivos la tarjeta se comería la pantalla: se ven los primeros y el resto se despliega con un clic
+        self.folded = len(files) > self.SHOWN + 1
+        self.b_more = QPushButton()
+        self.b_more.setProperty("kind", "flat")
+        self.b_more.setCursor(Qt.PointingHandCursor)
+        self.b_more.setStyleSheet("text-align:left; padding:3px 20px; color:%s" % C["mut"])
+        self.b_more.clicked.connect(lambda: self.fold(not self.folded))
+        self.b_more.setVisible(self.folded)
+        v.addWidget(self.b_more)
+        self.fold(self.folded)
         self.refresh()
+
+    SHOWN = 6        # filas a la vista cuando hay más archivos que estos
+
+    def fold(self, on):
+        """Plegada: solo los primeros archivos y «Ver los N archivos»; desplegada: todos y «Ver menos»."""
+        self.folded = bool(on)
+        for i, (f, row, *_r) in enumerate(self.rows):
+            row.setVisible(not self.folded or i < self.SHOWN)
+        n = len(self.rows)
+        self.b_more.setText((tr("Ver los %d archivos") % n) if self.folded else tr("Ver menos"))
+        self.b_more.setIcon(icon("ui_chevron_abajo" if self.folded else "ui_chevron_arriba", C["mut"], 12))
 
     def refresh(self):
         left = 0
@@ -1737,14 +1763,18 @@ class AssistantBlock(QWidget):
             return tr("%s tokens") % i18n.number(total, 0)
         return "%d %%" % pct + ((" · " + tr("queda ~%s") % CV.fmt_secs(left if left < 60 else round(left / 60.0) * 60)) if left >= 5 else "")
 
-    def quiet(self, tokens, secs, ts):
+    def quiet(self, tokens, secs, ts, api=False):
         """El modelo sigue escribiendo pero no llega texto, pensamiento ni acción: que se vea que trabaja y cuánto lleva."""
         if self.q_start is None:
             self.q_start = ts - secs
             self.quiet_line.show()
-            self.quiet_line.run((tr("El modelo sigue escribiendo, pero aún no llega nada que mostrar"),), self.q_start, "est_info",
+            self.quiet_line.run((tr("El servicio prepara la respuesta: piensa sin mostrarlo y entrega cada acción de una vez") if api else
+                                 tr("El modelo sigue escribiendo, pero aún no llega nada que mostrar"),), self.q_start, "est_info",
                                 live=ts > time.time() - 8)
-            self.quiet_line.setToolTip(tr("El motor confirma que el modelo sigue generando. Si no produce nada, Jayth lo interrumpe y le pide continuar."))
+            self.quiet_line.setToolTip(tr("Los modelos por API no envían su razonamiento ni las acciones a medio escribir, así que pueden "
+                                          "pasar minutos sin que llegue nada. Si la petición se queda colgada, Jayth la corta y le pide continuar.")
+                                       if api else
+                                       tr("El motor confirma que el modelo sigue generando. Si no produce nada, Jayth lo interrumpe y le pide continuar."))
         self.quiet_line.t_start = self.q_start = ts - secs     # el tiempo que lleva callado lo dice el vigilante
         self.quiet_line.extra = (tr("%s tokens") % i18n.number(tokens, 0)) if tokens else ""
         self.quiet_line.tick(time.time())
@@ -2809,7 +2839,7 @@ class ChatPanel(QWidget):
                 self.cur.reading(ev.get("done", 0), ev.get("total", 0), ev.get("tps", 0), ev["ts"])
         elif t == "quiet":                          # solo en directo: escribe sin que llegue nada visible
             if self.cur is not None and ev["ts"] > time.time() - 8:
-                self.cur.quiet(ev.get("tokens", 0), ev.get("secs", 0), ev["ts"])
+                self.cur.quiet(ev.get("tokens", 0), ev.get("secs", 0), ev["ts"], api=bool(ev.get("api")))
         elif t == "stats":
             if ev.get("ctx_used") and ev.get("ctx_max"):       # memoria de la conversación: en el anillo junto al cuadro de texto
                 self.ctx_ring.set_value(int(ev["ctx_used"]) + int(ev.get("gen_n") or 0), int(ev["ctx_max"]))
@@ -2867,8 +2897,9 @@ class ChatPanel(QWidget):
                     c.mark_undone(ev.get("files") or [])
                 except RuntimeError:
                     pass
-            self.add(note(tr("Cambios deshechos: %s") % ", ".join(os.path.basename(f) for f in ev.get("files") or [])))
-            self._end_steps()
+            if ev.get("by") != "agent":              # si lo deshizo el agente, ya lo dice su propia acción («Deshizo sus cambios»)
+                self.add(note(tr("Cambios deshechos: %s") % ", ".join(os.path.basename(f) for f in ev.get("files") or [])))
+                self._end_steps()
         elif t == "compacted":
             w = self.add(note(tr("Resumí la parte antigua de la conversación para que el modelo no la olvide ni se quede sin memoria.")))
             if ev.get("text"):                          # qué recuerda ahora el modelo de aquello: se puede leer
@@ -2891,7 +2922,9 @@ class ChatPanel(QWidget):
                              "permisos de siempre.") % T.TOOL_LABELS.get(ev["name"], ev["name"])))
             self._end_steps()
         elif t == "nudge":                          # el modelo anunció una acción y no la hizo: Jayth se lo recordó
-            if ev.get("quiet"):                     # escribía sin producir nada visible: se cortó
+            if ev.get("quiet") and ev.get("api"):   # el servicio por API dejó la petición colgada
+                self.add(note(tr("El servicio estuvo varios minutos sin enviar nada; Jayth cortó la petición y le pidió al modelo que continúe.")))
+            elif ev.get("quiet"):                   # escribía sin producir nada visible: se cortó
                 self.add(note(tr("El modelo se quedó escribiendo sin producir texto ni acción; Jayth lo interrumpió y le pidió que continúe.")))
             elif ev.get("empty"):                   # respondió vacío a mitad de la tarea
                 self.add(note(tr("El modelo dejó la respuesta vacía; Jayth le pidió que siga con la tarea.")))
@@ -2939,7 +2972,12 @@ class ChatPanel(QWidget):
                 r.box.refresh()
                 self.sync()
         elif t == "tool_result":
-            if ev.get("ok"):                     # imágenes de esta respuesta (capturas, gráficos): se repiten al final
+            # Lo que el agente CREÓ en esta respuesta (imágenes, gráficos) se repite bajo la respuesta final. Las capturas
+            # que hizo para mirar algo (pantalla, navegador, una imagen del disco) no: se quedan en su acción, porque al
+            # final salían sin venir a cuento (p. ej. una captura de prueba de la propia ventana).
+            made = self.rows.get(ev["id"])
+            made = made is not None and (made.ev.get("name") in ("run_python", "generate_image") or str(made.ev.get("name")).startswith("mcp__"))
+            if ev.get("ok") and made:
                 for n in (ev.get("images") or ([ev["image"]] if ev.get("image") else [])):
                     p = os.path.join(paths.IMG_DIR, n)
                     imgs = getattr(self, "turn_images", None)
@@ -3117,7 +3155,18 @@ class ChatPanel(QWidget):
             else:
                 raw = [a.get("source"), a.get("dest")] if name == "move_path" else [a.get("path")]
                 ps = [(self._abs(x), True, False) for x in raw if x]
-            if not ps:
+            if not ps or (name == "replace_in_files" and not snap):       # (una vista previa no cambia nada)
+                continue
+            if name == "replace_in_files":           # un solo reemplazo toca varios archivos: cada uno, su fila
+                for path, existed, can in ps:
+                    key = os.path.normcase(os.path.normpath(path))
+                    f = files.get(key)
+                    if f is None:
+                        f = files[key] = {"path": path, "paths": [path], "add": 0, "rem": 0, "note": "", "undone": False, "cids": [],
+                                          "can_undo": can, "new": False}
+                        order.append(key)
+                    f["cids"].append(r.id)
+                    f["note"] = f["note"] or tr("reemplazo")
                 continue
             ad, de = diff_badge(name, a)
             ad, de = int(ad[1:] or 0), int(de[1:] or 0)
@@ -3994,6 +4043,8 @@ class CodePage(QWidget):
         self.stack.addWidget(ws)
         self.lay = dict(CODE_LAYOUT)
         self._sized = False
+        self._squeezed = False          # los paneles laterales miden menos de lo que quiere el usuario porque no caben
+        self._fitting = False
 
     # ---- distribucion de paneles
     PANELS = (("left", "tree", "w_tree"), ("chat", "agent", "w_agent"))
@@ -4006,16 +4057,47 @@ class CodePage(QWidget):
             return int(w.property("last_size") or self.lay[key])
         return split.sizes()[split.indexOf(w)] or int(self.lay[key])
 
-    def layout_state(self):
-        """Estado actual para guardarlo en los ajustes."""
+    def layout_state(self, actual=False):
+        """Estado actual para guardarlo en los ajustes. Si los paneles están encogidos porque no caben (el navegador o el
+        lienzo ocupan media ventana), se guarda el ancho que el usuario les dio, no el encogido; actual=True: lo que miden
+        ahora mismo (el usuario acaba de mover un divisor)."""
         st = dict(self.lay)
         for attr, k, wk in self.PANELS:
             w = getattr(self, attr)
             st[k] = not w.isHidden()
-            st[wk] = self._size_of(self.split, w, wk)
+            st[wk] = int(self.lay[wk]) if (self._squeezed and not actual and not w.isHidden()) else self._size_of(self.split, w, wk)
         st["term"] = not self.term.isHidden()
         st[self._term_key()] = self._size_of(self.center, self.term, self._term_key())
         return st
+
+    def _refit(self):
+        """Al cambiar el ancho del espacio de trabajo (se abre o se cierra el navegador o el lienzo, o cambia la ventana), el
+        explorador y el agente vuelven al ancho que les dio el usuario y el resto va al editor. Si no caben, se encogen en
+        proporción solo mientras falte sitio: antes se quedaban encogidos para siempre al cerrar el navegador."""
+        if not getattr(self, "_sized", False) or self.stack.currentIndex() != 1 or self._fitting:
+            return
+        tot = self.split.width() - self.split.handleWidth() * (self.split.count() - 1)
+        if tot < 300:
+            return
+        sides = [(getattr(self, attr), int(self.lay[wk])) for attr, k, wk in self.PANELS if not getattr(self, attr).isHidden()]
+        room = tot - max(260, self.center.minimumSizeHint().width())
+        want = sum(s for w, s in sides)
+        self._squeezed = bool(sides) and want > room
+        if self._squeezed:
+            sides = [(w, max(w.minimumWidth(), int(s * max(room, 0) / float(want)))) for w, s in sides]
+        given = dict(sides)
+        sizes = [given.get(self.split.widget(i), 0) for i in range(self.split.count())]
+        sizes[self.split.indexOf(self.center)] = max(1, tot - sum(sizes))
+        if sizes != self.split.sizes():
+            self._fitting = True
+            try:
+                self.split.setSizes(sizes)
+            finally:
+                self._fitting = False
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._refit()
 
     def apply_layout(self, lay):
         self.lay = dict(CODE_LAYOUT, **{k: v for k, v in (lay or {}).items() if k in CODE_LAYOUT})
@@ -4060,7 +4142,8 @@ class CodePage(QWidget):
 
     def _moved(self):
         if self._sized:
-            self.lay.update(self.layout_state())
+            self.lay.update(self.layout_state(actual=True))    # el usuario movió un divisor: ese es el ancho que quiere
+            self._squeezed = False
             self.layout_changed.emit()
 
     def _toggle(self, w, key, on=None, split=None, keep_focus=False):

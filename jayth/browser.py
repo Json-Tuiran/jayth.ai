@@ -69,7 +69,9 @@ _COLLECT = r"""
       seen.push(t); total += t.length + 1;
     }
   }
-  return JSON.stringify({title: document.title, url: location.href, text: text.slice(0, 200000), elements: out, seen: seen.join('\n'),
+  const alerts = Array.from(document.querySelectorAll('[role=alert], [role=status], [aria-live=assertive], [aria-live=polite], dialog[open]'))
+                      .filter(vis).map(e => txt(e.innerText).slice(0, 300)).filter(Boolean).slice(0, 5);
+  return JSON.stringify({title: document.title, url: location.href, text: text.slice(0, 200000), elements: out, seen: seen.join('\n'), alerts: alerts,
                          scroll: Math.round(scrollY), height: document.documentElement.scrollHeight, view: innerHeight});
 })()
 """
@@ -110,6 +112,49 @@ _TYPE = r"""
   return JSON.stringify({value: val().slice(0, 200)});
 })(%d, %s, %s)
 """
+
+
+def page_changes(old, new):
+    """Qué cambió a la vista tras una acción que no llevó a otra dirección (lo normal en una aplicación web): avisos de la
+    página, texto que aparece o desaparece y elementos nuevos. Sin esto el agente tenía que volver a leer la página entera
+    después de cada clic para saber si había pasado algo."""
+    out = []
+    alerts = [a for a in new.get("alerts") or [] if a not in (old.get("alerts") or [])]
+    if alerts:
+        out.append("Avisos de la página: " + " | ".join(alerts))
+    was, now = (old.get("seen") or "").split("\n"), (new.get("seen") or "").split("\n")
+    added = [l for l in dict.fromkeys(now) if l and l not in set(was)]
+    gone = [l for l in dict.fromkeys(was) if l and l not in set(now)]
+    if added:
+        out.append("Aparece a la vista:\n" + "\n".join("+ " + l[:160] for l in added[:10]) + ("\n+ … (%d líneas más)" % (len(added) - 10) if len(added) > 10 else ""))
+    if gone:
+        out.append("Ya no se ve:\n" + "\n".join("- " + l[:160] for l in gone[:6]) + ("\n- … (%d líneas más)" % (len(gone) - 6) if len(gone) > 6 else ""))
+    d = len(new.get("elements") or []) - len(old.get("elements") or [])
+    if d:
+        out.append("Ahora hay %d elementos para usar (%s%d): sus números han cambiado, vuelve a leerlos con browser_read antes de pulsar otro."
+                   % (len(new.get("elements") or []), "+" if d > 0 else "", d))
+    if not out:
+        return "La página sigue en la misma dirección y no cambió nada a la vista."
+    return "La página sigue en la misma dirección.\n" + "\n".join(out)
+
+
+def accept_language():
+    """Idiomas que el navegador pide a las páginas: el de la interfaz de Jayth primero (con la región del sistema si es
+    el mismo idioma: es-MX, pt-BR…), luego el inglés. Sin esto las páginas salían en inglés aunque Jayth esté en español."""
+    from . import i18n
+    lang = i18n.LANG
+    try:
+        from PySide6.QtCore import QLocale
+        sys_tag = QLocale.system().bcp47Name()          # p. ej. «es-MX»
+    except Exception:
+        sys_tag = ""
+    region = {"es": "es-ES", "en": "en-US", "pt": "pt-BR", "fr": "fr-FR", "de": "de-DE", "it": "it-IT", "ja": "ja-JP", "zh": "zh-CN"}.get(lang, lang)
+    if sys_tag.lower().startswith(lang + "-") and lang != "zh":
+        region = sys_tag
+    tags = [region, lang] if region != lang else [lang]
+    if lang != "en":
+        tags += ["en-US", "en"]
+    return ",".join(t if i == 0 else "%s;q=%.1f" % (t, max(0.1, 1.0 - 0.1 * i)) for i, t in enumerate(tags))
 
 
 def to_url(s):
@@ -362,12 +407,14 @@ class BrowserPanel(QWidget):
         h = QHBoxLayout(head)
         h.setContentsMargins(8, 6, 8, 6)
         h.setSpacing(2)
-        back = _tb("ui_chevron_derecha", tr("Atrás"), lambda: self.view and self.view.back(), 13)
+        self.b_back = back = _tb("ui_chevron_derecha", tr("Atrás (Alt+←)"), lambda: self.view and self.view.back(), 13)
         from PySide6.QtGui import QTransform
         back.setIcon(icon("ui_chevron_derecha", C["mut"], 13).pixmap(13, 13).transformed(QTransform().rotate(180)))
         h.addWidget(back)
-        h.addWidget(_tb("ui_chevron_derecha", tr("Adelante"), lambda: self.view and self.view.forward(), 13))
-        h.addWidget(_tb("acc_refrescar", tr("Recargar"), lambda: self.view and self.view.reload(), 14))
+        self.b_fwd = _tb("ui_chevron_derecha", tr("Adelante (Alt+→)"), lambda: self.view and self.view.forward(), 13)
+        h.addWidget(self.b_fwd)
+        self.b_reload = _tb("acc_refrescar", tr("Recargar (F5)"), self.reload_or_stop, 14)
+        h.addWidget(self.b_reload)
         self.addr = QLineEdit()
         self.addr.setObjectName("addressBar")
         self.addr.setPlaceholderText(tr("Escribe una dirección o lo que quieras buscar"))
@@ -377,13 +424,25 @@ class BrowserPanel(QWidget):
         self.agent_lbl.setStyleSheet("color:%s; font-size:9pt; padding: 0 6px" % C["acc"])
         self.agent_lbl.hide()
         h.addWidget(self.agent_lbl)
+        h.addWidget(_tb("acc_buscar", tr("Buscar en la página (Ctrl+F)"), self.find_bar, 14))
         h.addWidget(_tb("acc_abrir_externo", tr("Abrir esta página en tu navegador"), self.open_external))
+        self.b_menu = _tb("ui_menu_horizontal", tr("Más opciones del navegador"), self.show_menu)
+        h.addWidget(self.b_menu)
         h.addWidget(_tb("ui_cerrar", tr("Cerrar el navegador"), lambda: self.closed.emit(), 13))
         v.addWidget(head)
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
         line.setObjectName("hline")
         v.addWidget(line)
+        from PySide6.QtWidgets import QProgressBar
+        self.progress = QProgressBar()                   # avance de la carga: una línea fina bajo la barra
+        self.progress.setFixedHeight(2)
+        self.progress.setTextVisible(False)
+        self.progress.setRange(0, 100)
+        self.progress.setStyleSheet("QProgressBar{border:0;background:transparent} QProgressBar::chunk{background:%s}" % C["acc"])
+        v.addWidget(self.progress)
+        self.finder = self._find_widget()                # «Buscar en la página», oculta hasta que se pide
+        v.addWidget(self.finder)
         cls = _view_class()
         if not cls:
             msg = QLabel(tr("Este equipo no tiene el navegador integrado (Qt WebEngine).\nEl agente puede leer páginas con web_fetch."))
@@ -397,14 +456,28 @@ class BrowserPanel(QWidget):
         self.profile.setPersistentStoragePath(os.path.join(base, "datos"))
         self.profile.setCachePath(os.path.join(base, "cache"))
         self.profile.setPersistentCookiesPolicy(QWebEngineProfile.AllowPersistentCookies)
+        self.profile.setHttpAcceptLanguage(accept_language())     # las páginas, en el idioma de la interfaz si lo ofrecen
         self.profile.downloadRequested.connect(self._download)
         self.view = cls()
         self.view.setPage(_page_class()(self.profile, self.view))
         self.view.urlChanged.connect(lambda u: self.addr.setText(u.toString() if u.scheme() not in ("data", "about") else ""))
+        self.view.urlChanged.connect(lambda *_: self._sync_nav())
         self.view.loadStarted.connect(self._started)
+        self.view.loadProgress.connect(self.progress.setValue)
         self.view.loadFinished.connect(self._finished)
+        self.view.page().findTextFinished.connect(self._found)
+        self.view.setContextMenuPolicy(Qt.CustomContextMenu)       # menú propio: en el idioma de Jayth y sin opciones que no hacen nada
+        self.view.customContextMenuRequested.connect(self._context_menu)
         self.holder = _Holder(self.view)
         v.addWidget(self.holder, 1)
+        from PySide6.QtGui import QShortcut, QKeySequence
+        for keys, fn in (("Ctrl+F", self.find_bar), ("Ctrl+L", lambda: (self.addr.setFocus(), self.addr.selectAll())), ("F5", self.reload_or_stop),
+                         ("Ctrl+R", self.reload_or_stop), ("Ctrl++", lambda: self.zoom(+0.1)), ("Ctrl+=", lambda: self.zoom(+0.1)),
+                         ("Ctrl+-", lambda: self.zoom(-0.1)), ("Ctrl+0", lambda: self.zoom(0)), ("Alt+Left", self.view.back),
+                         ("Alt+Right", self.view.forward), ("Ctrl+P", self.save_pdf)):
+            sc = QShortcut(QKeySequence(keys), self, activated=fn)
+            sc.setContext(Qt.WidgetWithChildrenShortcut)
+        self._sync_nav()
         self.view.setHtml(START % dict(C, title=tr("Navegador de Jayth"), hint=tr("Escribe una dirección arriba o pide al agente que abra una "
                           "página: la verás aquí mientras la usa, y puedes intervenir cuando quieras.")), QUrl("about:blank"))
         self.agent_t = QTimer(self, interval=300, timeout=self._agent_label)
@@ -412,10 +485,197 @@ class BrowserPanel(QWidget):
     # ---- estado
     def _started(self):
         self._loading = True
+        self.progress.setValue(5)
+        self._sync_nav()
 
     def _finished(self, ok):
         self._loading = False
         self._last_ok = ok
+        self.progress.setValue(0)
+        self._sync_nav()
+
+    def _sync_nav(self):
+        """Atrás y adelante, solo si hay a dónde ir; «Recargar» es «Detener» mientras carga."""
+        if self.view is None:
+            return
+        hist = self.view.history()
+        self.b_back.setEnabled(hist.canGoBack())
+        self.b_fwd.setEnabled(hist.canGoForward())
+        self.b_reload.setIcon(icon("trans_detener" if self._loading else "acc_refrescar", C["mut"], 14))
+        tip = tr("Detener la carga (Esc)") if self._loading else tr("Recargar (F5)")
+        self.b_reload.setToolTip(tip)
+        self.b_reload.setAccessibleName(tip)
+
+    def reload_or_stop(self):
+        if self.view is not None:
+            self.view.stop() if self._loading else self.view.reload()
+
+    # ---- herramientas del usuario: buscar en la página, tamaño, guardar, datos
+    def _find_widget(self):
+        w = QWidget()
+        w.setObjectName("canvasHead")
+        h = QHBoxLayout(w)
+        h.setContentsMargins(8, 4, 8, 4)
+        h.setSpacing(4)
+        self.find_edit = QLineEdit()
+        self.find_edit.setObjectName("addressBar")
+        self.find_edit.setPlaceholderText(tr("Buscar en la página"))
+        self.find_edit.textChanged.connect(lambda *_: self.find_next())
+        self.find_edit.returnPressed.connect(self.find_next)
+        h.addWidget(self.find_edit, 1)
+        self.find_lbl = QLabel("")
+        self.find_lbl.setObjectName("muted")
+        h.addWidget(self.find_lbl)
+        h.addWidget(_tb("ui_chevron_arriba", tr("Anterior (Mayús+Intro)"), lambda: self.find_next(True), 13))
+        h.addWidget(_tb("ui_chevron_abajo", tr("Siguiente (Intro)"), self.find_next, 13))
+        h.addWidget(_tb("ui_cerrar", tr("Cerrar la búsqueda (Esc)"), lambda: self.find_bar(False), 12))
+        w.hide()
+        return w
+
+    def find_bar(self, on=True):
+        if self.view is None:
+            return
+        self.finder.setVisible(bool(on))
+        if on:
+            self.find_edit.setFocus()
+            self.find_edit.selectAll()
+            self.find_next()
+        else:
+            self.view.findText("")                      # quita el resaltado
+            self.find_lbl.setText("")
+            self.view.setFocus()
+
+    def find_next(self, back=False):
+        if self.view is None or self.finder.isHidden():
+            return
+        from PySide6.QtWebEngineCore import QWebEnginePage
+        text = self.find_edit.text()
+        if back:
+            self.view.findText(text, QWebEnginePage.FindBackward)
+        else:
+            self.view.findText(text)
+        if not text:
+            self.find_lbl.setText("")
+
+    def _found(self, res):
+        if self.finder.isHidden() or not self.find_edit.text():
+            return
+        n = res.numberOfMatches()
+        self.find_lbl.setText((tr("%d de %d") % (res.activeMatch(), n)) if n else tr("Sin resultados"))
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Escape and (not self.finder.isHidden() or self._loading):
+            if not self.finder.isHidden():
+                self.find_bar(False)
+            elif self.view is not None:
+                self.view.stop()
+            return
+        if e.key() in (Qt.Key_Return, Qt.Key_Enter) and (e.modifiers() & Qt.ShiftModifier) and self.find_edit.hasFocus():
+            return self.find_next(True)
+        super().keyPressEvent(e)
+
+    def zoom(self, step):
+        """Agranda o reduce la página (0 = tamaño normal)."""
+        if self.view is None:
+            return
+        f = 1.0 if not step else max(0.3, min(3.0, round(self.view.zoomFactor() + step, 2)))
+        self.view.setZoomFactor(f)
+        if self.main is not None:
+            self.main.toast(tr("Tamaño de la página: %d %%") % round(f * 100), ms=1400)
+
+    def copy_address(self):
+        if self.view is not None:
+            QApplication.clipboard().setText(self.view.url().toString())
+            if self.main is not None:
+                self.main.toast(tr("Dirección copiada"), icon_name="acc_copiar", ms=1500)
+
+    def save_pdf(self):
+        """Guarda la página como PDF en Descargas (con el título de la página como nombre)."""
+        if self.view is None or self.view.url().scheme() not in ("http", "https", "file"):
+            return
+        d = QStandardPaths.writableLocation(QStandardPaths.DownloadLocation) or os.path.expanduser("~")
+        name = re.sub(r'[\\/:*?"<>|\r\n]+', " ", self.view.title() or "pagina").strip()[:80] or "pagina"
+        path, k = os.path.join(d, name + ".pdf"), 2
+        while os.path.exists(path):
+            path, k = os.path.join(d, "%s (%d).pdf" % (name, k)), k + 1
+        self.view.page().printToPdf(path)
+        if self.main is not None:
+            self.main.toast(tr("Guardando la página como PDF en %s") % path, icon_name="acc_descargar")
+
+    def clear_data(self):
+        """Borra cookies, inicios de sesión y caché del navegador de Jayth (pide confirmación: cierra las sesiones)."""
+        from PySide6.QtWidgets import QMessageBox
+        if self.view is None or QMessageBox.question(self, tr("Borrar los datos del navegador"), tr(
+                "Se borrarán las cookies, los inicios de sesión y la caché del navegador de Jayth. Tendrás que volver a "
+                "iniciar sesión en los sitios. ¿Continuar?")) != QMessageBox.StandardButton.Yes:
+            return
+        self.profile.cookieStore().deleteAllCookies()
+        self.profile.clearHttpCache()
+        self.profile.clearAllVisitedLinks()
+        if self.main is not None:
+            self.main.toast(tr("Datos del navegador borrados"), icon_name="ui_check", color=C["ok"])
+
+    def show_menu(self):
+        from PySide6.QtWidgets import QMenu
+        if self.view is None:
+            return
+        m = QMenu(self)
+        m.addAction(icon("acc_buscar"), tr("Buscar en la página…") + "\tCtrl+F", self.find_bar)
+        m.addSeparator()
+        pct = round(self.view.zoomFactor() * 100)
+        m.addAction(tr("Agrandar") + "\tCtrl++", lambda: self.zoom(+0.1))
+        m.addAction(tr("Reducir") + "\tCtrl+-", lambda: self.zoom(-0.1))
+        a = m.addAction((tr("Tamaño normal (ahora %d %%)") % pct) + "\tCtrl+0", lambda: self.zoom(0))
+        a.setEnabled(pct != 100)
+        m.addSeparator()
+        m.addAction(icon("acc_copiar"), tr("Copiar la dirección"), self.copy_address)
+        m.addAction(icon("acc_descargar"), tr("Guardar la página como PDF") + "\tCtrl+P", self.save_pdf)
+        m.addAction(icon("acc_abrir_externo"), tr("Abrir esta página en tu navegador"), self.open_external)
+        m.addSeparator()
+        m.addAction(icon("acc_eliminar"), tr("Borrar los datos del navegador…"), self.clear_data)
+        m.exec(self.b_menu.mapToGlobal(self.b_menu.rect().bottomLeft()))
+
+    def _context_menu(self, pos):
+        """Menú del botón derecho, en el idioma de Jayth: lo que toca según dónde se pulsó (enlace, imagen, texto, campo)."""
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtWebEngineCore import QWebEnginePage as P
+        from PySide6.QtGui import QDesktopServices
+        page = self.view.page()
+        req = self.view.lastContextMenuRequest()
+        link = req.linkUrl() if req is not None else QUrl()
+        media = req.mediaUrl() if req is not None else QUrl()
+        sel = (req.selectedText() if req is not None else "") or ""
+        editable = bool(req is not None and req.isContentEditable())
+        m = QMenu(self)
+        if link.isValid() and not link.isEmpty():
+            m.addAction(tr("Abrir el enlace"), lambda: self.view.load(link))
+            m.addAction(icon("acc_abrir_externo"), tr("Abrir el enlace en tu navegador"), lambda: QDesktopServices.openUrl(link))
+            m.addAction(icon("acc_copiar"), tr("Copiar la dirección del enlace"), lambda: QApplication.clipboard().setText(link.toString()))
+            m.addAction(icon("acc_descargar"), tr("Guardar lo enlazado…"), lambda: page.triggerAction(P.DownloadLinkToDisk))
+            m.addSeparator()
+        if media.isValid() and not media.isEmpty() and req.mediaType() == req.MediaType.MediaTypeImage:
+            m.addAction(icon("acc_copiar"), tr("Copiar la imagen"), lambda: page.triggerAction(P.CopyImageToClipboard))
+            m.addAction(icon("acc_descargar"), tr("Guardar la imagen…"), lambda: page.triggerAction(P.DownloadImageToDisk))
+            m.addAction(tr("Copiar la dirección de la imagen"), lambda: QApplication.clipboard().setText(media.toString()))
+            m.addSeparator()
+        if editable:
+            m.addAction(tr("Cortar"), lambda: page.triggerAction(P.Cut)).setEnabled(bool(sel))
+        if sel or editable:
+            m.addAction(icon("acc_copiar"), tr("Copiar"), lambda: page.triggerAction(P.Copy)).setEnabled(bool(sel))
+        if editable:
+            m.addAction(tr("Pegar"), lambda: page.triggerAction(P.Paste))
+        if sel and not editable:
+            short = " ".join(sel.split())[:28] + ("…" if len(" ".join(sel.split())) > 28 else "")
+            m.addAction(icon("acc_buscar"), tr("Buscar «%s» en internet") % short, lambda: self.view.load(to_url(" ".join(sel.split())[:300])))
+        m.addAction(tr("Seleccionar todo"), lambda: page.triggerAction(P.SelectAll))
+        m.addSeparator()
+        m.addAction(tr("Atrás"), self.view.back).setEnabled(self.view.history().canGoBack())
+        m.addAction(tr("Adelante"), self.view.forward).setEnabled(self.view.history().canGoForward())
+        m.addAction(icon("acc_refrescar"), tr("Recargar"), self.view.reload)
+        m.addSeparator()
+        m.addAction(icon("acc_buscar"), tr("Buscar en la página…"), self.find_bar)
+        m.addAction(icon("acc_descargar"), tr("Guardar la página como PDF"), self.save_pdf)
+        m.exec(self.view.mapToGlobal(pos))
 
     def _agent_label(self):
         on = self.holder.layer.active()
@@ -555,11 +815,18 @@ class BrowserPanel(QWidget):
 
     def _after(self, job, before_url, what):
         """Resultado de una acción: qué se hizo y, si cambió de página, dónde está ahora (con su resumen)."""
+        old = self.page_info or {}                   # cómo estaba la página la última vez que se leyó (antes de la acción)
+
         def fin(info):
-            if info and info["url"] != before_url:
+            same = lambda u: str(u or "").split("#")[0].rstrip("/")          # «…/» y «…» son la misma página
+            if info and not before_url:              # recargar: la misma página, vuelta a leer
+                self._done(job, self._summary(info, 1200, 40, intro=what + "\n"))
+            elif info and same(info["url"]) != same(before_url):
                 self._done(job, self._summary(info, 1200, 40, intro=what + "\nSe abrió otra página.\n"))
+            elif info:
+                self._done(job, what + "\n" + page_changes(old, info))
             else:
-                self._done(job, what + ("\nLa página no cambió de dirección; si algo cambió dentro, léela con browser_read." if info else ""))
+                self._done(job, what)
         self._settle(lambda: self._collect(fin))
 
     # ---- las acciones
@@ -598,11 +865,13 @@ class BrowserPanel(QWidget):
             self._done(job, self._summary(info, 2500, 60))
         self._collect(fin)
 
-    def _do_click(self, job, index=None, text=None):
+    def _do_click(self, job, index=None, text=None, expect=None):
         if index in (None, "") and not text:
             return self._fail(job, "Indica index (número de browser_read) o text (el texto del enlace o botón).")
         if index in (None, ""):
             return self._find(job, text, lambda i: self._do_click(job, i))
+        if text and expect is None:                  # número y texto a la vez: el texto sirve de comprobación
+            expect = text
         before = self.view.url().toString()
 
         def go(loc):
@@ -610,8 +879,14 @@ class BrowserPanel(QWidget):
                 return self._fail(job, "Ese elemento está desactivado ahora mismo.")
             if loc["tag"] == "select":
                 return self._fail(job, "Es una lista desplegable: elige la opción con browser_type (text = la opción).")
-            r = self._point(loc)
             info = next((e for e in (self.page_info or {}).get("elements", []) if e["i"] == int(index)), None)
+            want = " ".join(str(expect or "").lower().split())
+            if want and info is not None and want not in " ".join((info["label"] + " " + info["value"]).lower().split()):
+                # los números cambian cada vez que la página se redibuja: mejor no pulsar que pulsar otro botón
+                return self._fail(job, "El elemento %s ahora es %s%s, no «%s»: la página cambió desde que la leíste. Vuelve a leerla con "
+                                       "browser_read (what=elements) o pulsa por su texto." % (index, _role(info),
+                                                                                             (" «%s»" % info["label"]) if info["label"] else "", expect))
+            r = self._point(loc)
             what = "Pulsé %s" % ((_role(info) + (" «%s»" % info["label"] if info["label"] else "")) if info else "el elemento %s" % index)
             QTimer.singleShot(420, lambda: (self._real_click(r), self._after(job, before, what + ".")))
         self._locate(job, index, go)
@@ -675,18 +950,84 @@ class BrowserPanel(QWidget):
                 info["title"], pos, (info.get("seen") or "(sin texto)")[:1800], "\n".join(_line(e) for e in near) or "(nada que pulsar)"))
         self._js(js + "; true", lambda _r: QTimer.singleShot(300, lambda: self._collect(fin)))
 
-    def _do_shot(self, job):
-        pm = self.view.grab()
-        ba = QByteArray()
-        buf = QBuffer(ba)
-        buf.open(QIODevice.WriteOnly)
-        img = pm.toImage()
-        if img.width() > 1024:
-            img = img.scaledToWidth(1024, Qt.SmoothTransformation)
-        img.save(buf, "PNG")
-        buf.close()
-        self._done(job, {"text": "Captura del navegador (%dx%d): «%s»  %s" % (img.width(), img.height(), self.view.title(), self.view.url().toString()),
-                         "image": bytes(ba.data())})
+    def _do_shot(self, job, width=0, full_page=False):
+        """Captura la página. width: ancho en píxeles con el que se maqueta (el panel suele ser estrecho y las páginas
+        muestran su versión de móvil; con 1280 se ve la de escritorio, reducida). full_page: la página entera, no solo lo
+        que se ve (hasta 8 pantallas)."""
+        from PySide6.QtGui import QImage
+        view = self.view
+        z0 = view.zoomFactor()
+        vw = max(1, view.width())
+        want = max(320, min(2560, int(width or 0))) if width else 0
+        zoom = max(0.25, min(5.0, vw / float(want))) if want else z0
+        shots = []
+
+        def finish():
+            if abs(view.zoomFactor() - z0) > 0.001:
+                view.setZoomFactor(z0)
+            if not shots:
+                return self._fail(job, "No pude capturar la página.")
+            if len(shots) == 1:
+                img = shots[0][1]
+            else:                                    # la página entera: las pantallas, una debajo de otra
+                h = min(sum(s[2] for s in shots), 12000)
+                img = QImage(shots[0][1].width(), h, QImage.Format_RGB32)
+                img.fill(QColor("white"))
+                p = QPainter(img)
+                y = 0
+                for top, im, use in shots:
+                    p.drawImage(0, y, im, 0, im.height() - use, im.width(), use)
+                    y += use
+                p.end()
+            if img.width() > 1024:
+                img = img.scaledToWidth(1024, Qt.SmoothTransformation)
+            ba = QByteArray()
+            buf = QBuffer(ba)
+            buf.open(QIODevice.WriteOnly)
+            img.save(buf, "PNG")
+            buf.close()
+            css_w = round(vw / (zoom or 1.0))
+            note = "maquetada a %d px de ancho" % css_w
+            if not want and css_w < 800:
+                note += " (panel estrecho: muchas páginas muestran aquí su versión de móvil; con width=1280 se ve la de escritorio)"
+            self._done(job, {"text": "Captura del navegador (%dx%d, %s%s): «%s»  %s" % (
+                img.width(), img.height(), note, ", página entera" if len(shots) > 1 else "", view.title(), view.url().toString()),
+                "image": bytes(ba.data())})
+
+        def grab_one(top, use):
+            im = view.grab().toImage()
+            dpr = im.height() / float(max(1, view.height()))
+            shots.append((top, im, int(round(use * dpr)) if use else im.height()))
+
+        def page(info_json):
+            try:
+                d = json.loads(info_json or "{}")
+            except ValueError:
+                d = {}
+            vh, total, y0 = int(d.get("vh") or 0), int(d.get("h") or 0), int(d.get("y") or 0)
+            if not full_page or vh <= 0 or total <= vh + 4:
+                grab_one(0, 0)
+                return finish()
+            tops = list(range(0, total, vh))[:8]
+
+            def step(k):
+                if k >= len(tops):
+                    return self._js("window.scrollTo(0, %d); true" % y0, lambda _r: QTimer.singleShot(150, finish))
+                top = tops[k]
+                real = min(top, max(0, total - vh))         # la última pantalla no baja más allá del final
+                use = vh if top == real else min(vh, total - top)
+                # use: cuánto de esta pantalla es nuevo (de la última solo cuenta la franja de abajo); en píxeles de CSS × zoom
+                self._js("window.scrollTo(0, %d); true" % real,
+                         lambda _r: QTimer.singleShot(260, lambda: (grab_one(top, use * view.zoomFactor()), step(k + 1))))
+            step(0)
+
+        def measure():
+            self._js("JSON.stringify({vh: innerHeight, h: document.documentElement.scrollHeight, y: Math.round(scrollY)})", page)
+        if want and abs(zoom - z0) > 0.001:
+            view.setZoomFactor(zoom)
+            QTimer.singleShot(700, measure)             # que la página se vuelva a maquetar con el ancho nuevo
+        else:
+            QTimer.singleShot(0, measure)
 
 
 # ---------------------------------------------------------------- puente entre el hilo del agente y la interfaz
@@ -741,6 +1082,7 @@ class HiddenSearch(QObject):
                 self.profile.setPersistentStoragePath(os.path.join(base, "datos"))
                 self.profile.setCachePath(os.path.join(base, "cache"))
                 self.profile.setPersistentCookiesPolicy(QWebEngineProfile.AllowPersistentCookies)
+                self.profile.setHttpAcceptLanguage(accept_language())
                 self.page = QWebEnginePage(self.profile, self)
             page = self.page
             code = ("(function(){var o=[];" + job["js"] + "return JSON.stringify({title:document.title,res:o,"

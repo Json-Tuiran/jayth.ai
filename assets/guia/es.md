@@ -148,6 +148,13 @@ de un sitio, rellenar formularios, páginas con JavaScript). El agente lo maneja
 brillo en los bordes mientras tiene el control; el usuario puede intervenir cuando quiera. Las contraseñas las escribe
 siempre el usuario, y el agente pide confirmación antes de comprar, pagar, publicar o enviar datos personales.
 
+En su barra: atrás, adelante, recargar (o detener mientras carga), la dirección (o lo que se quiera buscar), **Buscar en
+la página** (Ctrl+F), abrir la página en el navegador del sistema y un menú con **Agrandar** y **Reducir** (Ctrl++ y
+Ctrl+-), **Copiar la dirección**, **Guardar la página como PDF** (Ctrl+P; va a Descargas) y **Borrar los datos del
+navegador** (cookies, inicios de sesión y caché). El botón derecho ofrece lo propio de enlaces, imágenes y texto. Las
+páginas se piden en el idioma de la interfaz. Al abrir el navegador los demás paneles se encogen y al cerrarlo recuperan
+su ancho.
+
 ## Lienzo
 
 Para páginas web, documentos largos, diagramas SVG o programas que el usuario quiera ver: el agente los muestra en un
@@ -210,7 +217,12 @@ sesiones X11 (en Wayland el control global está limitado); para listar ventanas
   .safetensors), que Jayth convierte a GGUF en el equipo. Se elige la cuantización (la recomendada va marcada) y, si
   existe, la **visión** para que el modelo vea imágenes y capturas.
 - **Modelos por API…**: OpenAI, Claude, Gemini, Ollama, LM Studio u otro servidor compatible con OpenAI. También en
-  **Ajustes › Modelos › Proveedor** (URL, nombre del modelo y clave).
+  **Ajustes › Modelos › Proveedor** (URL, nombre del modelo y clave). Con un modelo por API, Jayth pregunta al servicio
+  cuánto contexto y cuánta salida admite ese modelo y los usa (con un tope de 200 000 tokens por paso para contener el
+  gasto), se adapta solo si el servicio rechaza algún parámetro, permite turnos más largos (120 pasos) y ofrece al agente
+  **ayudantes**: subtareas de lectura o búsqueda que hace otra copia del modelo y de las que solo vuelve el informe.
+  Estos servicios piensan sin mostrarlo y entregan cada acción de una vez, así que el chat puede pasar un rato diciendo
+  que el servicio prepara la respuesta; si una petición se queda colgada, Jayth la corta y le pide al modelo continuar.
 - **Encender o apagar el modelo:** chip del modelo › **Motor**, o el botón **Encender modelo** del aviso. Encendido
   ocupa memoria y responde al momento; apagado la libera.
 - Las descargas muestran porcentaje, velocidad y tiempo, se reanudan si se cortan y se comprueban con SHA-256.

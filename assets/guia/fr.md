@@ -171,6 +171,14 @@ propre pointeur et une lueur sur les bords tant qu'il a le contrôle ; l'utilis
 souhaite. Les mots de passe sont toujours saisis par l'utilisateur, et l'agent demande confirmation avant d'acheter, de
 payer, de publier ou d'envoyer des données personnelles.
 
+Dans sa barre : retour, avancer, recharger (ou arrêter pendant le chargement), l'adresse (ou ce que l'on veut
+rechercher), **Rechercher dans la page** (Ctrl+F), ouvrir la page dans le navigateur du système et un menu avec
+**Agrandir** et **Réduire** (Ctrl++ et Ctrl+-), **Copier l'adresse**, **Enregistrer la page en PDF** (Ctrl+P ; elle
+va dans Téléchargements) et **Effacer les données du navigateur** (cookies, sessions ouvertes et cache). Le clic
+droit propose les options propres aux liens, aux images et au texte. Les pages sont demandées dans la langue de
+l'interface. À l'ouverture du navigateur, les autres panneaux rétrécissent, et à sa fermeture ils retrouvent leur
+largeur.
+
 ## Canevas
 
 Pour les pages web, les documents longs, les diagrammes SVG ou les programmes que l'utilisateur veut voir : l'agent les
@@ -242,7 +250,13 @@ l'ordinateur**. Sous macOS, il faut accorder à Jayth les autorisations **Enregi
   original (config.json + .safetensors), que Jayth convertit en GGUF sur l'ordinateur. On choisit la quantification
   (celle recommandée est marquée) et, si elle existe, la **vision** pour que le modèle voie les images et les captures.
 - **Modèles par API…** : OpenAI, Claude, Gemini, Ollama, LM Studio ou un autre serveur compatible avec OpenAI. Aussi
-  dans **Paramètres › Modèles › Fournisseur** (URL, nom du modèle et clé).
+  dans **Paramètres › Modèles › Fournisseur** (URL, nom du modèle et clé). Avec un modèle par API, Jayth demande au
+  service combien de contexte et de sortie ce modèle accepte et utilise ces valeurs (avec un plafond de 200 000
+  tokens par étape pour contenir la dépense), s'adapte tout seul si le service refuse un paramètre, autorise des
+  tours plus longs (120 étapes) et propose à l'agent des **sous-agents** : des sous-tâches de lecture ou de recherche
+  effectuées par une autre copie du modèle, dont seul le rapport revient. Ces services réfléchissent sans le montrer
+  et livrent chaque action d'un seul coup ; le chat peut donc passer un moment à indiquer que le service prépare la
+  réponse ; si une requête reste bloquée, Jayth l'interrompt et demande au modèle de continuer.
 - **Démarrer ou arrêter le modèle :** pastille du modèle › **Moteur**, ou le bouton **Démarrer le modèle** de l'avis.
   Démarré, il occupe de la mémoire et répond immédiatement ; arrêté, il la libère.
 - Les téléchargements affichent le pourcentage, la vitesse et le temps restant, reprennent s'ils sont interrompus et

@@ -48,18 +48,51 @@ TOOL_LABELS = {
     "browser_open": tr("Abrir páginas en el navegador de Jayth"), "browser_read": tr("Leer la página del navegador"), "browser_click": tr("Pulsar en el navegador"),
     "browser_type": tr("Escribir en el navegador"), "browser_nav": tr("Navegar (atrás, recargar, desplazar)"), "browser_screenshot": tr("Capturar el navegador"),
     "generate_image": tr("Crear imágenes"), "connect_service": tr("Proponer conectar un servicio"), "search_knowledge": tr("Buscar en tu conocimiento"),
+    "replace_in_files": tr("Reemplazar en varios archivos"), "delegate": tr("Encargar subtareas a un ayudante"),
+    "undo_changes": tr("Deshacer sus propios cambios"),
 }
 CATEGORIES = {"read": tr("Lectura"), "write": tr("Escritura"), "exec": tr("Ejecución"), "net": tr("Red"), "control": tr("Control del PC"),
               "agent": tr("Agente"), "mcp": tr("Conector")}
-WRITE_TOOLS = {"write_file", "edit_file", "multi_edit", "move_path", "delete_path", "create_document", "generate_image"}   # crean punto de restauracion
+WRITE_TOOLS = {"write_file", "edit_file", "multi_edit", "replace_in_files", "move_path", "delete_path", "create_document",
+               "generate_image"}   # crean punto de restauracion
 
 
-def clip(s, n=MAX_OUT):
-    if len(s) <= n:
+_CLIPPED = re.compile(r"\n\.\.\.\[recortad[oa]s? [^\]\n]*\]\.\.\.\n")
+
+
+def clip(s, n=MAX_OUT, where=""):
+    """Deja el principio y el final de un texto demasiado largo. El corte va entre líneas y dice cuánto se quitó (y, con
+    `where`, dónde está entero). Un texto ya recortado no se recorta otra vez por pasarse en lo que mide el propio aviso:
+    el segundo recorte se llevaba el aviso verdadero y dejaba otro con una cifra ridícula."""
+    if len(s) <= n or (len(s) <= n + 600 and _CLIPPED.search(s)):
         return s
     h = n * 2 // 3
     t = n - h
-    return s[:h] + "\n...[recortado %d caracteres]...\n" % (len(s) - n) + s[-t:]
+    a = s.rfind("\n", h * 3 // 4, h)                  # el principio acaba en fin de línea…
+    a = h if a < 0 else a
+    b = s.find("\n", len(s) - t, len(s) - t * 3 // 4)  # …y el final empieza en principio de línea
+    b = len(s) - t if b < 0 else b + 1
+    gone = s[a:b]
+    return s[:a] + "\n...[recortados %d caracteres (%d líneas) del medio%s]...\n" % (
+        len(gone), gone.count("\n"), ("; " + where) if where else "") + s[b:]
+
+
+def spill(text, kind="salida"):
+    """Guarda entera una salida que no cabe en la respuesta, para que el modelo pueda leer lo que falta con read_file.
+    Devuelve la ruta ('' si no se pudo). Se conservan las 20 últimas."""
+    try:
+        from . import paths
+        d = os.path.join(paths.HOME, "cache", "salidas")
+        os.makedirs(d, exist_ok=True)
+        old = sorted((os.path.join(d, f) for f in os.listdir(d)), key=os.path.getmtime)
+        for f in old[:-19]:
+            os.remove(f)
+        p = os.path.join(d, "%s_%s_%04d.txt" % (kind, time.strftime("%Y%m%d_%H%M%S"), int(time.time() * 1000) % 10000))
+        with open(p, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        return p
+    except Exception:
+        return ""
 
 
 class Ctx:
@@ -258,19 +291,49 @@ def read_file(a, ctx):
     p = ctx.path(a["path"])
     if not os.path.isfile(p):
         raise missing(p, ctx)
-    with open(p, "rb") as f:
-        raw = f.read(5_000_000)
-    if b"\0" in raw[:4096]:
-        raise ToolError("Parece un archivo binario (%d bytes)." % os.path.getsize(p))
-    lines = raw.decode("utf-8", errors="replace").splitlines()
+    size = os.path.getsize(p)
     off = max(1, int(a.get("offset") or 1))
     lim = max(1, int(a.get("limit") or 400))
-    seg = lines[off - 1: off - 1 + lim]
-    out = "\n".join("%d\t%s" % (off + i, l) for i, l in enumerate(seg))
-    rest = len(lines) - (off - 1 + lim)
-    if rest > 0:
-        out += "\n...[%d líneas más; usa offset=%d]" % (rest, off + lim)
-    return out or "(archivo vacío)"
+    budget = max(1500, int(getattr(ctx, "max_out", MAX_OUT)) - 300)      # que quepa en la respuesta sin recortes por el medio
+    out, used, n, nxt, scanned, capped = [], 0, 0, 0, 0, False
+    with open(p, "rb") as f:
+        head = f.read(4096)
+        enc = "utf-16" if head[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8"
+        if enc == "utf-8" and b"\0" in head:
+            raise ToolError("Parece un archivo binario (%d bytes): read_file solo lee texto. Para ver sus primeros bytes usa "
+                            "run_command (%s)." % (size, "Format-Hex -Path 'archivo' | Select-Object -First 8" if osys.WIN else "xxd archivo | head"))
+        f.seek(0)
+        # por líneas y sin tope de tamaño: antes se leían solo los primeros 5 MB y del resto se decía «archivo vacío»
+        src = f if enc == "utf-8" else iter(f.read().decode("utf-16", errors="replace").splitlines(True))
+        for raw in src:
+            n += 1
+            if n < off:
+                continue
+            if nxt:                                  # ya está lo pedido: solo se cuenta cuántas líneas quedan
+                scanned += len(raw)
+                if scanned > 64_000_000:             # …sin recorrer entero un archivo gigantesco
+                    capped = True
+                    break
+                continue
+            line = (raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw).rstrip("\r\n")
+            if n == 1:
+                line = line.lstrip("﻿")
+            if len(line) > 2000:
+                line = line[:2000] + " …[línea de %d caracteres, recortada]" % len(line)
+            text = "%d\t%s" % (n, line)
+            if out and (len(out) >= lim or used + len(text) + 1 > budget):
+                nxt = n                              # esta ya no entra: por aquí se sigue
+                continue
+            out.append(text)
+            used += len(text) + 1
+    if not out:
+        if n == 0:
+            return "(archivo vacío)"
+        raise ToolError("El archivo tiene %d líneas: no existe la línea %d." % (n, off))
+    if nxt:
+        left = ("más de %d líneas más (archivo de %.1f MB)" % (n - nxt, size / 1e6)) if capped else "%d líneas más" % (n - nxt + 1)
+        out.append("...[%s; usa offset=%d]" % (left, nxt))
+    return "\n".join(out)
 
 
 @tool("write_file", "write", "Crea o sobrescribe un archivo de texto (crea las carpetas necesarias).",
@@ -467,7 +530,7 @@ def search_files(a, ctx):
     def short(fp):                                  # rutas cortas (relativas a la carpeta de trabajo) ahorran contexto
         r = os.path.relpath(fp, ws) if os.path.abspath(fp).lower().startswith(ws.lower() + os.sep) else fp
         return r
-    res, seen = [], 0
+    res, seen, total, t_end, cut = [], 0, 0, time.time() + 6, False
     for root, dirs, files in os.walk(base):
         dirs[:] = sorted(d for d in dirs if d not in skip)
         for fn in sorted(files):
@@ -475,7 +538,9 @@ def search_files(a, ctx):
                 continue
             fp = os.path.join(root, fn)
             if pat is None:
-                res.append(short(fp))
+                total += 1
+                if len(res) < mx:
+                    res.append(short(fp))
             else:
                 seen += 1
                 try:
@@ -484,13 +549,19 @@ def search_files(a, ctx):
                     continue
                 for i, line in enumerate(lines, 1):
                     if pat.search(line):
-                        res.append("%s:%d: %s" % (short(fp), i, line.strip()[:200]))
-                        if len(res) >= mx:
-                            break
-            if len(res) >= mx:
-                return "\n".join(res) + "\n...[máximo alcanzado: afina la búsqueda con path o glob]"
+                        total += 1                  # pasado el máximo se sigue contando: saber cuántos hay ayuda a afinar
+                        if len(res) < mx:
+                            res.append("%s:%d: %s" % (short(fp), i, line.strip()[:200]))
+            if total > mx and time.time() > t_end:   # …sin eternizarse en una carpeta enorme
+                cut = True
+                break
+        if cut:
+            break
     if not res:
         return "Sin resultados%s." % (" (revisados %d archivos)" % seen if pat else "")
+    if total > mx:
+        return "\n".join(res) + "\n...[se muestran %d de %s%d resultados: afina la búsqueda con path o glob, o sube max_results]" % (
+            len(res), "más de " if cut else "", total)
     return "\n".join(res)
 
 
@@ -502,7 +573,9 @@ def _kill_tree(pid):
 def cmd_env():
     """Entorno para los comandos del agente: UTF-8 y sin paginadores ni colores que esperen teclado."""
     env = dict(os.environ)
-    env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "PAGER": "cat", "GIT_PAGER": "cat", "NO_COLOR": "1"})
+    # PYTHONUNBUFFERED: lo que un programa de Python imprime sale al momento y en su orden (sin él, los errores llegan antes
+    # que la salida normal, y la de un servidor en segundo plano no se ve hasta que se llena su búfer)
+    env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1", "PAGER": "cat", "GIT_PAGER": "cat", "NO_COLOR": "1"})
     if not osys.WIN:
         env["TERM"] = "dumb"
     return env
@@ -547,10 +620,109 @@ def pip_hint(out, cmd):
             "del módulo.]" % (mod, mod))
 
 
+_SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", "dist", "build"}
+
+
+def replace_plan(a, ctx):
+    """Qué cambiaría replace_in_files: [(ruta, texto nuevo, codificación, nº de reemplazos, [(línea, antes, después)])],
+    archivos revisados. No escribe nada."""
+    base = ctx.path(a.get("path") or ".")
+    if not os.path.isdir(base):
+        raise missing(base, ctx)
+    pattern = str(a.get("pattern") or "")
+    if not pattern:
+        raise ToolError("Falta 'pattern': el texto que hay que buscar.")
+    repl = str(a.get("replacement") if a.get("replacement") is not None else "")
+    is_re = bool(a.get("regex"))
+    whole = bool(a.get("whole_word")) if a.get("whole_word") is not None else not is_re
+    flags = 0 if a.get("case_sensitive", True) not in (False, "false", 0) else re.I
+    src = pattern if is_re else re.escape(pattern)
+    if whole:                                          # «palabra completa» también para nombres con puntos o guiones
+        src = r"(?<![\w])(?:%s)(?![\w])" % src
+    try:
+        rx = re.compile(src, flags | re.M)
+    except re.error as e:
+        raise ToolError("La expresión regular no es válida: %s" % e)
+    rep = repl if is_re else (lambda m: repl)
+    gl = str(a.get("glob") or "*").lower()
+    plan, seen = [], 0
+    for root, dirs, files in os.walk(base):
+        dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS and not d.startswith("."))
+        for fn in sorted(files):
+            if not fnmatch.fnmatch(fn.lower(), gl):
+                continue
+            fp = os.path.join(root, fn)
+            try:
+                if os.path.getsize(fp) > 2_000_000:
+                    continue
+                with open(fp, "rb") as f:
+                    raw = f.read()
+            except OSError:
+                continue
+            if b"\0" in raw[:4096]:
+                continue
+            for enc in ("utf-8", "cp1252"):
+                try:
+                    text = raw.decode(enc)
+                    break
+                except UnicodeDecodeError:
+                    text = None
+            if text is None:
+                continue
+            seen += 1
+            new, n = rx.subn(rep, text)
+            if not n or new == text:
+                continue
+            samples = []
+            for i, (old_l, new_l) in enumerate(zip(text.splitlines(), new.splitlines()), 1):
+                if old_l != new_l:
+                    samples.append((i, old_l.strip()[:120], new_l.strip()[:120]))
+                    if len(samples) >= 2:
+                        break
+            plan.append((fp, new, enc, n, samples))
+    return plan, seen
+
+
+@tool("replace_in_files", "write",
+      "Reemplaza un texto en todos los archivos de una carpeta cuyo nombre encaje con un filtro: para renombrar una función, "
+      "una clase, un módulo o una constante en todo el proyecto de una vez, en lugar de un edit_file por archivo. Busca el "
+      "texto tal cual y como palabra completa (no toca «total_final» al cambiar «total»); con regex=true, 'pattern' es una "
+      "expresión regular y 'replacement' admite \\1. Con preview=true no cambia nada: solo dice qué cambiaría. No renombra "
+      "archivos (para eso, move_path). El usuario puede deshacerlo.",
+      {"pattern": S("Texto a buscar (o expresión regular con regex=true)"), "replacement": S("Texto nuevo"),
+       "glob": S("Filtro de nombre, ej. *.py (por defecto, todos los archivos de texto)"), "path": S("Carpeta base (por defecto, la de trabajo)"),
+       "regex": B("'pattern' es una expresión regular"), "whole_word": B("Solo palabras completas (por defecto sí, salvo con regex)"),
+       "case_sensitive": B("Distinguir mayúsculas y minúsculas (por defecto sí)"), "preview": B("Solo mostrar qué cambiaría, sin tocar nada")},
+      ["pattern", "replacement"])
+def replace_in_files(a, ctx):
+    plan, seen = replace_plan(a, ctx)
+    if not plan:
+        return "Sin coincidencias de «%s» (revisados %d archivos): no se cambió nada." % (a.get("pattern"), seen)
+    if len(plan) > 300:
+        raise ToolError("Cambiaría %d archivos: demasiados para un solo reemplazo. Acota con glob o path." % len(plan))
+    ws = os.path.abspath(ctx.workspace)
+    short = lambda fp: os.path.relpath(fp, ws) if os.path.abspath(fp).lower().startswith(ws.lower() + os.sep) else fp
+    preview = bool(a.get("preview"))
+    if not preview:
+        for fp, new, enc, n, samples in plan:
+            with open(fp, "w", encoding=enc, newline="") as f:
+                f.write(new)
+    total = sum(p[3] for p in plan)
+    lines = [("Cambiaría %d apariciones en %d archivos (vista previa: no se tocó nada):" if preview else
+              "Reemplazadas %d apariciones en %d archivos:") % (total, len(plan))]
+    for fp, new, enc, n, samples in plan[:60]:
+        lines.append("%s: %d" % (short(fp), n))
+        for i, old_l, new_l in samples[:1 if len(plan) > 8 else 2]:
+            lines.append("    %d: %s  →  %s" % (i, old_l, new_l))
+    if len(plan) > 60:
+        lines.append("… y %d archivos más" % (len(plan) - 60))
+    return "\n".join(lines)
+
+
 def clixml_text(out):
     """PowerShell escribe sus errores como XML («#< CLIXML <Objs…>») cuando su salida va a otro programa: aquí, como
     texto normal (el modelo no entendía «_x000D__x000A_» ni las etiquetas)."""
-    if "#< CLIXML" not in out:
+    if "#< CLIXML" not in out and "<Objs " not in out:
         return out
 
     def plain(m):
@@ -558,16 +730,33 @@ def clixml_text(out):
         s = "".join(parts)
         s = re.sub(r"_x([0-9A-Fa-f]{4})_", lambda x: chr(int(x.group(1), 16)), s)
         return html.unescape(s).replace("\r\n", "\n")
-    out = re.sub(r"#< CLIXML\s*(<Objs\b.*?</Objs>)?", plain, out, flags=re.S)
+    # la cabecera sale al primer error y el bloque con los errores, al terminar: entre ambos puede haber salida normal
+    out = re.sub(r"#< CLIXML[ \t]*\r?\n?", "", out)
+    out = re.sub(r"<Objs\b[^>]*>.*?</Objs>", plain, out, flags=re.S)
     # la posición del error («En línea: 1 Carácter: 126», «+ ... $ProgressPreference=…», «+ ~~~~») señala el prefijo que
     # añade Jayth al comando, no el comando del modelo: fuera
     return re.sub(r"[^\n]*\n[ \t]*\+ [^\n]*ProgressPreference='SilentlyContinue'[^\n]*\n(?:[ \t]*\+[ \t~]*\n)?", "", out)
 
 
+_NATIVE_ERR = re.compile(r"(?m)^[^\n:]{1,80} : ([^\n]*)\n[^\n+]*\n(?:[ \t]*\+[^\n]*\n)+?[ \t]+\+ CategoryInfo[^\n]*\n(?:[^\n+]*\n)?"
+                         r"[ \t]+\+ FullyQualifiedErrorId : NativeCommandError[^\n]*\n?")
+
+
+def powershell_text(out):
+    """Windows PowerShell 5.1: lo que un programa escribe en stderr, si la orden lleva «2>&1», sale envuelto como un error de
+    PowerShell («python : … / En línea: 1 Carácter: … / CategoryInfo … NativeCommandError») aunque el programa haya ido
+    bien. Aquí queda solo el texto del programa. Y como Jayth antepone una línea a la orden, las líneas que citan los
+    errores de PowerShell se corrigen para que sean las de la orden del modelo."""
+    out = out.replace("\r\n", "\n")
+    out = _NATIVE_ERR.sub(lambda m: m.group(1) + "\n", out)
+    return re.sub(r"(?m)^(En línea: |At line:)(\d+)", lambda m: m.group(1) + str(max(1, int(m.group(2)) - 1)), out)
+
+
 @tool("run_command", "exec", "Ejecuta un comando de la terminal del sistema (%s) en la carpeta de trabajo y devuelve su salida. "
       "Para scripts: `python archivo.py`. Con background=true lo deja corriendo (servidores, vigilantes) y devuelve un id "
-      "para command_output/stop_command." % osys.shell_name(),
-      {"command": S("Comando o script de %s" % osys.shell_name()), "timeout": I("Segundos máximos (por defecto 60, máx. 900)"), "cwd": S("Carpeta donde ejecutar (opcional)"),
+      "para command_output/stop_command.%s" % (osys.shell_label(), " La salida ya trae también los errores (stderr): no añadas "
+                                                "2>&1. No existen &&, || ni el operador ?: (usa ; e if)." if osys.WIN else ""),
+      {"command": S("Comando o script de %s" % osys.shell_label()), "timeout": I("Segundos máximos (por defecto 60, máx. 900)"), "cwd": S("Carpeta donde ejecutar (opcional)"),
        "background": B("Dejarlo corriendo en segundo plano")}, ["command"])
 def run_command(a, ctx):
     cmd = str(a["command"])
@@ -586,8 +775,8 @@ def run_command(a, ctx):
         pid = harness.bg_start(cmd, cwd)
         time.sleep(2.5)
         return "Iniciado en segundo plano con id %s.\n%s" % (pid, harness.bg_output(pid, 30))
-    p = subprocess.Popen(osys.shell_argv(cmd), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                         env=cmd_env(), **osys.popen_kwargs())
+    p = subprocess.Popen(osys.shell_argv(cmd, report_exit=True), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, env=cmd_env(), **osys.popen_kwargs())
     chunks = []
 
     def reader():
@@ -607,14 +796,28 @@ def run_command(a, ctx):
     if why:
         _kill_tree(p.pid)
     th.join(2)
-    out = clixml_text(b"".join(chunks).decode("utf-8", errors="replace")).strip()
+    out = b"".join(chunks).decode("utf-8", errors="replace")
+    last = None                                  # código del último programa, según la propia terminal (Windows)
+    m = re.search(r"(?m)^%s(-?\d*)[ \t]*\r?\n?" % re.escape(osys.EXIT_MARK), out)
+    if m:                                        # (los errores de PowerShell llegan después de la marca: no es la última línea)
+        out, last = out[:m.start()] + out[m.end():], (int(m.group(1)) if m.group(1) else None)
+    out = clixml_text(out).strip()
+    if osys.WIN:
+        out = powershell_text(out).strip()
     # sin espacios de relleno al final de cada linea ni filas vacias repetidas (las tablas de PowerShell rellenan mucho):
     # menos tokens = el modelo local lee la salida antes
     out = re.sub(r"\n{3,}", "\n\n", "\n".join(l.rstrip() for l in out.splitlines()))
-    out = clip(out, ctx.max_out) + pip_hint(out, cmd) + net_hint(out) + (("\n" + pip_note) if pip_note else "")
+    where = ""
+    if len(out) > ctx.max_out:                   # no cabe: queda entera en un archivo, para leer lo que falte
+        full = spill(out)
+        where = ("la salida entera (%d líneas) está en %s: léela por partes con read_file" % (out.count("\n") + 1, full)) if full else ""
+    out = clip(out, ctx.max_out, where) + pip_hint(out, cmd) + net_hint(out) + (("\n" + pip_note) if pip_note else "")
     if why:
-        return (out + "\n" if out else "") + "[Proceso terminado: %s]" % why
-    return (out or "(sin salida)") + "\n[código de salida %d]" % p.returncode
+        return (out + "\n" if out else "(sin salida hasta ese momento)\n") + "[Proceso terminado junto con los que abrió: %s]" % why
+    code = p.returncode
+    if last is not None and last != code:        # PowerShell da error por su cuenta (p. ej. texto en stderr) o lo oculta
+        return (out or "(sin salida)") + "\n[código de salida del último programa: %d · PowerShell terminó con %d]" % (last, code)
+    return (out or "(sin salida)") + "\n[código de salida %d]" % code
 
 
 @tool("run_python", "exec",
@@ -701,6 +904,35 @@ def main_html(h):
     h = re.sub(r"(?is)<(nav|aside|footer|header|form|button|select)\b[^>]*>.*?</\1>", " ", h)
     # índices laterales, menús…; «toctree» no: en la documentación hecha con Sphinx es el contenido de las páginas índice
     return re.sub(r"(?is)<(div|ul|section)\b[^>]*(class|id)=[\"'][^\"']*(toc(?!tree)|sidebar|sphinxsidebar|navbar|menu|breadcrumb|cookie|related)[^\"']*[\"'][^>]*>.*?</\1>", " ", h)
+
+
+def page_credits(h):
+    """Autor y fecha de una página según sus metadatos (' · autor: X · publicado: 2026-01-02' o ''). El texto principal los
+    pierde a menudo (van en una línea de iconos o en la cabecera) y son justo lo que hace falta para citar la fuente."""
+    def meta(*names):
+        for n in names:
+            m = (re.search(r"(?is)<meta\b[^>]*(?:name|property|itemprop)=[\"']%s[\"'][^>]*content=[\"']([^\"']{1,200})[\"']" % re.escape(n), h)
+                 or re.search(r"(?is)<meta\b[^>]*content=[\"']([^\"']{1,200})[\"'][^>]*(?:name|property|itemprop)=[\"']%s[\"']" % re.escape(n), h))
+            if m and m.group(1).strip():
+                return html.unescape(m.group(1)).strip()
+        return ""
+    author = meta("author", "article:author", "parsely-author", "dc.creator", "twitter:creator")
+    date = meta("article:published_time", "datePublished", "date", "dc.date", "pubdate", "parsely-pub-date", "og:updated_time", "article:modified_time")
+    if not date:
+        m = re.search(r"(?is)<time\b[^>]*datetime=[\"']([^\"']{4,40})[\"']", h)
+        date = m.group(1).strip() if m else ""
+    if not author or not date:                       # datos estructurados (JSON-LD), que es donde más páginas los ponen
+        for blob in re.findall(r"(?is)<script\b[^>]*type=[\"']application/ld\+json[\"'][^>]*>(.*?)</script>", h)[:6]:
+            if not author:
+                m = re.search(r'"author"\s*:\s*(?:\[\s*)?(?:\{[^{}]*?"name"\s*:\s*"([^"]{1,120})"|"([^"]{1,120})")', blob, re.S)
+                author = (m.group(1) or m.group(2) or "").strip() if m else ""
+            if not date:
+                m = re.search(r'"datePublished"\s*:\s*"([^"]{4,40})"', blob)
+                date = m.group(1).strip() if m else ""
+    if author.lower().startswith("http"):
+        author = ""
+    date = re.sub(r"T.*$", "", date) if re.match(r"\d{4}-\d{2}-\d{2}T", date) else date
+    return ((" · autor: " + author[:80]) if author else "") + ((" · publicado: " + date[:40]) if date else "")
 
 
 def page_links(h, base, mx=20):
@@ -805,7 +1037,12 @@ def web_fetch(a, ctx):
     except LookupError:
         txt = raw.decode("utf-8", errors="replace")
     is_html = "html" in ctype.lower() or txt.lstrip()[:15].lower().startswith(("<!doctype", "<html"))
+    credits = ""
     if is_html and not a.get("raw"):
+        try:
+            credits = page_credits(txt) if not _is_local(final) else ""
+        except Exception:
+            credits = ""
         # webs de internet: solo el contenido principal y sus enlaces; tu propia web en local: todo (botones, formularios…)
         if _is_local(final):
             txt = html_to_text(txt)
@@ -813,12 +1050,18 @@ def web_fetch(a, ctx):
             body = main_html(txt)
             links = page_links(body, final)
             txt = _flatten(body, True) + ("\n\nEnlaces de la página:\n" + "\n".join(links) if links else "")
-    mx = max(500, int(a.get("max_chars") or 6000))
+    # nunca más de lo que cabe en una respuesta: si no, el recorte general quitaría un trozo del medio sin decir cuál
+    mx = min(max(500, int(a.get("max_chars") or 6000)), max(500, int(getattr(ctx, "max_out", MAX_OUT)) - 400))
     start = max(0, int(a.get("start") or 0))
-    part = txt[start:start + mx]
-    rest = len(txt) - (start + mx)
-    head = "[%s · %d caracteres%s]\n" % (final, len(txt), (" · desde el %d" % start) if start else "")
-    tail = ("\n...[quedan %d caracteres: llama de nuevo con start=%d para seguir]" % (rest, start + mx)) if rest > 0 else ""
+    end = min(len(txt), start + mx)
+    if end < len(txt):                       # el corte, entre palabras (mejor aún, entre líneas), no a mitad de una
+        cut = max(txt.rfind("\n", start + mx * 3 // 4, end), txt.rfind(" ", start + mx * 9 // 10, end))
+        if cut > start:
+            end = cut + 1
+    part = txt[start:end]
+    rest = len(txt) - end
+    head = "[%s · %d caracteres%s%s]\n" % (final, len(txt), (" · desde el %d" % start) if start else "", credits)
+    tail = ("\n...[quedan %d caracteres: llama de nuevo con start=%d para seguir]" % (rest, end)) if rest > 0 else ""
     return head + part + tail
 
 
@@ -1227,8 +1470,20 @@ def _win(q, ctx, wait=6):
         time.sleep(0.4)
         hwnd, title = _find_window(q)
     if hwnd is None:
+        if any(str(q).strip().lower() in t.lower() and _own_window(h) for h, t in _windows()):
+            raise ToolError("«%s» es la propia ventana de Jayth, que no se maneja ni se captura a sí misma con el control del "
+                            "ordenador. Para ver la pantalla entera usa screenshot sin window." % q)
         raise ToolError("No hay ninguna ventana cuyo título contenga «%s». Mira los títulos con list_windows." % q)
     return hwnd, title
+
+
+def _own_window(hwnd):
+    """¿Es una ventana de este mismo Jayth? (solo se sabe en Windows)"""
+    if not osys.WIN:
+        return False
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value == os.getpid()
 
 
 def _zone(ctx, z):
@@ -1524,7 +1779,8 @@ def _windows():
 
 @tool("list_windows", "control", "Lista los títulos de las ventanas abiertas.", {})
 def list_windows(a, ctx):
-    return "\n".join(t for _, t in _windows()) or "Sin ventanas."
+    # las de Jayth se marcan: están en la lista, pero las herramientas de ventanas no actúan sobre ellas
+    return "\n".join(t + (" (Jayth: esta ventana no se maneja a sí misma)" if _own_window(h) else "") for h, t in _windows()) or "Sin ventanas."
 
 
 @tool("focus_window", "control", "Trae al frente la primera ventana cuyo título contenga el texto dado.", {"title": S("Parte del título")}, ["title"])
@@ -1864,8 +2120,10 @@ def browser_read(a, ctx):
 
 
 @tool("browser_click", "net", "Pulsa un enlace, botón, casilla o pestaña de la página del navegador integrado por su número (de browser_open o "
-      "browser_read) o por su texto. Es un clic real; si se abre otra página, devuelve su resumen.",
-      {"index": I("Número del elemento"), "text": S("O el texto del enlace o botón")})
+      "browser_read) o por su texto. Es un clic real; si se abre otra página devuelve su resumen y, si no, lo que cambió a la "
+      "vista (avisos, texto nuevo). Los números cambian cuando la página se redibuja: si das número y texto a la vez, solo pulsa "
+      "si ese número sigue siendo ese elemento.",
+      {"index": I("Número del elemento"), "text": S("El texto del enlace o botón (solo, o junto al número para comprobarlo)")})
 def browser_click(a, ctx):
     return _web("click", ctx, index=a.get("index"), text=a.get("text"))
 
@@ -1885,9 +2143,13 @@ def browser_nav(a, ctx):
     return _web("nav", ctx, action=str(a["action"]))
 
 
-@tool("browser_screenshot", "net", "Captura lo que se ve en el navegador integrado (para ver el diseño de la página; el usuario también la ve).", {})
+@tool("browser_screenshot", "net", "Captura la página del navegador integrado para ver su diseño (el usuario también la ve). El panel "
+      "suele ser estrecho y muchas páginas muestran ahí su versión de móvil: con width eliges el ancho con el que se maqueta "
+      "(1280 para la versión de escritorio). Con full_page=true captura la página entera y no solo lo que se ve.",
+      {"width": I("Ancho en píxeles con el que se maqueta la página (opcional; p. ej. 1280 escritorio, 390 móvil)"),
+       "full_page": B("Capturar la página entera, de arriba abajo")})
 def browser_screenshot(a, ctx):
-    return _web("shot", ctx)
+    return _web("shot", ctx, 60, width=int(a.get("width") or 0), full_page=bool(a.get("full_page")))
 
 
 # ---------------------------------------------------------------- procesos en segundo plano
@@ -1901,12 +2163,17 @@ def command_output(a, ctx):
     return clip(out, ctx.max_out)
 
 
-@tool("stop_command", "exec", "Detiene un comando lanzado en segundo plano.", {"id": S("Id del proceso (bg_…)")}, ["id"])
+@tool("stop_command", "exec", "Detiene un comando lanzado en segundo plano. Primero se lo pide con orden (como Ctrl+C, para "
+      "que cierre sus archivos y conexiones) y, si en unos segundos no termina, lo cierra a la fuerza junto con los procesos "
+      "que abrió. El resultado dice cómo terminó.",
+      {"id": S("Id del proceso (bg_…)")}, ["id"])
 def stop_command(a, ctx):
     from . import harness
-    if not harness.bg_stop(str(a["id"])):
+    how = harness.bg_stop(str(a["id"]))
+    if not how:
         raise ToolError("No hay ningún proceso con id %s." % a["id"])
-    return "Detenido %s" % a["id"]
+    return {"ended": "%s ya había terminado por su cuenta.", "clean": "Detenido %s: terminó con orden al pedírselo (Ctrl+C).",
+            "forced": "Detenido %s a la fuerza: no terminó al pedírselo con Ctrl+C (puede haber dejado archivos temporales sin cerrar)."}[how] % a["id"]
 
 
 # ---------------------------------------------------------------- documentos e imagenes del disco
@@ -1965,7 +2232,47 @@ def view_image(a, ctx):
     if os.path.getsize(p) > 12_000_000:
         raise ToolError("La imagen es demasiado grande (más de 12 MB).")
     with open(p, "rb") as f:
-        return {"text": "Imagen %s (%d KB)" % (os.path.basename(p), os.path.getsize(p) // 1024), "image": f.read()}
+        data = f.read()
+    if not image_mime(data):                 # bmp, tiff, ico, svg…: los modelos solo admiten png, jpg, gif y webp
+        data = to_png(data)
+        if not data:
+            raise ToolError("No puedo abrir %s como imagen (formatos admitidos: png, jpg, gif, webp, bmp, tiff, ico, svg)." % os.path.basename(p))
+    return {"text": "Imagen %s (%d KB)" % (os.path.basename(p), os.path.getsize(p) // 1024), "image": data}
+
+
+def image_mime(data, name=None):
+    """Tipo de una imagen por sus primeros bytes ('' si no es png, jpg, gif ni webp). Con `name`, si no se reconoce se
+    supone por la extensión. Un servicio por API rechaza la petición entera si el tipo declarado no es el del contenido
+    (un .gif guardado con nombre .png), y como las imágenes se reenvían en cada paso la conversación quedaba bloqueada."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if name is None:
+        return ""
+    ext = os.path.splitext(name)[1].lower()
+    return {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}.get(ext, "image/png")
+
+
+def to_png(data):
+    """Convierte a PNG una imagen en otro formato (b'' si no se puede leer)."""
+    try:
+        from PySide6.QtGui import QImage
+        from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+        img = QImage.fromData(data)
+        if img.isNull():
+            return b""
+        ba = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QIODevice.WriteOnly)
+        img.save(buf, "PNG")
+        return bytes(ba)
+    except Exception:
+        return b""
 
 
 @tool("generate_image", "write",
@@ -2155,6 +2462,29 @@ def use_skill(a, ctx):
       ["question"])
 def ask_user(a, ctx):
     return "(la respuesta la gestiona el agente)"
+
+
+@tool("undo_changes", "write",
+      "Deshace tus últimos cambios de archivos de esta conversación (write_file, edit_file, multi_edit, replace_in_files, "
+      "move_path, delete_path, create_document): devuelve los archivos a como estaban antes de esa acción. Sin parámetros "
+      "deshace la última acción tuya que cambió archivos; con count, las últimas N, de la más reciente hacia atrás. Úsalo "
+      "cuando un cambio salió mal y es más seguro volver atrás que arreglarlo a mano. No deshace comandos ejecutados.",
+      {"count": I("Cuántas acciones deshacer (por defecto 1)")})
+def undo_changes(a, ctx):
+    return "(lo gestiona el agente)"
+
+
+@tool("delegate", "agent",
+      "Encarga una subtarea de investigación a un ayudante: otra copia de ti, con la memoria en blanco, que lee archivos, busca y "
+      "consulta la web por su cuenta y te devuelve solo su informe. Úsalo cuando haya que leer o buscar mucho y solo te importe la "
+      "conclusión (explorar un proyecto grande, localizar dónde se usa algo, comparar documentación, investigar un tema), para no "
+      "llenar tu conversación con todo lo leído. El ayudante no ve esta conversación ni puede cambiar nada ni preguntar al usuario: "
+      "dale en 'task' todo el contexto, qué debe averiguar, dónde y qué quieres que te devuelva. No lo uses para algo que resuelves "
+      "con una o dos lecturas.",
+      {"task": S("La subtarea completa, con su contexto y lo que debe devolver"), "title": S("Nombre corto de la subtarea (lo ve el usuario)")},
+      ["task"])
+def delegate(a, ctx):
+    return "(lo gestiona el agente)"
 
 
 @tool("connect_service", "agent",

@@ -453,7 +453,7 @@ def discover(folders, models, ignored=(), depth=3):
         parent = os.path.basename(os.path.dirname(e.path)).lower()
         if parent.endswith("__original"):
             return
-        if parent in ("conocimiento", "imagen") or "embedding" in n:   # modelos internos (búsqueda en tus archivos, imágenes)
+        if _internal_path(e.path) or "embedding" in n:   # modelos internos (búsqueda en tus archivos, imágenes)
             return
         try:
             size = e.stat().st_size
@@ -488,11 +488,17 @@ def discover(folders, models, ignored=(), depth=3):
     return out
 
 
+def _internal_path(path):
+    """¿Está dentro de una de las carpetas de modelos internos? El generador de imágenes guarda cada modelo en su propia
+    subcarpeta (imagen\\flux2-klein-4b\\…, imagen\\comun\\…), así que no basta con mirar la carpeta inmediata."""
+    parts = re.split(r"[\\/]+", os.path.dirname(path or "").lower())
+    return any(p in ("conocimiento", "imagen") for p in parts[-3:])
+
+
 def internal_model(m):
     """¿Es un modelo interno de Jayth (búsqueda en tus archivos, imágenes) y no uno para conversar?"""
     path = m.get("path") or ""
-    parent = os.path.basename(os.path.dirname(path)).lower()
-    return parent in ("conocimiento", "imagen") or (bool(m.get("found")) and "embedding" in os.path.basename(path).lower())
+    return _internal_path(path) or (bool(m.get("found")) and "embedding" in os.path.basename(path).lower())
 
 
 def drop_internal():

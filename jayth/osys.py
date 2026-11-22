@@ -28,11 +28,24 @@ def shell_name():
     return "PowerShell" if WIN else ("zsh" if MAC and os.path.exists("/bin/zsh") else "bash")
 
 
-def shell_argv(command):
-    """Argumentos para ejecutar un comando en la terminal del sistema."""
+def shell_label():
+    """La terminal tal como hay que decírsela al modelo: en Windows es la 5.1 de siempre, que no entiende lo de la 7."""
+    return "Windows PowerShell 5.1" if WIN else shell_name()
+
+
+EXIT_MARK = "__jayth_ultimo_codigo__="        # run_command: con qué código terminó el último programa (lo dice la propia terminal)
+
+
+def shell_argv(command, report_exit=False):
+    """Argumentos para ejecutar un comando en la terminal del sistema. report_exit (Windows): la última línea de la salida
+    será EXIT_MARK + el código del último programa ejecutado, que PowerShell no devuelve como código propio."""
     if WIN:
         import base64
-        prefix = "[Console]::OutputEncoding=[Text.Encoding]::UTF8;$OutputEncoding=[Text.Encoding]::UTF8;$ProgressPreference='SilentlyContinue';"
+        # el prefijo, en su propia línea: así los errores de PowerShell señalan la columna real de la orden del modelo
+        prefix = "[Console]::OutputEncoding=[Text.Encoding]::UTF8;$OutputEncoding=[Text.Encoding]::UTF8;$ProgressPreference='SilentlyContinue'\n"
+        if report_exit:                  # …y la terminal acaba con el mismo código con el que habría acabado sin esta línea
+            command += ("\n;$__jy=$?;$__jl=$LASTEXITCODE;Write-Output ('%s' + $__jl);"
+                        "if(-not $__jy){if($__jl -is [int]){exit $__jl}else{exit 1}}" % EXIT_MARK)
         enc = base64.b64encode((prefix + command).encode("utf-16-le")).decode()
         return ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc]
     sh = "/bin/zsh" if MAC and os.path.exists("/bin/zsh") else ("/bin/bash" if os.path.exists("/bin/bash") else "/bin/sh")
@@ -50,6 +63,46 @@ def interactive_shell_argv():
 def popen_kwargs():
     """Sin ventana de consola en Windows; grupo de procesos propio en macOS/Linux (para poder cerrarlo entero)."""
     return {"creationflags": NO_WINDOW} if WIN else {"start_new_session": True}
+
+
+_SYNC_NAMES = (("onedrive", "OneDrive"), ("dropbox", "Dropbox"), ("google drive", "Google Drive"), ("googledrive", "Google Drive"),
+               ("mi unidad", "Google Drive"), ("my drive", "Google Drive"), ("icloud", "iCloud"), ("mobile documents", "iCloud"),
+               ("pcloud", "pCloud"), ("nextcloud", "Nextcloud"), ("megasync", "MEGA"))
+
+
+def synced_service(path):
+    """Nombre del servicio que sincroniza esa carpeta con la nube (OneDrive, Dropbox, iCloud…) o '' si no está en ninguna.
+    En muchos equipos con Windows la carpeta Documentos está dentro de OneDrive sin que el usuario lo haya decidido."""
+    p = os.path.normcase(os.path.abspath(str(path or "")))
+    for var in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        root = os.environ.get(var)
+        if root and (p + os.sep).startswith(os.path.normcase(os.path.abspath(root)) + os.sep):
+            return "OneDrive"
+    parts = [x.lower() for x in p.replace("\\", "/").split("/") if x]
+    for part in parts:
+        for key, name in _SYNC_NAMES:
+            if part == key or part.startswith(key + " ") or part.startswith(key + "-"):
+                return name
+    return ""
+
+
+def interrupt_tree(pid):
+    """Pide a un proceso en segundo plano (y a los que abrió) que termine con orden, como Ctrl+C en una terminal: así un
+    servidor cierra sus archivos y conexiones. No espera ni garantiza nada: quien llama espera unos segundos y, si sigue
+    vivo, usa kill_tree. Devuelve True si se pudo enviar la señal."""
+    try:
+        if WIN:
+            # los procesos se lanzan sin ventana pero con consola propia (oculta); un ayudante se engancha a ella y manda
+            # Ctrl+C (Jayth no tiene consola y no puede hacerlo él mismo sin tocar la suya): app.py --interrupt PID
+            r = subprocess.run(launch_argv() + ["--interrupt", str(int(pid))], capture_output=True, timeout=8, creationflags=NO_WINDOW)
+            return r.returncode == 0
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGINT)
+        except (ProcessLookupError, PermissionError):
+            os.kill(pid, signal.SIGINT)
+        return True
+    except Exception:
+        return False
 
 
 def kill_tree(pid):

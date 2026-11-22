@@ -274,6 +274,12 @@ BG = {}
 def bg_start(command, cwd):
     from .tools import cmd_env
     pid = "bg_" + uuid.uuid4().hex[:6]
+    if osys.WIN:               # «ignorar Ctrl+C» se hereda de quien lanzó Jayth: sin esto el proceso no podría cerrarse con orden
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetConsoleCtrlHandler(None, False)
+        except Exception:
+            pass
     p = subprocess.Popen(osys.shell_argv(command), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          env=cmd_env(), **osys.popen_kwargs())
     rec = {"proc": p, "cmd": command, "lines": [], "started": time.time()}
@@ -296,23 +302,36 @@ def bg_output(pid, last=80):
     return "[%s · %s · %ds]\n%s" % (pid, state, time.time() - r["started"], "\n".join(r["lines"][-last:]) or "(sin salida todavía)")
 
 
-def bg_stop(pid):
+def bg_stop(pid, gentle=True, wait=5.0):
+    """Detiene un proceso en segundo plano. Primero se lo pide con orden (Ctrl+C: un servidor cierra sus archivos y
+    conexiones) y espera unos segundos; si no termina, lo cierra a la fuerza con los procesos que abrió. Devuelve False
+    si no existe, o cómo acabó: "ended" (ya había terminado), "clean" (cerró él) o "forced"."""
     r = BG.get(pid)
     if not r:
         return False
-    if r["proc"].poll() is None:
-        osys.kill_tree(r["proc"].pid)
-        r["stopped"] = True
-        try:                       # que al consultarlo justo después ya conste como detenido (antes seguía «en ejecución»)
-            r["proc"].wait(timeout=4)
+    p = r["proc"]
+    if p.poll() is not None:
+        return "ended"
+    r["stopped"] = True
+    how = "forced"
+    if gentle and osys.interrupt_tree(p.pid):
+        try:
+            p.wait(timeout=wait)
+            how = "clean"
         except Exception:
             pass
-    return True
+    osys.kill_tree(p.pid)          # también tras un cierre limpio: por si quedó algún proceso hijo
+    try:                           # que al consultarlo justo después ya conste como detenido (antes seguía «en ejecución»)
+        p.wait(timeout=4)
+    except Exception:
+        pass
+    r["how"] = how
+    return how
 
 
 def bg_stop_all():
     for pid in list(BG):
-        bg_stop(pid)
+        bg_stop(pid, gentle=False)         # al cerrar Jayth no se espera a nadie
 
 
 # ---------------------------------------------------------------- documentos (Word, Excel, PowerPoint, PDF)

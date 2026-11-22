@@ -20,6 +20,8 @@ DEFAULTS = {
     "external_model": "",
     "providers": [],             # servicios por API guardados: {id, name, url, key, models}
     "external_provider": "",     # id del proveedor al que pertenece el modelo externo activo
+    "api_ctx_max": 200000,       # tope de conversación que se envía en cada paso a un modelo por API en la nube (0 = el del modelo)
+    "subagents": "auto",         # ayudantes para subtareas de lectura (delegate): "auto" (solo con modelos por API), "on" u "off"
     # modelos locales (GGUF). Cada uno: {id, name, path, mmproj, repo, file, size, sha256, mmproj_file, mmproj_size, mmproj_sha256}
     "models": [],
     "active_model": "",
@@ -642,11 +644,11 @@ def _hardware():
 def effective_ctx(cfg, m=None):
     """Contexto con el que se enciende el modelo. Con n_ctx > 0 es ese número; con 0 (automático) es el máximo que admite
     el modelo de fábrica, reducido si su caché no cabe en la memoria del equipo (nunca por debajo de CTX_FLOOR)."""
+    if cfg.get("llm_mode") == "external":                # un modelo por API tiene su propio contexto (no el de los locales)
+        return A.API.context(cfg)
     n = int(cfg.get("n_ctx") or 0)
     if n > 0:
         return n
-    if cfg.get("llm_mode") == "external":
-        return CTX_FLOOR                                 # el servidor externo decide su propio contexto
     m = m or active_model(cfg)
     c = model_caps(m) if m else None
     native = int((c or {}).get("ctx") or 0) or 32768

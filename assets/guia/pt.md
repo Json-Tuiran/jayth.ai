@@ -153,6 +153,13 @@ de um site, preencher formulários, páginas com JavaScript). O agente o control
 brilho nas bordas enquanto tem o controle; o usuário pode intervir quando quiser. As senhas são sempre digitadas pelo
 usuário, e o agente pede confirmação antes de comprar, pagar, publicar ou enviar dados pessoais.
 
+Na barra dele: voltar, avançar, recarregar (ou parar enquanto carrega), o endereço (ou o que se quiser pesquisar),
+**Pesquisar na página** (Ctrl+F), abrir a página no navegador do sistema e um menu com **Ampliar** e **Reduzir**
+(Ctrl++ e Ctrl+-), **Copiar o endereço**, **Salvar a página como PDF** (Ctrl+P; vai para Downloads) e **Limpar os
+dados do navegador** (cookies, logins e cache). O botão direito oferece as opções próprias de links, imagens e
+texto. As páginas são pedidas no idioma da interface. Ao abrir o navegador, os outros painéis encolhem e, ao
+fechá-lo, recuperam a largura.
+
 ## Tela (canvas)
 
 Para páginas web, documentos longos, diagramas SVG ou programas que o usuário queira ver: o agente os mostra em um
@@ -215,7 +222,13 @@ funciona em sessões X11 (no Wayland o controle global é limitado); para listar
   (config.json + .safetensors), que o Jayth converte para GGUF no computador. Escolhe-se a quantização (a recomendada
   vem marcada) e, se existir, a **visão** para que o modelo veja imagens e capturas.
 - **Modelos por API…**: OpenAI, Claude, Gemini, Ollama, LM Studio ou outro servidor compatível com OpenAI. Também em
-  **Configurações › Modelos › Provedor** (URL, nome do modelo e chave).
+  **Configurações › Modelos › Provedor** (URL, nome do modelo e chave). Com um modelo por API, o Jayth pergunta ao
+  serviço quanto contexto e quanta saída esse modelo aceita e usa esses valores (com um teto de 200.000 tokens por
+  passo para conter o gasto), se adapta sozinho se o serviço rejeitar algum parâmetro, permite turnos mais longos
+  (120 passos) e oferece ao agente **ajudantes**: subtarefas de leitura ou pesquisa feitas por outra cópia do modelo,
+  das quais só volta o relatório. Esses serviços pensam sem mostrar e entregam cada ação de uma vez, então o chat
+  pode passar um tempo dizendo que o serviço está preparando a resposta; se uma solicitação travar, o Jayth a
+  interrompe e pede ao modelo que continue.
 - **Ligar ou desligar o modelo:** chip do modelo › **Motor**, ou o botão **Ligar modelo** do aviso. Ligado, ele
   ocupa memória e responde na hora; desligado, libera a memória.
 - Os downloads mostram porcentagem, velocidade e tempo, continuam de onde pararam se forem interrompidos e são
