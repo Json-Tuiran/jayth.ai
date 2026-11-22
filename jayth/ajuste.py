@@ -104,6 +104,21 @@ class Cancelled(Exception):
     pass
 
 
+_BENCH_FIT = {}
+
+
+def _bench_fits(exe):
+    """¿Este llama-bench sabe ajustar el modelo a la memoria de la gráfica (-fitt)?"""
+    if exe not in _BENCH_FIT:
+        try:
+            out = subprocess.run([exe, "--help"], capture_output=True, text=True, timeout=20, cwd=os.path.dirname(exe),
+                                 **osys.popen_kwargs()).stdout
+        except Exception:
+            out = ""
+        _BENCH_FIT[exe] = "--fit-target" in out
+    return _BENCH_FIT[exe]
+
+
 def run_bench(cfg, m, threads, fas, progress=None, stop=None):
     """llama-bench con todas las combinaciones: [{'threads', 'fa', 'pp', 'tg'}]."""
     exe = bench_exe(cfg)
@@ -111,8 +126,13 @@ def run_bench(cfg, m, threads, fas, progress=None, stop=None):
         raise RuntimeError(tr("Este motor no trae llama-bench: actualízalo en Ajustes › Rendimiento."))
     cmd = [exe, "-m", m["path"], "-t", ",".join(map(str, threads)), "-fa", ",".join(fas), "-p", "256", "-n", "32", "-r", "1",
            "-b", str(cfg.get("batch_size") or 512), "-o", "json"]
-    if cfg.get("backend") in ("cuda", "vulkan", "metal") and int(cfg.get("gpu_layers", -1)) >= 0:
-        cmd += ["-ngl", str(cfg["gpu_layers"])]
+    if cfg.get("backend") in ("cuda", "vulkan", "metal"):
+        if int(cfg.get("gpu_layers", -1)) >= 0:
+            cmd += ["-ngl", str(cfg["gpu_layers"])]
+        elif _bench_fits(exe):
+            # como al cargar el modelo (--fit): lo que quepa en la gráfica con margen, el resto en la RAM. Sin esto
+            # llama-bench intenta meterlo entero en la gráfica y, si no cabe, falla o mide otra cosa
+            cmd += ["-fitt", "1024"]
     import tempfile
     # la salida va a archivos: con tuberías sin leer, llama-bench se bloquea al llenarse (en Windows, a los pocos KB)
     fo, fe = tempfile.TemporaryFile(), tempfile.TemporaryFile()

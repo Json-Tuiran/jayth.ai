@@ -39,6 +39,13 @@ Criado por Ing. Jeison Tuiran. Software livre com licença GPL-3.0. Site: https:
 - **Chip do modelo** (ex.: “Qwen3.8 27B · Baixo”): troca de modelo, o **Esforço** (quanto ele raciocina antes de
   responder: Baixo, Médio, Alto), baixa ou adiciona modelos, Gerenciar modelos…, Modelos por API… e **Motor**
   (ligar ou desligar o modelo).
+- O **Esforço** faz o que cada modelo permite de fábrica, e o próprio menu explica-o. Modelos locais: os que trazem níveis
+  próprios (gpt-oss) usam-nos tal como estão; nos que só ligam ou desligam o raciocínio (Qwen, Gemma, GLM…), «Baixo»
+  desliga-o e «Médio» e «Alto» deixam-no pensar até um limite que cresce com o tamanho do modelo (um 2B pensa pouco; um
+  de centenas de milhares de milhões de parâmetros não tem limite em «Alto»), e o menu diz quanto demoraria no seu
+  computador. Por API: cada serviço recebe-o pelo seu ajuste próprio (Claude, OpenAI, Gemini, OpenRouter, DeepSeek,
+  Kimi, GLM, Qwen…) e o seu raciocínio vê-se no chat; se um serviço não o mostra, os números de cada passo dizem quanto
+  pensou, e se não deixa escolher o esforço, o Jayth pede-o ao modelo nas suas instruções.
 - Se o modelo estiver desligado, acima da caixa aparece um aviso com **Ligar modelo** (pode ser fechado com o ×; ele
   volta se a situação mudar). Se você escrever com o modelo desligado, o Jayth o liga e envia a mensagem quando estiver
   pronto.
@@ -256,6 +263,14 @@ dobro ou mais), **Desligar o modelo se não for usado por**, e em
 lote, Contexto comprimido, Flash attention, Aceleração ao escrever, mmap, travar na RAM e a porta local. As alterações do motor são aplicadas
 ao reiniciar o modelo (**Reiniciar modelo**). O log do motor fica em **Configurações › Log do modelo**.
 
+- **Aceleração com placa de vídeo:** o Jayth detecta a placa do computador e escolhe sozinho o motor adequado: CUDA para
+  NVIDIA (a versão 13 ou 12 conforme o driver e a idade da placa), Vulkan para placas AMD e Intel Arc dedicadas, Metal
+  nos Mac com Apple Silicon, ou o processador se não houver uma placa que ajude (as integradas costumam ser mais lentas
+  que ele). O motor divide sozinho o modelo entre a placa e a RAM. Se mais tarde o computador tiver uma placa que o
+  motor não aproveita, o Jayth oferece instalar o motor acelerado com um clique (dá para desativar em “Sugerir o motor
+  acelerado”). Se a placa falhar ao carregar um modelo (por exemplo, por falta de memória), o Jayth o liga no
+  processador e avisa. Nesta página aparece o que acelera o modelo e quantas camadas estão na placa. “Trocar ou
+  atualizar o motor…” permite escolhê-lo manualmente e atualizá-lo para a versão mais recente.
 - **Otimizar para este computador** (Configurações › Desempenho): em vez de estimar, mede de verdade com o modelo
   ativo (alguns minutos, com o modelo desligado enquanto isso): testa threads e flash attention com o llama-bench e a
   “Aceleração ao escrever” (decodificação especulativa: **MTP**, para modelos que trazem essas camadas, como Qwen 3.5 e

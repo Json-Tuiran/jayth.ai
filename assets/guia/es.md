@@ -39,6 +39,13 @@ Creado por Ing. Jeison Tuiran. Software libre con licencia GPL-3.0. Web: https:/
 - **Chip del modelo** (p. ej. «Qwen3.8 27B · Bajo»): cambia de modelo, el **Esfuerzo** (cuánto razona antes de
   responder: Bajo, Medio, Alto), descarga o añade modelos, Gestionar modelos…, Modelos por API… y **Motor**
   (encender o apagar el modelo).
+- El **Esfuerzo** hace lo que cada modelo permite de fábrica, y el propio menú lo explica. Modelos locales: los que
+  traen niveles propios (gpt-oss) los usan tal cual; en los que solo encienden o apagan el razonamiento (Qwen, Gemma,
+  GLM…), «Bajo» lo apaga y «Medio» y «Alto» le dejan pensar hasta un tope que crece con el tamaño del modelo (un 2B
+  piensa poco; uno de cientos de miles de millones de parámetros, sin tope en «Alto»), y el menú dice cuánto tardaría
+  en tu equipo. Por API: cada servicio lo recibe con su ajuste propio (Claude, OpenAI, Gemini, OpenRouter, DeepSeek,
+  Kimi, GLM, Qwen…) y su razonamiento se ve en el chat; si un servicio no lo muestra, las cifras de cada paso dicen
+  cuánto pensó, y si no deja elegir el esfuerzo, Jayth se lo pide al modelo en sus instrucciones.
 - Si el modelo está apagado, encima del cuadro sale un aviso con **Encender modelo** (se puede cerrar con la ×; vuelve
   si cambia la situación). Si escribes con el modelo apagado, Jayth lo enciende y envía el mensaje cuando está listo.
 - Mientras el agente trabaja, el botón de enviar se convierte en **Detener**.
@@ -248,6 +255,14 @@ el modelo de fábrica, reducido si su memoria no cabe en el equipo; con **Contex
 Contexto comprimido, Flash attention, Aceleración al escribir, mmap, bloquear en la RAM y el puerto local. Los cambios del motor se aplican al
 reiniciar el modelo (**Reiniciar modelo**). El registro del motor está en **Ajustes › Registro del modelo**.
 
+- **Aceleración con tarjeta gráfica:** Jayth detecta la tarjeta del equipo y elige solo el motor adecuado: CUDA para
+  NVIDIA (la versión 13 o 12 según el controlador y la edad de la tarjeta), Vulkan para AMD e Intel Arc dedicadas, Metal
+  en los Mac con Apple Silicon, o el procesador si no hay una tarjeta que ayude (las integradas suelen ir más lentas que
+  él). El motor reparte solo el modelo entre la tarjeta y la RAM. Si más adelante el equipo tiene una tarjeta que el
+  motor no aprovecha, Jayth ofrece instalar el motor acelerado con un clic (se puede desactivar con «Proponer el motor
+  acelerado»). Si la tarjeta falla al cargar un modelo (por ejemplo, sin memoria), Jayth lo enciende en el procesador y
+  avisa. En esta página se ve qué acelera el modelo y cuántas capas van en la tarjeta. «Cambiar o actualizar el motor…»
+  permite elegirlo a mano y actualizarlo a la última versión.
 - **Optimizar para este equipo** (Ajustes › Rendimiento): en vez de estimar, mide de verdad con el modelo activo (unos
   minutos, con el modelo apagado mientras tanto): prueba hilos y flash attention con llama-bench y la «Aceleración al
   escribir» (decodificación especulativa: **MTP**, para modelos que traen esas capas como Qwen 3.5 y 3.8, y

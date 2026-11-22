@@ -39,6 +39,13 @@ Created by Ing. Jeison Tuiran. Free software licensed under GPL-3.0. Web: https:
 - **Model chip** (e.g. “Qwen3.8 27B · Low”): switches models, sets the **Effort** (how much it reasons before
   answering: Low, Medium, High), downloads or adds models (Download or add a model…), Manage models…, API models…
   and **Engine** (start or stop the model).
+- **Effort** does what each model allows by design, and the menu itself explains it. Local models: those with their own
+  levels (gpt-oss) use them as they are; for models that only turn reasoning on or off (Qwen, Gemma, GLM…), “Low”
+  turns it off and “Medium” and “High” let it think up to a limit that grows with the model’s size (a 2B thinks little;
+  one with hundreds of billions of parameters has no limit on “High”), and the menu says how long it would take on your
+  computer. Over an API: each service receives it through its own setting (Claude, OpenAI, Gemini, OpenRouter, DeepSeek,
+  Kimi, GLM, Qwen…) and its reasoning shows in the chat; if a service doesn’t show it, each step’s figures say how much
+  it thought, and if it doesn’t let you choose the effort, Jayth asks the model in its instructions.
 - If the model is off, a notice with **Start model** appears above the box (it can be closed with the ×; it comes
   back if the situation changes). If you type while the model is off, Jayth starts it and sends the message when it's
   ready.
@@ -252,6 +259,14 @@ or more fits), **Stop the model if unused for**, and in
 Compressed context, Flash attention, Writing speed-up, mmap, lock in RAM and the local port. Engine changes apply when the model
 restarts (**Restart model**). The engine log is in **Settings › Model log**.
 
+- **Graphics card acceleration:** Jayth detects the computer's graphics card and picks the right engine on its own: CUDA
+  for NVIDIA (version 13 or 12 depending on the driver and the card's age), Vulkan for dedicated AMD and Intel Arc
+  cards, Metal on Macs with Apple Silicon, or the processor if no card would help (integrated ones are usually slower
+  than it). The engine splits the model between the card and RAM by itself. If the computer later has a card the engine
+  doesn't use, Jayth offers to install the accelerated engine with one click (it can be turned off with “Suggest the
+  accelerated engine”). If the card fails to load a model (for example, out of memory), Jayth starts it on the processor
+  and lets you know. This page shows what accelerates the model and how many layers are on the card. “Change or update
+  the engine…” lets you pick it by hand and update it to the latest version.
 - **Optimize for this computer** (Settings › Performance): instead of estimating, it actually measures with the active
   model (a few minutes, with the model stopped meanwhile): it tests threads and flash attention with llama-bench and
   the “Writing speed-up” (speculative decoding: **MTP**, for models that include those layers such as Qwen 3.5 and 3.8,

@@ -189,8 +189,157 @@ def max_out(cfg, high=False):
 
 # ---- parámetros que un servicio no admite: se aprende de su rechazo y no se le vuelven a enviar
 _RULES = {}                # (dirección, modelo) → {"drop": set, "rename": bool, "max_out": int}
-_OPTIONAL = ("temperature", "top_p", "reasoning_effort", "stream_options", "parallel_tool_calls", "seed")
+_OPTIONAL = ("temperature", "top_p", "reasoning_effort", "stream_options", "parallel_tool_calls", "seed", "reasoning", "thinking",
+             "enable_thinking", "thinking_budget", "chat_template_kwargs", "include_reasoning", "extra_body")
 _OUT = ("max_tokens", "max_completion_tokens")
+
+
+# ---- esfuerzo y razonamiento de cada servicio (según su documentación, consultada el 22-11-2026)
+# Cada uno lo recibe con su parámetro propio. Claude va por su API nativa (jayth/claude.py), que lo toma de
+# «reasoning_effort». Si un servicio rechaza el parámetro, learn() lo quita y, desde entonces, el esfuerzo se le pide al
+# modelo en sus instrucciones (effort_hint): es una indicación, no un límite, pero es lo que queda.
+_PROVIDERS = (("openrouter", ("openrouter.ai",)), ("openai", ("api.openai.com",)),
+              ("gemini", ("generativelanguage.googleapis.com",)), ("deepseek", ("api.deepseek.com",)), ("xai", ("api.x.ai",)),
+              ("groq", ("api.groq.com",)), ("kimi", ("api.moonshot.ai", "api.moonshot.cn", "api.kimi.com")),
+              ("glm", ("api.z.ai", "open.bigmodel.cn")), ("dashscope", ("dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com",
+                                                                         "dashscope-us.aliyuncs.com")),
+              ("mistral", ("api.mistral.ai",)))
+_EFFORT_KEYS = ("reasoning_effort", "reasoning", "thinking", "enable_thinking", "thinking_budget", "chat_template_kwargs",
+                "extra_body")
+# servicios que exigen que se les devuelva su razonamiento en los pasos con herramientas (si no: HTTP 400)
+_ECHO_REASONING = ("deepseek", "kimi")
+DASHSCOPE_BUDGET = 4096
+
+
+def _host(base):
+    try:
+        return (urllib.parse.urlparse(base).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def provider(base):
+    """Qué servicio es: 'claude', 'openai', 'gemini', 'openrouter', 'deepseek', 'xai', 'groq', 'kimi', 'glm',
+    'dashscope', 'mistral', 'ollama', 'lmstudio', 'selfhosted' (llama.cpp, vLLM, SGLang… en la red propia) u 'other'."""
+    from . import claude as CL
+    if CL.is_claude(base):
+        return "claude"
+    h = _host(base)
+    for name, hosts in _PROVIDERS:
+        if any(h == x or h.endswith("." + x) for x in hosts):
+            return name
+    if is_local(base):
+        try:
+            port = urllib.parse.urlparse(base).port
+        except ValueError:
+            port = None
+        return "ollama" if port == 11434 else "lmstudio" if port == 1234 else "selfhosted"
+    return "other"
+
+
+def effort_params(base, effort, model=""):
+    """Campos de la petición que llevan el esfuerzo elegido (low, medium, high) a este servicio, con su parámetro propio.
+    «Bajo» apaga el razonamiento donde se puede; donde no, es su nivel más bajo."""
+    p, m = provider(base), (model or "").lower()
+    low = effort == "low"
+    if p == "openrouter":
+        return {"reasoning": {"effort": effort}}                       # lo traduce a cada modelo; llega en «reasoning»
+    if p in ("claude", "openai", "xai"):
+        return {"reasoning_effort": effort}
+    if p == "gemini":                                                  # su configuración propia; y que muestre lo que piensa
+        tc = {"include_thoughts": True}
+        if "2.5" in m:
+            tc["thinking_budget"] = {"low": 1024, "medium": 8192, "high": 24576}[effort]
+        else:
+            tc["thinking_level"] = effort
+        return {"extra_body": {"google": {"thinking_config": tc}}}
+    if p == "deepseek":
+        if low:
+            return {"thinking": {"type": "disabled"}}
+        return {"thinking": {"type": "enabled"}, "reasoning_effort": "high" if effort == "medium" else "max"}
+    if p == "kimi":
+        if re.search(r"k3", m):                                        # K3: niveles low / high / max, razona siempre
+            return {"reasoning_effort": {"low": "low", "medium": "high", "high": "max"}[effort]}
+        return {"thinking": {"type": "disabled" if low else "enabled"}}
+    if p == "glm":
+        if low:
+            return {"thinking": {"type": "disabled"}}
+        return {"thinking": {"type": "enabled"}, "reasoning_effort": effort}
+    if p == "dashscope":
+        if low:
+            return {"enable_thinking": False}
+        return {"enable_thinking": True, "thinking_budget": DASHSCOPE_BUDGET} if effort == "medium" else {"enable_thinking": True}
+    if p == "groq":
+        e = "none" if (low and "qwen" in m) else effort
+        return {"reasoning_effort": e, "include_reasoning": True}
+    if p == "ollama":
+        return {"reasoning_effort": "none" if low else effort}
+    if p == "selfhosted":                                              # llama.cpp, vLLM, SGLang: lo de la plantilla y lo común
+        return {"reasoning_effort": "none" if low else effort, "chat_template_kwargs": {"enable_thinking": not low}}
+    if p == "lmstudio":
+        return {}                                                      # no tiene ajuste: se pide en las instrucciones
+    return {"reasoning_effort": effort}
+
+
+def effort_dropped(base, model, params):
+    """¿Ya rechazó este servicio todo lo que lleva el esfuerzo? (entonces se pide en las instrucciones)"""
+    if not params:
+        return provider(base) == "lmstudio"
+    r = _RULES.get((base, model))
+    return bool(r) and all(k in r["drop"] for k in params)
+
+
+EFFORT_HINT = {
+    "low": "[Esfuerzo que pide el usuario: bajo. Responde y actúa de forma directa, sin extenderte razonando antes; prima la rapidez.]",
+    "high": "[Esfuerzo que pide el usuario: alto. Razona a fondo antes de actuar y comprueba tu trabajo; prima la calidad sobre la rapidez.]",
+}
+
+
+def effort_hint(base, model, effort):
+    """Indicación para las instrucciones del modelo cuando el servicio no deja elegir el esfuerzo ('' si no hace falta)."""
+    if effort_dropped(base, model, effort_params(base, effort, model)):
+        return EFFORT_HINT.get(effort, "")
+    return ""
+
+
+def prepare(base, payload):
+    """Lo propio de cada servicio en los mensajes: DeepSeek y Kimi reciben de vuelta su razonamiento (lo exigen en los
+    pasos con herramientas); a los demás no se les envía nada interno."""
+    model = payload.get("model")
+    r = _RULES.get((base, model)) or {}
+    echo = provider(base) in _ECHO_REASONING or r.get("echo")
+    if not echo:
+        return payload
+    msgs = []
+    for m in payload.get("messages") or []:
+        if m.get("role") == "assistant" and m.get("_reasoning"):
+            m = dict(m, reasoning_content=m["_reasoning"])
+        msgs.append(m)
+    return dict(payload, messages=msgs)
+
+
+def effort_support(base, model=""):
+    """(clase, explicación) de lo que hace el esfuerzo con este servicio: 'levels' (niveles de verdad), 'toggle'
+    (apaga o enciende el razonamiento y su profundidad), 'hint' (se le pide en las instrucciones) o 'unknown'."""
+    from .i18n import tr
+    p = provider(base)
+    if effort_dropped(base, model, effort_params(base, "medium", model)):
+        return "hint", tr("Este servicio no tiene ajuste de esfuerzo para este modelo: Jayth se lo pide en sus instrucciones "
+                          "(es una indicación, no un límite).")
+    if p == "claude":
+        return "levels", tr("Claude lo recibe con su propio ajuste de esfuerzo: cuanto más alto, más piensa (y más tokens gasta).")
+    if p == "openai":
+        return "levels", tr("OpenAI lo recibe con su propio ajuste de esfuerzo. Por esta vía no muestra su razonamiento: las "
+                            "cifras de cada paso dicen cuánto pensó.")
+    if p == "gemini":
+        return "levels", tr("Gemini lo recibe con su propia configuración de razonamiento, y Jayth le pide que lo muestre.")
+    if p == "openrouter":
+        return "levels", tr("OpenRouter lo traduce al ajuste propio de cada modelo; los que no razonan lo ignoran.")
+    if p in ("deepseek", "kimi", "glm", "dashscope"):
+        return "toggle", tr("En este servicio «Bajo» apaga el razonamiento (si el modelo lo permite) y «Medio» y «Alto» lo "
+                            "encienden con más o menos profundidad.")
+    return "unknown", tr("Se envía con el ajuste de esfuerzo habitual. Si el servicio no lo admite, Jayth deja de enviarlo y se "
+                         "lo pide al modelo en sus instrucciones.")
 
 
 def adapt(base, payload):
@@ -228,6 +377,9 @@ def learn(base, payload, error):
         pass
     low = text.lower()
     r = _RULES.setdefault((base, payload.get("model")), {"drop": set(), "rename": False, "max_out": 0})
+    if "reasoning_content" in low and not r.get("echo"):              # quiere que se le devuelva su razonamiento
+        r["echo"] = True
+        return True
     if "max_tokens" in payload and "max_completion_tokens" in low:        # aquí el límite de salida se llama de otra forma
         r["rename"] = True
         return True

@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Descargas de llama.cpp (GitHub oficial) y de modelos GGUF (Hugging Face).
 Reanudables (.part + HTTP Range), con reintentos y verificacion SHA-256 cuando la fuente la publica."""
-import os, re, json, time, hashlib, zipfile, platform, threading, subprocess, http.client, urllib.request, urllib.error, urllib.parse
-from . import osys
+import os, re, json, time, shutil, hashlib, zipfile, platform, threading, subprocess, http.client, urllib.request, urllib.error, urllib.parse
+from . import osys, paths
 from .i18n import tr
 
 UA = {"User-Agent": "Jayth (+python-urllib)"}
@@ -307,29 +307,75 @@ def hf_url(repo, file):
 
 # ---------------------------------------------------------------- llama.cpp
 _ARM = platform.machine().lower() in ("arm64", "aarch64")
+_A = "arm64" if _ARM else "x64"
+_GZ = r"\.(tar\.gz|zip)$"
 if osys.WIN:
-    _A = "arm64" if _ARM else "x64"
     LLAMA_PATTERNS = {
         "cpu": [r"llama-b\d+-bin-win-cpu-%s\.zip$" % _A],
         "cuda": [r"llama-b\d+-bin-win-cuda-12\.4-x64\.zip$", r"^cudart-llama-bin-win-cuda-12\.4-x64\.zip$"],
-        "vulkan": [r"llama-b\d+-bin-win-vulkan-x64\.zip$"],
+        "vulkan": [r"llama-b\d+-bin-win-vulkan-%s\.zip$" % _A],
     }
+    _CUDA13 = [r"llama-b\d+-bin-win-cuda-13\.\d+-%s\.zip$" % _A, r"^cudart-llama-bin-win-cuda-13\.\d+-%s\.zip$" % _A]
+    if _ARM:                                    # en ARM solo hay CUDA 13
+        LLAMA_PATTERNS["cuda"] = _CUDA13
 elif osys.MAC:
-    # las compilaciones de macOS para arm64 ya llevan Metal
-    LLAMA_PATTERNS = {"metal": [r"llama-b\d+-bin-macos-arm64\.(tar\.gz|zip)$"], "cpu": [r"llama-b\d+-bin-macos-%s\.(tar\.gz|zip)$" % ("arm64" if _ARM else "x64")]}
+    # las compilaciones de macOS para arm64 ya llevan Metal; en los Mac con Intel solo hay CPU
+    LLAMA_PATTERNS = {"cpu": [r"llama-b\d+-bin-macos-%s" % _A + _GZ]}
+    if _ARM:
+        LLAMA_PATTERNS["metal"] = [r"llama-b\d+-bin-macos-arm64" + _GZ]
+    _CUDA13 = []
 else:
     LLAMA_PATTERNS = {
-        "cpu": [r"llama-b\d+-bin-ubuntu-%s\.(tar\.gz|zip)$" % ("arm64" if _ARM else "x64")],
-        "cuda": [r"llama-b\d+-bin-ubuntu-cuda-12\.\d+-x64\.(tar\.gz|zip)$", r"^cudart-llama(-b\d+)?-bin-ubuntu-cuda-12\.\d+-x64\.(tar\.gz|zip)$"],
-        "vulkan": [r"llama-b\d+-bin-ubuntu-vulkan-x64\.(tar\.gz|zip)$"],
+        "cpu": [r"llama-b\d+-bin-ubuntu-%s" % _A + _GZ],
+        "cuda": [r"llama-b\d+-bin-ubuntu-cuda-12\.\d+-x64" + _GZ, r"^cudart-llama(-b\d+)?-bin-ubuntu-cuda-12\.\d+-x64" + _GZ],
+        "vulkan": [r"llama-b\d+-bin-ubuntu-vulkan-%s" % _A + _GZ],
     }
+    _CUDA13 = [r"llama-b\d+-bin-ubuntu-cuda-13\.\d+-%s" % _A + _GZ, r"^cudart-llama(-b\d+)?-bin-ubuntu-cuda-13\.\d+-%s" % _A + _GZ]
+    if _ARM:
+        LLAMA_PATTERNS["cuda"] = _CUDA13
 
 
-def llama_release(backend):
+def llama_patterns(backend, cuda=""):
+    """Archivos del motor elegido; con CUDA, la versión que admite el controlador («13» o «12»)."""
+    if backend == "cuda" and cuda == "13" and _CUDA13:
+        return _CUDA13
+    return LLAMA_PATTERNS.get(backend)
+
+
+def engine_dir(tag, backend, cuda=""):
+    return os.path.join(paths.RUNTIME_DIR, "llama-%s-%s%s" % (tag, backend, cuda if backend == "cuda" and cuda else ""))
+
+
+def install_llama(backend, cuda="", progress=None, stop=None):
+    """Descarga e instala la última compilación oficial del motor elegido. Devuelve (ruta de llama-server, versión).
+    Se puede usar en segundo plano: lo instalado no se toca hasta que esto termina bien."""
+    rel = llama_release(backend, cuda)
+    dl = os.path.join(paths.RUNTIME_DIR, "downloads")
+    target = engine_dir(rel["tag"], backend, cuda)
+    total = sum(a["size"] for a in rel["assets"])
+    base = 0
+    pr = progress or (lambda d, t, ph: None)
+    for a in rel["assets"]:
+        z = os.path.join(dl, a["name"])
+        download(a["url"], z, a["size"], a["sha256"], lambda d, t, ph, b=base: pr(b + d, total, ph), stop)
+        base += a["size"]
+        pr(base, total, "descomprimiendo")
+        extract_archive(z, target)
+    exe = find_server(target)
+    if not exe:
+        raise RuntimeError(tr("El paquete de llama.cpp no contiene %s") % osys.exe("llama-server"))
+    try:
+        shutil.rmtree(dl)
+    except OSError:
+        pass
+    return exe, rel["tag"]
+
+
+def llama_release(backend, cuda=""):
     """Ultima compilacion oficial de llama.cpp para este sistema con los archivos del motor elegido."""
-    if backend not in LLAMA_PATTERNS:
+    pats = llama_patterns(backend, cuda)
+    if not pats:
         raise RuntimeError(tr("El motor «%s» no está disponible en %s.") % (backend, osys.os_label()))
-    pats = LLAMA_PATTERNS[backend]
     for rel in get_json("https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=10"):
         if rel.get("draft"):
             continue

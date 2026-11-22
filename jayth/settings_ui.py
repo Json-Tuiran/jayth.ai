@@ -692,8 +692,13 @@ class SettingsDialog(QDialog):
         cl.setContentsMargins(14, 12, 14, 12)
         hw = lbl(tr("Detectando tu equipo…"))
         cl.addWidget(hw)
-        eng = tr("Motor: llama.cpp %s · %s") % (cfg["llama_tag"] or "", {"cpu": "CPU", "cuda": tr("GPU NVIDIA (CUDA)"), "vulkan": "GPU (Vulkan)"}.get(cfg["backend"], cfg["backend"]))
+        eng = tr("Motor: llama.cpp %s · %s") % (cfg["llama_tag"] or "", {"cpu": "CPU", "cuda": tr("GPU NVIDIA (CUDA)"), "vulkan": "GPU (Vulkan)",
+                                                                       "metal": tr("GPU de Apple (Metal)")}.get(cfg["backend"], cfg["backend"])
+                                            + (" %s" % cfg["cuda_major"] if cfg["backend"] == "cuda" and cfg.get("cuda_major") else ""))
         cl.addWidget(lbl(re.sub(r" {2,}", " ", eng), "faint"))     # sin versión conocida (motor elegido a mano): sin doble espacio
+        acc = lbl(core.accel_text(cfg), "faint")                   # qué acelera de verdad el modelo (gráfica, capas…)
+        acc.setWordWrap(True)
+        cl.addWidget(acc)
         r = QHBoxLayout()
         r.addWidget(btn(tr("Cambiar o actualizar el motor…"), cb=lambda: SetupWizard(self).exec(), ico="acc_refrescar"))
         self.tune_btn = btn(tr("Optimizar para este equipo"), "primary", self._tune, "prof_cpu")
@@ -734,6 +739,9 @@ class SettingsDialog(QDialog):
         self.field(v, "threads_batch", tr("Hilos al leer"), "int", min=0, max=256, special=tr("automático"),
                    help=tr("Leer tu mensaje es sobre todo cálculo: sin gráfica suele ir más rápido con todos los hilos del procesador. "
                            "Escribir depende de la memoria y va mejor con los núcleos físicos. La optimización medida elige los dos."))
+        self.field(v, "backend_auto", tr("Proponer el motor acelerado"), "bool",
+                   help=tr("Si el equipo tiene una tarjeta gráfica que el motor no aprovecha (por ejemplo, una que se añadió después), Jayth "
+                           "ofrece instalar el motor para ella con un clic. Si la gráfica falla al cargar un modelo, vuelve solo al procesador."))
         self.field(v, "gpu_layers", tr("Capas en la GPU"), "int", min=-1, max=999, special=tr("automático"), help=tr("Solo con GPU. Automático reparte el modelo entre GPU y RAM."))
         self.field(v, "batch_size", tr("Tamaño de lote"), "choice", choices=[(str(x), x) for x in (128, 256, 512, 1024, 2048)],
                    help=tr("Más grande procesa más rápido los textos largos, con algo más de memoria."))

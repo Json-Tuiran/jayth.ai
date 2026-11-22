@@ -8,6 +8,7 @@ from . import tools as T
 from . import harness as H
 from . import apis as API
 from . import consumo as USAGE
+from . import claude as CL
 from . import osys
 from . import i18n
 from .i18n import tr
@@ -814,12 +815,211 @@ def parse_text_tool_calls(text):
     return calls, cleaned
 
 
+_TLS = []
+_TLS_LOCK = threading.Lock()
+
+
+def tls_context():
+    """Contexto TLS compartido: se crea una vez (leer el almacén de certificados de Windows en cada petición era lento)."""
+    with _TLS_LOCK:
+        if not _TLS:
+            import ssl
+            _TLS.append(ssl.create_default_context())
+        return _TLS[0]
+
+
+# Tope de razonamiento de «Medio» si no se sabe nada del modelo. Lo normal es el que corresponde a su tamaño
+# (core.think_budgets): sin topes, en los modelos que solo encienden o apagan el razonamiento (Qwen, Gemma, GLM…)
+# «Medio» y «Alto» eran lo mismo. Lo aplica el motor (llama.cpp, campo por petición).
+THINK_BUDGET_MEDIUM = 1024
+
+
+def local_think(effort, style, budgets=None):
+    """Lo que entiende el motor local para el esfuerzo elegido, según lo que trae el modelo de fábrica (style):
+    'levels' (niveles propios, como gpt-oss), 'toggle' (encender/apagar), 'always' (razona siempre) o 'none'; y los topes
+    de cada nivel a la medida del modelo (budgets: {'medium': n, 'high': n o None}).
+    Devuelve (chat_template_kwargs, campos extra de la petición). Los argumentos de la plantilla son los mismos en todos
+    los casos (así el precalentamiento coincide); lo que cambia es el tope de razonamiento."""
+    kw = {"enable_thinking": effort != "low", "reasoning_effort": effort}
+    extra = {}
+    b = budgets or {"medium": THINK_BUDGET_MEDIUM, "high": None}
+    if style in ("toggle", "always") and effort in ("medium", "high"):
+        if b.get(effort):
+            extra["thinking_budget_tokens"] = int(b[effort])
+    elif style == "always" and effort == "low":
+        extra["thinking_budget_tokens"] = 0               # no se puede apagar: se corta en cuanto empieza
+    return kw, extra
+
+
+INTERRUPTED = "Interrumpido."
+RECOVERED = "\n[Jayth se cerró justo después de esta acción; este resultado se recuperó de su registro.]"
+
+
+def repair_history(msgs, events=None):
+    """Deja el historial como lo exigen los servicios: cada mensaje del asistente con llamadas a herramientas va seguido,
+    justo después, de una respuesta por llamada. Tras un corte (Jayth se cerró, un error a mitad) faltaba alguna o
+    quedaba más abajo, detrás de un mensaje nuevo, y el servicio rechazaba la conversación entera (HTTP 400) en cada
+    turno. Recoloca las respuestas, recupera del registro del chat (events) el resultado que no llegó a guardarse,
+    pone «Interrumpido.» si no hay nada y quita respuestas sueltas sin su llamada. Devuelve cuántos cambios hizo."""
+    found = {}
+    for e in events or ():
+        if e.get("t") == "tool_result" and e.get("id"):
+            found[e["id"]] = e
+
+    def from_log(cid):
+        e = found.get(cid)
+        if e is None:
+            return None
+        txt = str(e.get("text") or "")
+        return (txt if e.get("ok") else "ERROR: " + txt) + RECOVERED
+
+    answers = {}
+    for m in msgs:
+        if m.get("role") == "tool":
+            answers.setdefault(m.get("tool_call_id"), []).append(m)
+    placed = set()                                    # respuestas ya colocadas (por identidad)
+
+    def take(t, cid):
+        placed.add(id(t))
+        if t.get("content") == INTERRUPTED and from_log(cid):     # el registro sabe cómo acabó
+            return dict(t, content=from_log(cid)), 1
+        return t, 0
+
+    out, changes, i = [], 0, 0
+    while i < len(msgs):
+        m = msgs[i]
+        if m.get("role") == "tool":                   # suelta (sin su llamada justo antes) o ya colocada en su sitio
+            if id(m) not in placed:
+                changes += 1
+            i += 1
+            continue
+        out.append(m)
+        i += 1
+        if m.get("role") != "assistant" or not m.get("tool_calls"):
+            continue
+        ids = [c.get("id") for c in m["tool_calls"]]
+        left = list(ids)
+        while i < len(msgs) and msgs[i].get("role") == "tool" and msgs[i].get("tool_call_id") in left:
+            t, ch = take(msgs[i], msgs[i].get("tool_call_id"))  # las que ya van justo detrás, en su orden: se quedan
+            left.remove(t.get("tool_call_id"))
+            out.append(t)
+            changes += ch
+            i += 1
+        for cid in left:                              # las que faltan: de más abajo, del registro o «Interrumpido.»
+            t = next((x for x in answers.get(cid, ()) if id(x) not in placed), None)
+            if t is not None:
+                t, _ = take(t, cid)
+                out.append(t)
+            else:
+                out.append({"role": "tool", "tool_call_id": cid, "content": from_log(cid) or INTERRUPTED})
+            changes += 1
+    if changes:
+        msgs[:] = out
+    return changes
+
+
+def hidden_reasoning(usage):
+    """Tokens que el servicio dedicó a razonar sin mostrarlo (OpenAI, Gemini, xAI…), si lo dice; si no, None."""
+    if not isinstance(usage, dict):
+        return None
+    det = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
+    n = det.get("reasoning_tokens") if isinstance(det, dict) else None
+    n = n if n is not None else usage.get("reasoning_tokens")
+    try:
+        return int(n) if n else None
+    except (TypeError, ValueError):
+        return None
+
+
+class ThinkTags:
+    """Separa el razonamiento que un servidor deja dentro del texto entre etiquetas (<think>…</think>, <thought>…</thought>)
+    cuando la respuesta empieza por ellas. Funciona trozo a trozo: una etiqueta puede llegar partida entre dos trozos."""
+    OPEN = ("<think>", "<thought>", "<thinking>")
+
+    def __init__(self):
+        self.state = "start"            # start: aún no se sabe; think: dentro; text: fuera (ya no se buscan más)
+        self.buf = ""
+        self.close = ""
+
+    def feed(self, text):
+        """-> [(tipo, texto)] con tipo 'reasoning' o 'content'."""
+        out = []
+        self.buf += text
+        while self.buf:
+            if self.state == "text":
+                out.append(("content", self.buf))
+                self.buf = ""
+            elif self.state == "start":
+                s = self.buf.lstrip()
+                tag = next((t for t in self.OPEN if s.startswith(t)), None)
+                if tag:
+                    self.state, self.close = "think", "</" + tag[1:]
+                    self.buf = s[len(tag):]
+                elif s and any(t.startswith(s) for t in self.OPEN):
+                    break                                  # puede ser el principio de una etiqueta: esperar al siguiente trozo
+                elif s:
+                    self.state = "text"
+                else:
+                    break
+            else:                                          # dentro del razonamiento
+                i = self.buf.find(self.close)
+                if i >= 0:
+                    if i:
+                        out.append(("reasoning", self.buf[:i]))
+                    self.buf = self.buf[i + len(self.close):].lstrip("\n")
+                    self.state = "text"
+                else:
+                    keep = next((k for k in range(min(len(self.close) - 1, len(self.buf)), 0, -1)
+                                 if self.close.startswith(self.buf[-k:])), 0)
+                    if len(self.buf) > keep:
+                        out.append(("reasoning", self.buf[:len(self.buf) - keep]))
+                    self.buf = self.buf[len(self.buf) - keep:]
+                    break
+        return out
+
+    def flush(self):
+        rest, self.buf = self.buf, ""
+        return [("reasoning" if self.state == "think" else "content", rest)] if rest else []
+
+
+def delta_parts(d):
+    """Razonamiento y texto de un trozo de respuesta, sea cual sea el servicio: [(tipo, texto)]."""
+    out = []
+    r = d.get("reasoning_content") or d.get("reasoning") or d.get("thinking")
+    if isinstance(r, str) and r:
+        out.append(("reasoning", r))
+    elif isinstance(d.get("reasoning_details"), list):          # OpenRouter (cuando no manda «reasoning»)
+        for x in d["reasoning_details"]:
+            t = isinstance(x, dict) and (x.get("text") or x.get("summary"))
+            if isinstance(t, str) and t:
+                out.append(("reasoning", t))
+    c = d.get("content")
+    if isinstance(c, str) and c:
+        out.append(("content", c))
+    elif isinstance(c, list):                                   # Mistral: trozos con tipo
+        for x in c:
+            if not isinstance(x, dict):
+                continue
+            if x.get("type") == "thinking":
+                th = x.get("thinking")
+                th = "".join(y.get("text", "") for y in th if isinstance(y, dict)) if isinstance(th, list) else (th or "")
+                if th:
+                    out.append(("reasoning", th))
+            elif x.get("type") == "text" and x.get("text"):
+                out.append(("content", x["text"]))
+    return out
+
+
 def llm_stream(base_url, api_key, payload, holder, on_delta):
     """Llama a una API compatible con OpenAI (base_url termina en /v1) con streaming.
     holder['conn'] permite cortar la conexion desde otro hilo."""
     u = urllib.parse.urlparse(base_url)
-    cls = http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection
-    conn = cls(u.hostname, u.port or (443 if u.scheme == "https" else 80), timeout=10)
+    if any(k.startswith("_") for m in payload.get("messages") or [] for k in m):   # lo interno no va al servicio
+        payload = dict(payload, messages=[{k: v for k, v in m.items() if not k.startswith("_")} for m in payload["messages"]])
+    if u.scheme == "https":
+        conn = http.client.HTTPSConnection(u.hostname, u.port or 443, timeout=10, context=tls_context())
+    else:
+        conn = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=10)
     holder["conn"] = conn
     try:
         conn.connect()
@@ -831,6 +1031,7 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
         if resp.status != 200:
             raise LLMError("HTTP %d: %s" % (resp.status, resp.read(2000).decode("utf-8", "replace")))
         content, reasoning, tcs, finish, timings, usage = [], [], {}, None, None, None
+        tags = ThinkTags() if payload.get("model") != "local" else None    # (el motor propio de Jayth ya lo separa)
         heads = {k.lower(): v for k, v in resp.getheaders() if "ratelimit" in k.lower() or k.lower() == "retry-after"}
         holder["rx"], holder["rx_n"], holder["t_gen"] = time.time(), 0, None      # último trozo visible (lo mira el vigilante)
         while True:
@@ -865,16 +1066,15 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
                                                         int(pp.get("time_ms") or 0)))
             for c in ch.get("choices") or []:
                 d = c.get("delta") or {}
-                if d.get("reasoning_content") or d.get("content") or d.get("tool_calls"):
+                parts = delta_parts(d)
+                if parts or d.get("tool_calls"):
                     holder["rx"], holder["rx_n"] = time.time(), holder.get("rx_n", 0) + 1
                     if holder.get("t_gen") is None:
                         holder["t_gen"] = holder["rx"]
-                if d.get("reasoning_content"):
-                    reasoning.append(d["reasoning_content"])
-                    on_delta("reasoning", d["reasoning_content"])
-                if d.get("content"):
-                    content.append(d["content"])
-                    on_delta("content", d["content"])
+                for kind, text in parts:
+                    for kind2, text2 in (tags.feed(text) if (tags is not None and kind == "content") else [(kind, text)]):
+                        (reasoning if kind2 == "reasoning" else content).append(text2)
+                        on_delta(kind2, text2)
                 for tc in d.get("tool_calls") or []:
                     slot = tcs.setdefault(tc.get("index", 0), {"id": "", "name": "", "args": ""})
                     if tc.get("id"):
@@ -888,6 +1088,9 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
                         on_delta("tool", "%s\t%d" % (slot["name"], len(slot["args"])))
                 if c.get("finish_reason"):
                     finish = c["finish_reason"]
+        for kind, text in (tags.flush() if tags is not None else []):
+            (reasoning if kind == "reasoning" else content).append(text)
+            on_delta(kind, text)
         return {"content": "".join(content), "reasoning": "".join(reasoning), "tool_calls": [tcs[k] for k in sorted(tcs)],
                 "finish": finish, "timings": timings, "usage": usage, "headers": heads}
     finally:
@@ -906,14 +1109,16 @@ def ext_stream(base_url, api_key, payload, holder, on_delta):
         if isinstance(res, dict) and res.get("finish") != "cut":
             res["spent"] = USAGE.record(base_url, payload.get("model"), res.get("usage"), res.get("headers"), holder.get("_sid", ""))
         return res
+    if CL.is_claude(base_url):         # Claude por su API nativa: esfuerzo de verdad, razonamiento visible y caché
+        return noted(CL.stream(base_url, api_key, payload, holder, on_delta, LLMError))
     for _ in range(6):
-        sent = API.adapt(base_url, payload)
+        sent = API.adapt(base_url, API.prepare(base_url, payload))
         try:
             return noted(llm_stream(base_url, api_key, sent, holder, on_delta))
         except LLMError as e:
             if not API.learn(base_url, sent, str(e)):
                 raise
-    return noted(llm_stream(base_url, api_key, API.adapt(base_url, payload), holder, on_delta))
+    return noted(llm_stream(base_url, api_key, API.adapt(base_url, API.prepare(base_url, payload)), holder, on_delta))
 
 
 def drop_connection(holder):
@@ -1043,10 +1248,11 @@ def make_title(cfg, messages):
                             {"role": "user", "content": "Escribe un título de 2 a 6 palabras, en el idioma del usuario, sin comillas ni punto final, "
                                                         "que resuma de qué trata esta conversación.\n\nUsuario: %s\n\nAgente: %s"
                                                         % (user[:1500], answer[:1000])}]}
-    if external:       # sin temperatura propia: hay servicios que la rechazan
-        payload["reasoning_effort"] = "low"
+    if external:       # sin temperatura propia: hay servicios que la rechazan; el esfuerzo más bajo de cada servicio
+        payload.update(API.effort_params(base, "low", payload["model"]))
     else:              # sin razonamiento: el titulo debe salir en un instante
-        payload.update({"temperature": 0.3, "cache_prompt": False, "chat_template_kwargs": {"enable_thinking": False, "reasoning_effort": "low"}})
+        kw, extra = local_think("low", cfg.get("_think_style") or "")
+        payload.update({"temperature": 0.3, "cache_prompt": False, "chat_template_kwargs": kw}, **extra)
     try:
         return clean_title((ext_stream if external else llm_stream)(base, key, payload, {"_sid": cfg.get("_sid", "")}, lambda k, t: None)["content"])
     except Exception:
@@ -1288,7 +1494,9 @@ class Run:
                         parts.append({"type": "text", "text": "[imagen anterior omitida para ahorrar contexto]" if see else
                                       "[imagen: el usuario la ve en el chat; tú no puedes ver imágenes]"})
                 m = dict(m, content=parts)
-            out.append({k: v for k, v in m.items() if not k.startswith("_")})   # claves internas (_auto) no van al modelo
+            # claves internas (_auto) no van al modelo; la respuesta tal cual de Claude (_ant) y el razonamiento (_reasoning)
+            # sí, para devolvérselos al servicio que los pida (los quita llm_stream para los demás)
+            out.append({k: v for k, v in m.items() if not k.startswith("_") or k in ("_ant", "_ant_model", "_reasoning")})
         if self._split is None:
             self._split = text_then_call_apart(self.cfg)
         return split_text_and_calls(out) if self._split else out
@@ -1354,9 +1562,10 @@ class Run:
             payload["model"] = self.cfg.get("external_model") or "local"
             payload.pop("cache_prompt")
             payload.pop("temperature")                    # hay servicios que la rechazan
-            payload.update({"max_tokens": out_tok * 2 + 2000, "reasoning_effort": "low"})   # fuera no se apaga el razonamiento: margen
+            payload.update({"max_tokens": out_tok * 2 + 2000}, **API.effort_params(base, "low", payload["model"]))   # margen por si razona
         else:                                             # sin razonar: el resumen sale antes (en CPU cada token cuenta)
-            payload["chat_template_kwargs"] = {"enable_thinking": False, "reasoning_effort": "low"}
+            kw, extra = local_think("low", self.cfg.get("_think_style") or "")
+            payload.update({"chat_template_kwargs": kw}, **extra)
         try:
             return ((ext_stream if external else llm_stream)(base, key, payload, self.holder, lambda k, t: None)["content"] or "").strip()
         except Exception:
@@ -1781,19 +1990,12 @@ class Run:
 
     def _repair(self):
         """Si se corto a mitad, toda llamada a herramienta debe tener su respuesta para que el historial sea valido."""
-        msgs = self.s["messages"]
-        for i in range(len(msgs) - 1, -1, -1):
-            if msgs[i]["role"] == "assistant":
-                if msgs[i].get("tool_calls"):
-                    done = {m.get("tool_call_id") for m in msgs[i + 1:] if m["role"] == "tool"}
-                    for c in msgs[i]["tool_calls"]:
-                        if c["id"] not in done:
-                            msgs.append({"role": "tool", "tool_call_id": c["id"], "content": "Interrumpido."})
-                break
+        repair_history(self.s["messages"])
 
     # ---- bucle principal
     def run(self, text, image_names=(), attachments="", marker=None):
         msgs = self.s["messages"]
+        self._repair()                                  # antes del mensaje nuevo: si Jayth se cerró a mitad, aquí falta algo
         body = text + (("\n\n" + attachments) if attachments else "")
         if on_demand(self.cfg):                         # grupos que seguramente hagan falta: activos desde el primer paso
             files = [l[4:].strip() for l in attachments.splitlines() if l.startswith("### ")]
@@ -1861,17 +2063,20 @@ class Run:
                            "stream_options": {"include_usage": True},
                            "messages": [{"role": "system", "content": self.system}] + sent,
                            "max_tokens": self._max_out(effort)}
-                if external:       # el esfuerzo, en el formato común; la temperatura, solo si el usuario la fijó a mano
-                    payload["reasoning_effort"] = effort           # (con «automático» cada servicio usa la suya)
+                if external:       # el esfuerzo, con el parámetro propio de cada servicio; la temperatura, solo a mano
+                    payload.update(API.effort_params(base, effort, payload["model"]))  # (con «automático», la suya)
+                    hint = API.effort_hint(base, payload["model"], effort)
+                    if hint:           # el servicio no deja elegirlo: se le pide al modelo en sus instrucciones
+                        payload["messages"][0] = dict(payload["messages"][0], content=payload["messages"][0]["content"] + "\n\n" + hint)
                     if self.cfg.get("sampling", "auto") != "auto":
                         payload.update({"temperature": self.sampling["temperature"], "top_p": self.sampling["top_p"]})
                 else:              # parametros propios de llama.cpp (una API estricta podria rechazarlos)
                     payload.update({"temperature": self.sampling["temperature"], "top_p": self.sampling["top_p"]})
                 if not external:
-                    # esfuerzo: Qwen/DeepSeek usan enable_thinking; gpt-oss y otros, reasoning_effort (los demas los ignoran)
+                    # esfuerzo según lo que trae el modelo de fábrica (local_think): niveles propios, o encender/apagar con tope
+                    kw, think_extra = local_think(effort, self.cfg.get("_think_style") or "", self.cfg.get("_think_budget"))
                     payload.update({"top_k": self.sampling["top_k"], "cache_prompt": True, "min_p": self.sampling["min_p"],
-                                    "repeat_penalty": float(self.cfg.get("repeat_penalty", 1.0)),
-                                    "chat_template_kwargs": {"enable_thinking": effort != "low", "reasoning_effort": effort}})
+                                    "repeat_penalty": float(self.cfg.get("repeat_penalty", 1.0)), "chat_template_kwargs": kw}, **think_extra)
                     if int(self.cfg.get("seed", -1)) >= 0:
                         payload["seed"] = int(self.cfg["seed"])
                     payload["return_progress"] = True       # cuánto lleva leído (el chat lo muestra mientras espera)
@@ -1942,12 +2147,16 @@ class Run:
                         self.s["_ratio"] = round(max(0.5, min(3.0, 0.5 * float(self.s.get("_ratio", 1.0)) + 0.5 * real / est)), 3)
                 self.truncated = res["finish"] == "length"
                 # ids propios y unicos: algunos servidores repiten ids (p. ej. "call_0") entre turnos
-                calls = [{"id": "call_" + uuid.uuid4().hex[:12], "type": "function",
+                # (Claude por su API nativa: sus propios ids, que deben coincidir con los de su respuesta guardada)
+                calls = [{"id": c["id"] if res.get("keep_ids") and c.get("id") else "call_" + uuid.uuid4().hex[:12], "type": "function",
                           "function": {"name": c["name"], "arguments": c["args"] or "{}"}} for c in res["tool_calls"] if c["name"]]
                 text_out = res["content"]
                 if not calls and "<tool_call>" in text_out:
                     calls, text_out = parse_text_tool_calls(text_out)
                 tm = res.get("timings") or {}
+                speed = self.cfg.get("_note_speed")
+                if callable(speed) and not external and int(tm.get("predicted_n") or 0) >= 32 and tm.get("predicted_per_second"):
+                    speed(tm["predicted_per_second"])    # para que el menú del esfuerzo diga cuánto tardaría cada nivel
                 after = self.cfg.get("_after_llm")
                 if callable(after) and not external:     # el motor tiene leída la conversación hasta aquí
                     try:
@@ -1958,10 +2167,16 @@ class Run:
                 self.emit({"t": "stats", "prompt_n": tm.get("prompt_n"), "prompt_ms": tm.get("prompt_ms"), "gen_n": tm.get("predicted_n"),
                            "tps": tm.get("predicted_per_second"), "finish": res["finish"],
                            "ctx_used": (res.get("usage") or {}).get("prompt_tokens"), "ctx_max": int(self.cfg["n_ctx"]),
-                           "tok_in": spent.get("i"), "tok_out": spent.get("o"), "usd": spent.get("usd"), "usd_src": spent.get("p")})
+                           "tok_in": spent.get("i"), "tok_out": spent.get("o"), "usd": spent.get("usd"), "usd_src": spent.get("p"),
+                           # razonó sin mostrarlo (el servicio solo dice cuántos tokens dedicó a pensar)
+                           "think_tok": hidden_reasoning(res.get("usage")) if external and not (res.get("reasoning") or "").strip() else None})
                 am = {"role": "assistant", "content": text_out}
                 if calls:
                     am["tool_calls"] = calls
+                if res.get("blocks"):                   # Claude: su respuesta tal cual (con el razonamiento), para devolvérsela
+                    am["_ant"], am["_ant_model"] = res["blocks"], payload.get("model")
+                elif external and (res.get("reasoning") or "").strip():
+                    am["_reasoning"] = res["reasoning"]  # DeepSeek y Kimi exigen que se les devuelva (API.prepare)
                 msgs.append(am)
                 self.emit({"t": "assistant_end", "text": text_out})
                 wrote = None if calls or self.cfg.get("mode") == "plan" else \

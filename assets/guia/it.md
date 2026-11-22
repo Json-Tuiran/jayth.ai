@@ -41,6 +41,14 @@ Creato da Ing. Jeison Tuiran. Software libero con licenza GPL-3.0. Web: https://
 - **Chip del modello** (ad es. «Qwen3.8 27B · Basso»): cambia modello, l'**Impegno** (quanto ragiona prima di
   rispondere: Basso, Medio, Alto), scarica o aggiunge modelli, Gestisci modelli…, Modelli via API… e **Motore**
   (avvia o arresta il modello).
+- L'**Impegno** fa ciò che ogni modello consente di fabbrica, e il menu stesso lo spiega. Modelli locali: quelli con
+  livelli propri (gpt-oss) li usano così come sono; in quelli che possono solo attivare o disattivare il ragionamento
+  (Qwen, Gemma, GLM…), «Basso» lo disattiva e «Medio» e «Alto» lo lasciano pensare fino a un limite che cresce con le
+  dimensioni del modello (un 2B pensa poco; uno da centinaia di miliardi di parametri non ha limite in «Alto»), e il
+  menu dice quanto ci vorrebbe sul tuo computer. Via API: ogni servizio lo riceve con la propria impostazione (Claude,
+  OpenAI, Gemini, OpenRouter, DeepSeek, Kimi, GLM, Qwen…) e il suo ragionamento si vede nella chat; se un servizio non
+  lo mostra, le cifre di ogni passo dicono quanto ha pensato, e se non permette di scegliere l'impegno, Jayth lo chiede
+  al modello nelle sue istruzioni.
 - Se il modello è spento, sopra la casella compare un avviso con **Avvia modello** (si può chiudere con la ×; ricompare
   se la situazione cambia). Se scrivi con il modello spento, Jayth lo avvia e invia il messaggio quando è pronto.
 - Mentre l'agente lavora, il pulsante di invio diventa **Interrompi**.
@@ -262,6 +270,14 @@ Dimensione del batch, Contesto compresso, Flash attention, Accelerazione in scri
 locale. Le modifiche del motore si applicano al riavvio del modello (**Riavvia modello**). Il registro del motore è in
 **Impostazioni › Registro del modello**.
 
+- **Accelerazione con scheda grafica:** Jayth rileva la scheda del computer e sceglie da solo il motore adatto: CUDA per
+  NVIDIA (la versione 13 o 12 in base al driver e all'età della scheda), Vulkan per le schede AMD e Intel Arc dedicate,
+  Metal sui Mac con Apple Silicon, oppure il processore se non c'è una scheda che aiuti (quelle integrate di solito sono
+  più lente). Il motore ripartisce da solo il modello tra la scheda e la RAM. Se in seguito il computer ha una scheda
+  che il motore non sfrutta, Jayth propone di installare il motore accelerato con un clic (si può disattivare con
+  «Proponi il motore accelerato»). Se la scheda non riesce a caricare un modello (per esempio, per mancanza di memoria),
+  Jayth lo avvia sul processore e avvisa. In questa pagina si vede cosa accelera il modello e quanti layer sono sulla
+  scheda. «Cambia o aggiorna il motore…» permette di sceglierlo a mano e di aggiornarlo all'ultima versione.
 - **Ottimizza per questo computer** (Impostazioni › Prestazioni): invece di stimare, misura davvero con il modello
   attivo (qualche minuto, con il modello arrestato nel frattempo): prova i thread e la flash attention con llama-bench e
   l'«Accelerazione in scrittura» (decodifica speculativa: **MTP**, per i modelli che includono quei layer come Qwen 3.5

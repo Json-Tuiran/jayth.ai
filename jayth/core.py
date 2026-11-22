@@ -30,7 +30,10 @@ DEFAULTS = {
     "models_scan_init": False,   # ya se hizo la primera revisión de la carpeta de modelos
     "llama_exe": "",
     "llama_tag": "",
-    "backend": "cpu",            # cpu | cuda | vulkan
+    "backend": "cpu",            # cpu | cuda | vulkan | metal
+    "backend_auto": True,        # Jayth ofrece el motor acelerado si el equipo tiene una gráfica que no se aprovecha
+    "cuda_major": "",            # con CUDA: la versión instalada del motor («13» o «12»)
+    "engine_offer_seen": "",     # la última recomendación de motor que ya se ofreció (no se repite cada vez)
     "threads": max(1, (os.cpu_count() or 2) // 2),
     "threads_batch": 0,          # hilos al leer (procesar el prompt); 0 = automático (con solo procesador, todos los lógicos)
     "llm_port": 8080,
@@ -561,14 +564,58 @@ def read_caps(m):
     try:
         meta = gguf.read_meta(path)      # completo: los datos de capas compartidas o por ventana pueden ir tras la plantilla
         tpl = str(meta.get("tokenizer.chat_template") or "")
+        think = bool(P._THINK_TPL.search(tpl)) if tpl else False
+        caps["params_b"], caps["active_b"] = model_size(meta, path)
         caps.update(tools=bool(P._TOOLS_TPL.search(tpl)) if tpl else bool(P._TOOLS_NAME.search(m.get("repo") or path)),
-                    think=bool(P._THINK_TPL.search(tpl)) if tpl else False, arch=str(meta.get("general.architecture") or ""),
+                    think=think, think_style=think_style(tpl, think), arch=str(meta.get("general.architecture") or ""),
                     ctx=next((int(v) for k, v in meta.items() if k.endswith(".context_length") and isinstance(v, int)), 0),
                     kv=_kv_elems(meta), source="gguf")
     except (OSError, ValueError):
         name = m.get("repo") or path                      # archivo ilegible o ausente: se deduce del nombre
-        caps.update(tools=bool(P._TOOLS_NAME.search(name)), think=False, arch="", ctx=0, kv=0, source="nombre")
+        caps.update(tools=bool(P._TOOLS_NAME.search(name)), think=False, think_style="none", arch="", ctx=0, kv=0, source="nombre")
     return caps
+
+
+def model_size(meta, path=""):
+    """(miles de millones de parámetros en total, activos por token; 0 si no se sabe). Del nombre del modelo («27B»,
+    «23B-A3B», «26B-A4B») o, si no lo dice, estimado por el tamaño del archivo (unos 4,8 bits por parámetro)."""
+    names = " ".join(str(meta.get(k) or "") for k in ("general.basename", "general.name", "general.size_label")) + " " + os.path.basename(path or "")
+    total = [float(x) for x in re.findall(r"(?<![A-Za-z0-9.xX])(\d+(?:\.\d+)?)\s?B(?![A-Za-z])", names)]
+    active = [float(x) for x in re.findall(r"(?<![A-Za-z0-9])A(\d+(?:\.\d+)?)B(?![A-Za-z])", names)]
+    t = max(total) if total else 0.0
+    if not t:
+        try:
+            t = round(os.path.getsize(path) * 8 / 4.8 / 1e9, 1)
+        except OSError:
+            t = 0.0
+    a = min(active) if active else t
+    return t, a
+
+
+def think_budgets(params_b, n_ctx=0):
+    """Tope de razonamiento (tokens) de cada nivel para los modelos que solo encienden o apagan el razonamiento o que
+    razonan siempre. Crece con el tamaño del modelo: un modelo pequeño que piensa mucho se suele quedar dando vueltas,
+    uno grande aprovecha pensar más. «Alto» no tiene tope a partir de unos 100 000 millones de parámetros. Nunca más de
+    un tercio de la memoria de la conversación. 0 = sin razonar; None = sin tope."""
+    p = max(0.5, float(params_b or 8))
+    med = int(min(16384, max(512, 512 * p ** 0.5))) // 256 * 256
+    high = None if p >= 100 else int(min(32768, max(2048, med * 4))) // 512 * 512
+    if n_ctx:
+        cap = max(512, int(n_ctx) // 3)
+        med, high = min(med, cap), min(high or cap, cap)
+    return {"low": 0, "medium": med, "high": high}
+
+
+def think_style(tpl, think=True):
+    """Qué control de razonamiento trae el modelo de fábrica, según su plantilla: 'levels' (niveles propios, como
+    gpt-oss), 'toggle' (se enciende o se apaga, como Qwen, Gemma o GLM), 'always' (razona siempre) o 'none'."""
+    if not think:
+        return "none"
+    if "reasoning_effort" in tpl:
+        return "levels"
+    if "enable_thinking" in tpl:
+        return "toggle"
+    return "always"
 
 
 # capas con atención por ventana cuando el GGUF no trae el patrón: 1 de cada N tiene atención completa
@@ -623,7 +670,7 @@ def _kv_elems(meta):
     return int(sum(per_layer) * (int(k) + int(v)))
 
 
-CAPS_V = 3                      # sube al cambiar cómo se calcula «kv»: las capacidades guardadas se vuelven a leer
+CAPS_V = 5                      # sube al cambiar lo que se lee del modelo: las capacidades guardadas se vuelven a leer
 
 
 CTX_FLOOR = 16384               # lo que se usaba antes por defecto: el automático nunca baja de aquí (si el modelo llega)
@@ -668,10 +715,68 @@ def effective_ctx(cfg, m=None):
             pass
     ram = hw.get("ram", 0)
     reserve = max(4 * GB, ram * 0.2)                 # para el sistema y los demás programas abiertos
-    free = ram + max(0, hw.get("vram", 0) - GB) - used - reserve
+    vram = hw.get("vram", 0) if gpu_engine(cfg) else 0   # la memoria de vídeo solo cuenta si el motor la usa
+    free = ram + max(0, vram - GB) - used - reserve
     fits = int(free / per_token) if free > 0 else 0
     ctx = min(native, max(min(native, CTX_FLOOR), fits))
     return max(2048, ctx // 1024 * 1024)
+
+
+def gpu_engine(cfg):
+    """¿El motor usa la gráfica? (y no se ha vuelto al procesador porque la gráfica falló)"""
+    return cfg.get("backend") in ("cuda", "vulkan", "metal") and not LLM_MGR.cpu_only
+
+
+ENGINE_NAMES = {"cpu": tr("procesador (CPU)"), "cuda": tr("gráfica NVIDIA (CUDA)"), "vulkan": tr("gráfica (Vulkan)"),
+                "metal": tr("gráfica de Apple (Metal)")}
+
+
+def engine_offer(cfg=None, hw=None):
+    """Si este equipo tiene una gráfica que el motor instalado no aprovecha (se añadió después, se actualizó el
+    controlador…), la recomendación para ofrecerla: {'backend', 'cuda', 'gpu', 'why', 'key'}; si no, None. No se ofrece
+    con el motor elegido a mano, uno propio o un modelo por API, ni dos veces la misma."""
+    cfg = cfg or SET.snapshot()
+    if cfg.get("llm_mode") != "local" or not cfg.get("setup_done") or cfg.get("llama_tag") == "propio" or cfg.get("backend_auto") is False:
+        return None
+    rec = (hw or _hardware()).get("engine") or {}
+    b, cu = rec.get("backend"), rec.get("cuda") or ""
+    if not b or (b == cfg.get("backend") and (b != "cuda" or cu == (cfg.get("cuda_major") or "12"))):
+        return None
+    if b == "cpu":                                   # nunca se ofrece «quitar» la gráfica: si falla, ya se vuelve al procesador
+        return None
+    key = "%s%s|%s" % (b, cu, rec.get("gpu", ""))
+    if cfg.get("engine_offer_seen") == key:
+        return None
+    return dict(rec, key=key)
+
+
+def engine_installed(exe, tag, backend, cuda=""):
+    """El motor recién instalado pasa a ser el de Jayth (se usa al encender el modelo)."""
+    LLM_MGR.cpu_only = False
+    LLM_MGR.gpu_note = ""
+    SET.update({"llama_exe": exe, "llama_tag": tag, "backend": backend, "cuda_major": cuda if backend == "cuda" else "",
+                "engine_caps": {}})
+
+
+def accel_text(cfg=None):
+    """Qué acelera el modelo, en una frase para el usuario."""
+    cfg = cfg or SET.snapshot()
+    if cfg.get("llm_mode") != "local":
+        return ""
+    if LLM_MGR.cpu_only and cfg.get("backend") != "cpu":
+        return tr("La gráfica no pudo cargar el modelo (%s): va en el procesador. Se vuelve a intentar con la gráfica al "
+                  "cambiar de modelo o de motor.") % (LLM_MGR.gpu_note or tr("motivo desconocido"))
+    if cfg.get("backend") == "cpu":
+        return tr("Aceleración: ninguna, el modelo va en el procesador.")
+    info = LLM_MGR.gpu_info
+    if info.get("devices") or info.get("layers"):
+        dev = ", ".join(info.get("devices") or []) or ENGINE_NAMES.get(cfg["backend"], cfg["backend"])
+        if info.get("layers"):
+            done, total = info["layers"]
+            return tr("Aceleración: %s · %d de %d capas en la gráfica%s.") % (
+                dev, done, total, "" if done >= total else tr(" (el resto, en la RAM)"))
+        return tr("Aceleración: %s.") % dev
+    return tr("Aceleración: %s (se confirma al encender el modelo).") % ENGINE_NAMES.get(cfg["backend"], cfg["backend"])
 
 
 def memory_plan(cfg, m=None):
@@ -693,7 +798,7 @@ def memory_plan(cfg, m=None):
             pass
     hw = _hardware()
     ram = hw.get("ram", 0)
-    gpu = max(0, hw.get("vram", 0) - GB) if cfg.get("backend") in ("cuda", "vulkan", "metal") else 0
+    gpu = max(0, hw.get("vram", 0) - GB) if gpu_engine(cfg) and cfg.get("backend") != "metal" else 0
     room = ram + gpu
     reserve = max(4 * GB, ram * 0.2)
     level = "ok" if need <= room - reserve else "tight" if need <= room - 1.5 * GB else "no"
@@ -750,6 +855,56 @@ def effort_of(cfg):
 
 def set_effort(e):
     SET.update({"effort": e, "thinking": e != "low"})
+
+
+def note_speed(mid, tps):
+    """Velocidad de escritura medida de un modelo local (tokens por segundo), para estimar cuánto tarda cada nivel de
+    esfuerzo. Solo se guarda si cambia de forma apreciable (no se reescriben los ajustes en cada paso)."""
+    try:
+        tps = float(tps)
+        m = next((x for x in SET.snapshot()["models"] if x.get("id") == mid), None)
+        if m is None or tps <= 0:
+            return
+        old = float(m.get("tps") or 0)
+        if not old or abs(tps - old) / old > 0.15:
+            SET.update_model(mid, tps=round(0.5 * old + 0.5 * tps, 2) if old else round(tps, 2))
+    except Exception:
+        pass
+
+
+def _tok_time(tokens, tps):
+    """«≈ 3 min» para pensar tantos tokens a la velocidad medida ('' si no se sabe)."""
+    if not tps or not tokens:
+        return ""
+    s = tokens / float(tps)
+    return " (≈ %s)" % (tr("%d s") % s if s < 90 else tr("%d min") % round(s / 60.0) if s < 5400 else tr("%d h") % round(s / 3600.0))
+
+
+def effort_support(cfg):
+    """(clase, explicación) de lo que hace de verdad el esfuerzo con el modelo elegido. Clases: 'levels' (tres niveles
+    reales), 'toggle' (encender/apagar el razonamiento y un tope para «Medio»), 'none' (no cambia nada) o 'unknown'."""
+    if cfg.get("llm_mode") == "external":
+        return A.API.effort_support(cfg.get("external_url") or "", cfg.get("external_model") or "")
+    m = active_model(cfg)
+    c = model_caps(m, compute=False) or {}
+    st = c.get("think_style")
+    if st == "levels":
+        return "levels", tr("Este modelo trae tres niveles de razonamiento de fábrica, y se usan tal cual.")
+    if st in ("toggle", "always"):
+        b = think_budgets(c.get("params_b"), effective_ctx(cfg, m))
+        tps = float((m or {}).get("tps") or 0)
+        med = tr("hasta unos %s tokens") % i18n.number(b["medium"], 0) + _tok_time(b["medium"], tps)
+        high = (tr("hasta unos %s tokens") % i18n.number(b["high"], 0) + _tok_time(b["high"], tps)) if b["high"] else tr("sin tope")
+        size = (tr("A su tamaño (unos %s mil millones de parámetros): ") % i18n.number(c["params_b"], 0 if c["params_b"] >= 10 else 1)) \
+            if c.get("params_b") else ""
+        if st == "toggle":
+            msg = size + tr("«Bajo» no razona; «Medio» piensa %s; «Alto», %s.") % (med, high)
+        else:
+            msg = size + tr("este modelo razona siempre: «Bajo» lo corta enseguida; «Medio» piensa %s; «Alto», %s.") % (med, high)
+        return "toggle", msg[:1].upper() + msg[1:]
+    if st == "none":
+        return "none", tr("Este modelo no razona antes de responder: el esfuerzo no cambia nada con él.")
+    return "unknown", ""
 
 
 def llm_base(cfg):
@@ -822,6 +977,9 @@ class Session:
         attach = attach_text if attach_text is not None else attachments_text(files)
         if cfg["mode"] == "plan":
             self.data["plan"] = []
+        with self.cond:                          # si Jayth se cerró a mitad de un turno, el chat sabe cómo acabó cada acción
+            evs = list(self.events)
+        A.repair_history(self.data["messages"], evs)
         run = A.Run(self.data, cfg, self.add_event, paths.IMG_DIR)
         self.run = run
         if self.title in DEFAULT_TITLES:
@@ -890,6 +1048,13 @@ class Session:
         cfg["_after_llm"] = lambda n: LLM_MGR.after_step(sid, n)
         cfg["_slot_other"] = LLM_MGR.slot_other
         cfg["_model_title"] = model_title(active_model(cfg)) if cfg["llm_mode"] == "local" else (cfg.get("external_model") or "")
+        if cfg["llm_mode"] == "local":                   # qué control de razonamiento trae el modelo (el esfuerzo lo usa)
+            am = active_model(cfg)
+            c = model_caps(am, compute=False) or {}
+            cfg["_think_style"] = c.get("think_style") or ""
+            cfg["_think_budget"] = think_budgets(c.get("params_b"), cfg["n_ctx"])
+            if am:
+                cfg["_note_speed"] = lambda tps, mid=am.get("id"): note_speed(mid, tps)
         return cfg
 
     def _auto_title(self, cfg):
@@ -1124,6 +1289,10 @@ def load_sessions():
                 if os.path.isfile(s.epath):
                     with open(s.epath, "r", encoding="utf-8") as f:
                         s.events = [json.loads(l) for l in f if l.strip()]
+                    # el número de cada evento es su posición: los avisos en directo no se guardan pero ocupaban número,
+                    # y sin esto reintentar o volver a un mensaje cortaba la conversación por otro sitio
+                    for k, e in enumerate(s.events):
+                        e["i"] = k
                 SESSIONS[s.id] = s
             except Exception:
                 continue
@@ -1197,10 +1366,41 @@ def sorted_sessions():
 
 
 # ---------------------------------------------------------------- proceso del modelo (llama-server)
+GPU_FAIL = re.compile(r"cuda|cublas|cudnn|nvcuda|vulkan|vk::|ggml_vulkan|\bhip\b|rocm|hipblas|\bmetal\b|out of memory|"
+                      r"failed to allocate|unable to allocate|cudaMalloc|OutOfDeviceMemory|device lost|no usable gpu", re.I)
+
+
+def gpu_info_from_log(text):
+    """Qué gráfica usó el motor y cuántas capas cargó en ella, leído de su registro: {'devices': [...], 'layers': (n, total)}."""
+    devs = []
+    for m in re.finditer(r"using device \w+ \(([^)]+)\)", text):
+        if m.group(1) not in devs:
+            devs.append(m.group(1))
+    if not devs:
+        for m in re.finditer(r"ggml_vulkan: \d+ = ([^(|\n]+)", text):
+            n = m.group(1).strip()
+            if n not in devs:
+                devs.append(n)
+    if not devs:
+        m = re.search(r"(?:GPU name|found device):\s*(.+)", text)
+        if m:
+            devs.append(m.group(1).strip())
+    info = {"devices": devs}
+    m = list(re.finditer(r"offloaded (\d+)/(\d+) layers to GPU", text))
+    if m:
+        info["layers"] = (int(m[-1].group(1)), int(m[-1].group(2)))
+    return info
+
+
 class LLM:
     def __init__(self):
         self.proc = None
         self.log = os.path.join(paths.DATA, "llama.log")
+        self.cpu_only = False         # la gráfica falló al cargar el modelo: se usa el procesador (hasta cambiar de modelo o motor)
+        self.gpu_note = ""            # por qué falló la gráfica (del registro del motor)
+        self.gpu_info = {}            # qué gráfica y cuántas capas usa el modelo encendido
+        self.gpu_events = []          # avisos para la ventana (se vuelve al procesador…)
+        self._gpu_key = ""
 
     def _health(self, port):
         try:
@@ -1252,10 +1452,19 @@ class LLM:
         if tb != int(cfg["threads"]):
             cmd += ["-tb", str(tb)]             # leer (cálculo) aprovecha todos los hilos; escribir (memoria), los núcleos físicos
         if cfg["backend"] in ("cuda", "vulkan", "metal"):
-            if int(cfg["gpu_layers"]) >= 0:
+            if self.cpu_only:
+                cmd += ["-dev", "none"]         # la gráfica falló al cargar el modelo: el mismo motor, en el procesador
+            elif int(cfg["gpu_layers"]) >= 0:
                 cmd += ["-ngl", str(cfg["gpu_layers"])]
             else:
-                cmd += ["--fit", "on"]          # reparte capas entre GPU y RAM segun la memoria disponible
+                try:
+                    from . import ajuste
+                    fit = ajuste.engine_caps(cfg["llama_exe"]).get("fit", True)
+                except Exception:
+                    fit = True
+                # reparte capas (y expertos) entre la gráfica y la RAM según la memoria libre; un motor antiguo sin
+                # --fit: todas a la gráfica (si no caben, falla y se vuelve al procesador)
+                cmd += ["--fit", "on"] if fit else ["-ngl", "999"]
         fa = cfg["flash_attn"]
         if cfg["cache_type"] != "f16":
             cmd += ["-ctk", cfg["cache_type"], "-ctv", cfg["cache_type"]]
@@ -1598,11 +1807,42 @@ class LLM:
             env["LD_LIBRARY_PATH"] = bindir + os.pathsep + env.get("LD_LIBRARY_PATH", "")
         elif osys.MAC:
             env["DYLD_LIBRARY_PATH"] = bindir + os.pathsep + env.get("DYLD_LIBRARY_PATH", "")
+        key = "%s|%s|%s" % (cfg["backend"], cfg["llama_exe"], m.get("path"))
+        if key != self._gpu_key:                     # otro modelo u otro motor: se vuelve a intentar con la gráfica
+            self.cpu_only, self.gpu_note, self._gpu_key = False, "", key
+        self.gpu_info = {}
         cmd = self.command(cfg)
         self.proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                      cwd=bindir, env=env, **osys.popen_kwargs())
         self._slots_on, self.slot_sid, self.slot_fresh, self.slot_tokens, self.slot_saved = "--slot-save-path" in cmd, "", False, 0, 0
+        threading.Thread(target=self._watch_load, args=(self.proc, cfg), daemon=True).start()
         return None
+
+    def _watch_load(self, proc, cfg):
+        """Mientras se carga el modelo: si la gráfica falla (sin memoria, controlador…), se vuelve a encender en el
+        procesador con el mismo motor y se avisa; cuando está listo, se lee qué gráfica y cuántas capas usa."""
+        port = int(cfg["llm_port"])
+        end = time.time() + 3600
+        while time.time() < end and self.proc is proc:
+            code = proc.poll()
+            if code is not None:
+                if code != 0 and cfg["backend"] in ("cuda", "vulkan", "metal") and not self.cpu_only:
+                    text = self.tail(200) if hasattr(self, "tail") else ""
+                    if GPU_FAIL.search(text or ""):
+                        line = next((l.strip() for l in reversed((text or "").splitlines()) if GPU_FAIL.search(l)), "")
+                        self.cpu_only, self.gpu_note = True, line[:160]
+                        self.gpu_events.append(("cpu", self.gpu_note))
+                        self.proc = None
+                        self.start()
+                return
+            if self._health(port) == 200:
+                try:
+                    with open(self.log, "r", encoding="utf-8", errors="replace") as f:
+                        self.gpu_info = gpu_info_from_log(f.read(2_000_000))
+                except OSError:
+                    pass
+                return
+            time.sleep(1.0)
 
     def stop(self):
         if self.proc is not None and self.proc.poll() is None:

@@ -341,6 +341,10 @@ class SetupWizard(QDialog):
         f.addRow(tr("Usar:"), self.backend)
         self.eng_state = lbl("", "muted")
         f.addRow("", self.eng_state)
+        # con el mismo motor ya instalado no se descargaba nada: «Cambiar o actualizar» no podía actualizar
+        self.chk_update = QCheckBox(tr("Actualizar a la última versión aunque ya esté instalado"))
+        self.chk_update.setVisible(bool(self.cfg["llama_exe"]) and self.cfg.get("llama_tag") != "propio")
+        f.addRow("", self.chk_update)
         self.chk_own = QCheckBox(tr("Usar un %s que ya tengo") % SERVER_EXE)
         self.own_exe = QLineEdit(self.cfg["llama_exe"])
         f.addRow(self.chk_own)
@@ -366,6 +370,7 @@ class SetupWizard(QDialog):
         v.addStretch(1)
         self.backend.currentIndexChanged.connect(self._eng_state)
         self.chk_own.toggled.connect(self._eng_state)
+        self.chk_update.toggled.connect(self._eng_state)
         return w
 
     def _progress(self):
@@ -914,8 +919,12 @@ class SetupWizard(QDialog):
         self.go(self.p_engine)
 
     def _llama_ok(self):
+        """¿Ya está instalado el motor elegido? (con «Actualizar a la última versión» marcado, se vuelve a descargar)"""
         b = self.backend.currentData()
-        return os.path.isfile(self.cfg["llama_exe"]) and self.cfg["backend"] == b
+        if getattr(self, "chk_update", None) is not None and self.chk_update.isChecked():
+            return False
+        return os.path.isfile(self.cfg["llama_exe"]) and self.cfg["backend"] == b and \
+            (b != "cuda" or (self.cfg.get("cuda_major") or "12") == self._cuda_for(b))
 
     def _eng_state(self):
         if self.chk_own.isChecked():
@@ -1023,25 +1032,15 @@ class SetupWizard(QDialog):
         job.add(tr("Convertir a GGUF y crear la variante %s%s") % (quant, (" + " + tr("visión")) if vision else ""), conv)
 
     def _job_llama(self, backend, pr, st, res):
-        rel = P.llama_release(backend)
-        dl = os.path.join(paths.RUNTIME_DIR, "downloads")
-        target = os.path.join(paths.RUNTIME_DIR, "llama-%s-%s" % (rel["tag"], backend))
-        total = sum(a["size"] for a in rel["assets"])
-        base = 0
-        for a in rel["assets"]:
-            z = os.path.join(dl, a["name"])
-            P.download(a["url"], z, a["size"], a["sha256"], lambda d, t, ph, b=base: pr(b + d, total, ph), st)
-            base += a["size"]
-            pr(base, total, "descomprimiendo")
-            P.extract_archive(z, target)
-        exe = P.find_server(target)
-        if not exe:
-            raise RuntimeError(tr("El paquete de llama.cpp no contiene %s") % SERVER_EXE)
-        res.update(llama_exe=exe, llama_tag=rel["tag"])
-        try:
-            shutil.rmtree(dl)
-        except OSError:
-            pass
+        cuda = self._cuda_for(backend)
+        exe, tag = P.install_llama(backend, cuda, pr, st)
+        res.update(llama_exe=exe, llama_tag=tag, cuda_major=cuda)
+
+    def _cuda_for(self, backend):
+        """Con CUDA, la versión que admite este equipo (13 o 12); si aún no se sabe, la recomendada al detectarlo."""
+        if backend != "cuda":
+            return ""
+        return ((getattr(self, "hw", None) or {}).get("engine") or {}).get("cuda") or "12"
 
     def _start_job(self, job):
         self.job = job
@@ -1128,7 +1127,13 @@ class SetupWizard(QDialog):
         if res.get("model_path"):                 # modelo convertido desde el formato original
             self.pending_model.update(path=res["model_path"], mmproj=res.get("mmproj_path") or "", file=os.path.basename(res["model_path"]),
                                       size=os.path.getsize(res["model_path"]))
-        core.SET.update(dict(self.pending_cfg, llama_exe=res["llama_exe"], llama_tag=res.get("llama_tag", ""), llm_mode="local", setup_done=True))
+        rec = ((getattr(self, "hw", None) or {}).get("engine") or {}).get("backend")
+        extra = {"backend_auto": rec is None or rec == self.pending_cfg["backend"]}     # elegido a mano otro motor: no se le propone
+        if "cuda_major" in res:
+            extra["cuda_major"] = res["cuda_major"]
+        core.SET.update(dict(self.pending_cfg, llama_exe=res["llama_exe"], llama_tag=res.get("llama_tag", ""), llm_mode="local",
+                             setup_done=True, **extra))
+        core.LLM_MGR.cpu_only = False
         core.SET.add_model(self.pending_model, activate=True)
         self.done_lbl.setText(tr("Modelo «%s» instalado y activo.\n\nArchivo: %s%s\nMotor: %s (%s)") % (
             self.pending_model["name"], self.pending_model["path"],

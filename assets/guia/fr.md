@@ -45,6 +45,14 @@ Créé par Ing. Jeison Tuiran. Logiciel libre sous licence GPL-3.0. Web : https
 - **Pastille du modèle** (p. ex. « Qwen3.8 27B · Faible ») : change de modèle, règle l'**Effort** (combien il réfléchit
   avant de répondre : Faible, Moyen, Élevé), télécharge ou ajoute des modèles (Télécharger ou ajouter un modèle…), Gérer
   les modèles…, Modèles par API… et **Moteur** (démarrer ou arrêter le modèle).
+- L'**Effort** fait ce que chaque modèle permet d'origine, et le menu l'explique. Modèles locaux : ceux qui ont leurs
+  propres niveaux (gpt-oss) les utilisent tels quels ; pour ceux qui ne font qu'activer ou désactiver le raisonnement
+  (Qwen, Gemma, GLM…), « Faible » le désactive, et « Moyen » et « Élevé » le laissent réfléchir jusqu'à une limite qui
+  grandit avec la taille du modèle (un 2B réfléchit peu ; un modèle de centaines de milliards de paramètres n'a pas de
+  limite en « Élevé »), et le menu indique combien de temps cela prendrait sur votre ordinateur. Par API : chaque
+  service le reçoit par son propre réglage (Claude, OpenAI, Gemini, OpenRouter, DeepSeek, Kimi, GLM, Qwen…) et son
+  raisonnement s'affiche dans le chat ; si un service ne le montre pas, les chiffres de chaque étape disent combien il
+  a réfléchi, et s'il ne permet pas de choisir l'effort, Jayth le demande au modèle dans ses instructions.
 - Si le modèle est arrêté, un avis apparaît au-dessus de la zone de texte avec **Démarrer le modèle** (il peut se fermer
   avec la × ; il revient si la situation change). Si vous écrivez alors que le modèle est arrêté, Jayth le démarre et
   envoie le message dès qu'il est prêt.
@@ -287,6 +295,15 @@ GPU et la RAM), Taille de lot, Contexte compressé, Flash attention, Accélérat
 RAM et le port local. Les changements du moteur s'appliquent au redémarrage du modèle (**Redémarrer le modèle**). Le
 journal du moteur se trouve dans **Paramètres › Journal du modèle**.
 
+- **Accélération par carte graphique :** Jayth détecte la carte de l'ordinateur et choisit tout seul le moteur adapté :
+  CUDA pour NVIDIA (version 13 ou 12 selon le pilote et l'âge de la carte), Vulkan pour les cartes AMD et Intel Arc
+  dédiées, Metal sur les Mac avec Apple Silicon, ou le processeur si aucune carte ne peut aider (les puces intégrées
+  sont souvent plus lentes que lui). Le moteur répartit tout seul le modèle entre la carte et la RAM. Si plus tard
+  l'ordinateur a une carte que le moteur n'exploite pas, Jayth propose d'installer le moteur accéléré en un clic
+  (désactivable avec « Proposer le moteur accéléré »). Si la carte échoue à charger un modèle (par exemple, faute de
+  mémoire), Jayth le démarre sur le processeur et prévient. Cette page indique ce qui accélère le modèle et combien de
+  couches sont sur la carte. « Changer ou mettre à jour le moteur… » permet de le choisir à la main et de le mettre à
+  jour vers la dernière version.
 - **Optimiser pour cet ordinateur** (Paramètres › Performances) : au lieu d'estimer, mesure réellement avec le modèle
   actif (quelques minutes, le modèle étant arrêté pendant ce temps) : teste les threads et flash attention avec
   llama-bench ainsi que l'« Accélération de l'écriture » (décodage spéculatif : **MTP**, pour les modèles qui intègrent

@@ -136,20 +136,153 @@ def has_avx2():
         return True
 
 
-def nvidia_gpus():
+def _nvidia_smi():
     exe = shutil.which("nvidia-smi") or (r"C:\Windows\System32\nvidia-smi.exe" if osys.WIN else "")
-    if not exe or not os.path.isfile(exe):
+    return exe if exe and os.path.isfile(exe) else ""
+
+
+def nvidia_gpus():
+    """GPU NVIDIA: nombre, VRAM, versión del controlador y generación (compute capability, p. ej. 8.9)."""
+    exe = _nvidia_smi()
+    if not exe:
         return []
-    try:
-        out = subprocess.run([exe, "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"], capture_output=True,
-                             text=True, timeout=8, creationflags=NO_WINDOW).stdout
-        res = []
+    res = []
+    for fields in ("name,memory.total,driver_version,compute_cap", "name,memory.total,driver_version", "name,memory.total"):
+        out = _run([exe, "--query-gpu=" + fields, "--format=csv,noheader,nounits"], 8)
+        if not out.strip() or "not a valid field" in out.lower() or "invalid" in out.lower():
+            continue
         for line in out.strip().splitlines():
-            name, mem = [x.strip() for x in line.rsplit(",", 1)]
-            res.append({"name": name, "vram": int(float(mem)) * 1024 * 1024})
-        return res
+            parts = [x.strip() for x in line.split(",")]
+            try:
+                g = {"name": parts[0], "vram": int(float(parts[1])) * 1024 * 1024, "vendor": "nvidia", "dedicated": True}
+            except (IndexError, ValueError):
+                continue
+            if len(parts) > 2:
+                g["driver"] = parts[2]
+            if len(parts) > 3:
+                try:
+                    g["cc"] = float(parts[3])
+                except ValueError:
+                    pass
+            res.append(g)
+        break
+    return res
+
+
+def nvidia_cuda():
+    """Versión de CUDA más alta que admite el controlador NVIDIA instalado («13.0»), o '' si no se sabe."""
+    exe = _nvidia_smi()
+    m = re.search(r"CUDA Version:\s*([\d.]+)", _run([exe], 8)) if exe else None
+    return m.group(1) if m else ""
+
+
+VENDORS = {"10DE": "nvidia", "1002": "amd", "1022": "amd", "8086": "intel", "106B": "apple"}
+_VIRTUAL = re.compile(r"basic display|basic render|virtual|remote|parsec|rustdesk|indirect display|idd|citrix|vmware|hyper-v|"
+                      r"displaylink|spacedesk|meta virtual", re.I)
+
+
+def _vendor_of(name):
+    n = (name or "").lower()
+    return "nvidia" if re.search(r"nvidia|geforce|quadro|tesla|rtx", n) else "amd" if re.search(r"amd|radeon|ati ", n) else \
+        "intel" if "intel" in n else "apple" if "apple" in n else ""
+
+
+def _dedicated(g):
+    """¿Gráfica dedicada que merece la pena? Las integradas no ayudan: medido en un i5-8250U con Intel UHD 620 (Vulkan,
+    llama.cpp b12549), leer fue un 20-80 % más lento y escribir hasta 7 veces más lento que con el procesador."""
+    n, v = (g.get("name") or "").lower(), int(g.get("vram") or 0)
+    if g.get("vendor") == "nvidia":
+        return True
+    if g.get("vendor") == "amd":
+        return v >= 2 * GB or bool(re.search(r"radeon (rx|pro)|instinct|firepro|radeon vii", n))
+    if g.get("vendor") == "intel":
+        return v >= 2 * GB and bool(re.search(r"arc(\(tm\))?\s*(pro\s*)?[ab]\d", n))
+    return False
+
+
+def _win_adapters():
+    """Gráficas de Windows con su memoria de vídeo real (del registro del controlador: WMI se queda en 4 GB)."""
+    import winreg
+    present = [x.lower() for x in all_gpus()]          # (el registro guarda también las de antes: solo las que están)
+    out = []
+    base = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+    try:
+        k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base)
+    except OSError:
+        return out
+    i = 0
+    while True:
+        try:
+            sub = winreg.EnumKey(k, i)
+        except OSError:
+            break
+        i += 1
+        if not sub.isdigit():
+            continue
+        try:
+            sk = winreg.OpenKey(k, sub)
+        except OSError:
+            continue
+
+        def val(name):
+            try:
+                return winreg.QueryValueEx(sk, name)[0]
+            except OSError:
+                return None
+        name = str(val("DriverDesc") or "").strip()
+        if not name or _VIRTUAL.search(name) or (present and name.lower() not in present):
+            continue
+        mem = val("HardwareInformation.qwMemorySize")
+        if mem is None:
+            mem = val("HardwareInformation.MemorySize")
+        if isinstance(mem, (bytes, bytearray)):
+            mem = int.from_bytes(bytes(mem[:8]), "little")
+        ven = re.search(r"VEN_([0-9A-F]{4})", str(val("MatchingDeviceId") or "").upper())
+        g = {"name": name, "vram": int(mem or 0), "vendor": VENDORS.get(ven.group(1), "") if ven else _vendor_of(name)}
+        if not any(x["name"] == g["name"] for x in out):
+            out.append(g)
+    return out
+
+
+def _linux_adapters():
+    out = []
+    import glob
+    for d in sorted(glob.glob("/sys/class/drm/card[0-9]*/device")):
+        try:
+            ven = open(os.path.join(d, "vendor")).read().strip().upper().replace("0X", "")
+        except OSError:
+            continue
+        vram = 0
+        try:
+            vram = int(open(os.path.join(d, "mem_info_vram_total")).read().strip())
+        except (OSError, ValueError):
+            pass
+        out.append({"name": "", "vram": vram, "vendor": VENDORS.get(ven, "")})
+    names = all_gpus()
+    for g, n in zip(out, [n for n in names if _vendor_of(n)]):
+        g["name"] = n
+    return out
+
+
+def gpu_list(nv=None):
+    """Todas las gráficas: [{name, vendor, vram, dedicated, (driver, cc en NVIDIA)}]."""
+    nv = nvidia_gpus() if nv is None else nv
+    try:
+        if osys.WIN:
+            others = _win_adapters()
+        elif osys.MAC:
+            others = [{"name": n, "vram": 0, "vendor": _vendor_of(n) or ("apple" if APPLE_SILICON else "")} for n in all_gpus()]
+        else:
+            others = _linux_adapters()
     except Exception:
-        return []
+        others = []
+    res = list(nv)
+    for g in others:
+        if g.get("vendor") == "nvidia" and nv:
+            continue                                   # (las NVIDIA ya vienen con sus datos de nvidia-smi)
+        g["dedicated"] = _dedicated(g)
+        res.append(g)
+    return res
 
 
 def all_gpus():
@@ -182,25 +315,59 @@ def disk_free(path):
 def detect():
     total, avail = ram()
     nv = nvidia_gpus()
-    gpus = all_gpus()
-    return {"cpu": cpu_name(), "cores": physical_cores(), "logical": os.cpu_count() or 1, "avx2": has_avx2(),
-            "ram": total, "ram_free": avail, "nvidia": nv, "gpus": gpus, "unified": APPLE_SILICON,
-            "vram": max((g["vram"] for g in nv), default=0), "os": osys.os_label(), "arch": platform.machine().lower()}
+    gl = gpu_list(nv)
+    hw = {"cpu": cpu_name(), "cores": physical_cores(), "logical": os.cpu_count() or 1, "avx2": has_avx2(),
+          "ram": total, "ram_free": avail, "nvidia": nv, "gpus": [g["name"] for g in gl] or all_gpus(), "gpu_list": gl,
+          "cuda": nvidia_cuda() if nv else "", "unified": APPLE_SILICON, "os": osys.os_label(), "arch": platform.machine().lower()}
+    eng = recommend_engine(hw)
+    hw["vram"] = eng["vram"]                           # la memoria de vídeo que usaría el motor recomendado
+    hw["engine"] = eng
+    return hw
+
+
+MIN_VRAM = 3 * GB          # con menos, repartir el modelo entre la gráfica y la RAM apenas gana nada
+
+
+def recommend_engine(hw):
+    """El motor de llama.cpp adecuado a este equipo: {'backend': metal | cuda | vulkan | cpu, 'cuda': '13' | '12' | '',
+    'gpu': nombre, 'vram': bytes que usaría, 'why': motivo}. CUDA 13 si el controlador lo admite y la gráfica es de 2018 o
+    posterior (CUDA 13 dejó fuera las anteriores); si no, CUDA 12; con un controlador muy antiguo, Vulkan."""
+    arm = (hw.get("arch") or platform.machine().lower()) in ("arm64", "aarch64")
+    if osys.MAC:
+        if APPLE_SILICON:
+            return {"backend": "metal", "cuda": "", "gpu": "Apple", "vram": 0, "why": tr("Mac con Apple Silicon: Metal usa la memoria unificada.")}
+        return {"backend": "cpu", "cuda": "", "gpu": "", "vram": 0, "why": tr("En los Mac con Intel llama.cpp no acelera con la gráfica.")}
+    gl = hw.get("gpu_list") or [dict(g, vendor="nvidia", dedicated=True) for g in hw.get("nvidia") or []]
+    nv = [g for g in gl if g.get("vendor") == "nvidia" and int(g.get("vram") or 0) >= MIN_VRAM]
+    if nv:
+        best = max(nv, key=lambda g: g["vram"])
+        try:
+            major = int(float((hw.get("cuda") or "0").split(".")[0]))
+        except ValueError:
+            major = 0
+        cc = float(best.get("cc") or 0)
+        vram = sum(g["vram"] for g in nv)
+        if major >= 13 and (cc >= 7.5 or not cc):
+            return {"backend": "cuda", "cuda": "13", "gpu": best["name"], "vram": vram, "why": tr("Gráfica NVIDIA: CUDA 13.")}
+        if major >= 12 and not arm:
+            return {"backend": "cuda", "cuda": "12", "gpu": best["name"], "vram": vram,
+                    "why": tr("Gráfica NVIDIA: CUDA 12 (por su controlador o su generación).")}
+        return {"backend": "vulkan", "cuda": "", "gpu": best["name"], "vram": vram,
+                "why": tr("Gráfica NVIDIA con un controlador antiguo: Vulkan (actualizar el controlador permitiría CUDA, más rápido).")}
+    ded = [g for g in gl if g.get("dedicated") and g.get("vendor") in ("amd", "intel") and int(g.get("vram") or 0) >= MIN_VRAM]
+    if ded:
+        best = max(ded, key=lambda g: g["vram"])
+        return {"backend": "vulkan", "cuda": "", "gpu": best["name"], "vram": sum(g["vram"] for g in ded),
+                "why": tr("Gráfica AMD o Intel dedicada: Vulkan.")}
+    small = [g for g in gl if g.get("dedicated")]
+    why = tr("La gráfica tiene poca memoria de vídeo: el procesador va igual o mejor.") if small else \
+        tr("Sin gráfica dedicada: el procesador (las integradas van más lentas que él).")
+    return {"backend": "cpu", "cuda": "", "gpu": "", "vram": 0, "why": why}
 
 
 def recommend_backend(hw):
-    """Motor de llama.cpp: metal (Apple Silicon), cuda (NVIDIA), vulkan (AMD/Intel Arc) o cpu."""
-    if osys.MAC:
-        return "metal" if APPLE_SILICON else "cpu"
-    if platform.machine().lower() in ("arm64", "aarch64"):
-        return "cpu"
-    if hw["nvidia"]:
-        return "cuda"
-    # las gráficas integradas no ayudan: medido en un i5-8250U con Intel UHD 620 (Vulkan, llama.cpp b12549), leer fue un
-    # 20-80 % más lento y escribir hasta 7 veces más lento que con el procesador; con modelos de más de ~8 GB ni siquiera
-    # pudo reservar memoria. Solo se usa Vulkan con una gráfica dedicada (Radeon, Intel Arc)
-    discrete = [g for g in hw["gpus"] if re.search(r"radeon rx|arc a|arc b|radeon pro|navi|vega", g, re.I)]
-    return "vulkan" if discrete else "cpu"
+    """Motor de llama.cpp: metal (Apple Silicon), cuda (NVIDIA), vulkan (AMD/Intel dedicadas) o cpu."""
+    return (hw.get("engine") or recommend_engine(hw))["backend"]
 
 
 def memory_budget(hw, vision=True):
@@ -318,7 +485,9 @@ def human(n):
 
 
 def summary(hw):
-    g = ", ".join("%s (%s)" % (x["name"], human(x["vram"])) for x in hw["nvidia"]) or (", ".join(hw["gpus"]) or tr("sin GPU dedicada"))
+    ded = [x for x in hw.get("gpu_list") or [] if x.get("dedicated")]
+    g = ", ".join("%s (%s)" % (x["name"], human(x["vram"])) for x in ded or hw["nvidia"]) or \
+        (", ".join(hw["gpus"]) + (" · " + tr("integrada") if hw["gpus"] else "") if hw["gpus"] else tr("sin GPU dedicada"))
     if hw.get("unified"):
         g += " · " + tr("memoria unificada")
     return tr("%s · %d núcleos · RAM %s · GPU: %s") % (hw["cpu"], hw["cores"], human(hw["ram"]), g)

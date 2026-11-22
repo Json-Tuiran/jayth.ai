@@ -43,6 +43,14 @@ Erstellt von Ing. Jeison Tuiran. Freie Software unter der Lizenz GPL-3.0. Web: h
 - **Modell-Chip** (z. B. „Qwen3.8 27B · Niedrig“): wechselt das Modell, stellt den **Aufwand** ein (wie viel es vor dem
   Antworten nachdenkt: Niedrig, Mittel, Hoch), lädt Modelle herunter oder fügt sie hinzu (Modell herunterladen oder
   hinzufügen…), Modelle verwalten…, API-Modelle… und **Engine** (Modell starten oder stoppen).
+- Der **Aufwand** macht, was das jeweilige Modell von Haus aus erlaubt, und das Menü erklärt es. Lokale Modelle: Modelle
+  mit eigenen Stufen (gpt-oss) nutzen diese unverändert; bei Modellen, die das Nachdenken nur ein- oder ausschalten
+  (Qwen, Gemma, GLM…), schaltet „Niedrig“ es aus, und „Mittel“ und „Hoch“ lassen es bis zu einer Grenze nachdenken, die
+  mit der Größe des Modells wächst (ein 2B denkt wenig; eines mit Hunderten Milliarden Parametern hat bei „Hoch“ keine
+  Grenze), und das Menü sagt, wie lange es auf deinem Computer dauern würde. Per API: Jeder Dienst erhält ihn über seine
+  eigene Einstellung (Claude, OpenAI, Gemini, OpenRouter, DeepSeek, Kimi, GLM, Qwen…) und sein Nachdenken erscheint im
+  Chat; zeigt ein Dienst es nicht, sagen die Zahlen jedes Schritts, wie viel er nachgedacht hat, und lässt er den
+  Aufwand nicht wählen, bittet Jayth das Modell in seinen Anweisungen darum.
 - Ist das Modell aus, erscheint über dem Feld ein Hinweis mit **Modell starten** (lässt sich mit dem × schließen; er
   kommt wieder, wenn sich die Lage ändert). Schreibst du bei gestopptem Modell, startet Jayth es und sendet die
   Nachricht, sobald es bereit ist.
@@ -280,6 +288,15 @@ Kontext komprimiert, Flash attention, Beschleunigung beim Schreiben, mmap, im RA
 an der Engine werden beim Neustart des Modells wirksam (**Modell neu starten**). Das Log der Engine steht unter
 **Einstellungen › Modell-Log**.
 
+- **Beschleunigung mit Grafikkarte:** Jayth erkennt die Grafikkarte des Computers und wählt selbst die passende Engine:
+  CUDA für NVIDIA (Version 13 oder 12 je nach Treiber und Alter der Karte), Vulkan für dedizierte AMD- und
+  Intel-Arc-Karten, Metal auf Macs mit Apple Silicon oder den Prozessor, wenn keine Karte hilft (integrierte Grafik ist
+  meist langsamer als er). Die Engine verteilt das Modell selbst auf Karte und RAM. Hat der Computer später eine Karte,
+  die die Engine nicht nutzt, bietet Jayth an, die beschleunigte Engine mit einem Klick zu installieren (abschaltbar mit
+  „Beschleunigte Engine vorschlagen“). Scheitert die Karte beim Laden eines Modells (zum Beispiel, weil der Speicher
+  nicht reicht), startet Jayth es auf dem Prozessor und gibt Bescheid. Auf dieser Seite steht, was das Modell
+  beschleunigt und wie viele Layer auf der Karte liegen. „Engine wechseln oder aktualisieren…“ erlaubt, sie von Hand zu
+  wählen und auf die neueste Version zu aktualisieren.
 - **Für diesen Computer optimieren** (Einstellungen › Leistung): Statt zu schätzen, misst Jayth tatsächlich mit dem
   aktiven Modell (ein paar Minuten, währenddessen ist das Modell gestoppt): Es testet Threads und Flash attention mit
   llama-bench sowie die „Beschleunigung beim Schreiben“ (spekulatives Decoding: **MTP** für Modelle, die solche Layer

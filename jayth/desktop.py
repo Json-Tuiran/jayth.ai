@@ -7,7 +7,7 @@ import os, re, sys, json, uuid, time, shutil, threading, ctypes, datetime, subpr
 from PySide6.QtCore import (Qt, QTimer, Signal, QObject, QSize, QPoint, QRect, QRectF, QEvent, QPropertyAnimation, QEasingCurve,
                             QParallelAnimationGroup)
 from PySide6.QtGui import QPixmap, QImage, QKeySequence, QShortcut, QGuiApplication, QActionGroup, QCursor, QTransform, QFont, QIcon, QTextCursor
-from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
+from PySide6.QtWidgets import (QApplication, QWidgetAction, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
                                QListWidget, QListWidgetItem, QScrollArea, QFrame, QPlainTextEdit, QFileDialog, QMessageBox, QMenu,
                                QSystemTrayIcon, QSizePolicy, QToolButton, QInputDialog, QLineEdit, QStackedWidget, QSplitter,
                                QGraphicsOpacityEffect, QAbstractButton, QComboBox, QLayout)
@@ -2486,6 +2486,9 @@ class ChatPanel(QWidget):
     _load = 0                     # número de apertura: lo que quede pendiente de una anterior no toca la actual
     _loading = None               # apertura que aún se está montando (su número), o None
     _plan_late = None             # último plan visto mientras se monta: se pinta una vez, al final
+    _plan_items = ()              # el plan a la vista (para volver a él al recortar la conversación)
+    _cur_i = -1                   # número del evento que se está pintando
+    _mark_next = None             # mensaje tuyo cuya primera pieza aún no se ha colocado
     _veil = None                  # velo que tapa el chat mientras se monta una conversación larga
     _load_t = None                # temporizador que va montando los trozos
     LOAD_FIRST = 0.12             # segundos montando de un tirón antes de enseñar el velo (las cortas caben de sobra)
@@ -2793,6 +2796,9 @@ class ChatPanel(QWidget):
 
     def add(self, w):
         self.cl.insertWidget(self.cl.count() - 1, w)
+        if self._mark_next is not None:                  # la primera pieza de tu mensaje: ahí se corta al volver a él
+            self._marks.get(self._mark_next, {})["first"] = w
+            self._mark_next = None
         if getattr(self, "_live", False):
             fade_in(w)                    # solo lo que llega en vivo, no al reabrir una conversacion
         return w
@@ -2942,6 +2948,10 @@ class ChatPanel(QWidget):
         self._turn_card = None
         self._queue_sig = None
         self._plan_cards = []
+        self._marks = {}                 # por cada mensaje tuyo: el punto del chat justo antes de él (para recortar ahí)
+        self._mark_next = None
+        s0 = core.SESSIONS.get(sid) if sid else None
+        self._plan_items = list((s0.data.get("plan") if s0 else None) or [])
         self.ctx_ring.set_value(0, 0)
         self.clear()
         s = self.session()
@@ -2988,6 +2998,7 @@ class ChatPanel(QWidget):
         for ev in new:
             try:
                 self._live = ev.get("ts", 0) > time.time() - 3
+                self._cur_i = self.ev_i + n
                 self.handle(ev)
             except Exception as e:
                 print("evento", ev.get("t"), e, file=sys.stderr)
@@ -3033,6 +3044,7 @@ class ChatPanel(QWidget):
     def handle(self, ev):
         t = ev["t"]
         if t == "user":
+            self._mark(self._cur_i)
             if self.empty is not None:
                 self.empty.hide()
                 self.empty.deleteLater()
@@ -3097,6 +3109,8 @@ class ChatPanel(QWidget):
                     from .providers import tok_short, money
                     cost = (" · " + ("≈ " if ev.get("usd_src") != "servicio" else "") + money(float(ev["usd"]))) if ev.get("usd") is not None else ""
                     full = tr("%s tokens leídos · %s escritos") % (tok_short(ev.get("tok_in")), tok_short(ev.get("tok_out"))) + cost
+                    if ev.get("think_tok"):                  # razonó sin mostrarlo: al menos se ve cuánto
+                        full += tr(" · pensó %s sin mostrarlo") % tok_short(ev["think_tok"])
                     self.cur.set_stats([full, (cost[3:] or full), cost[3:] or "%s tok" % tok_short(ev.get("tok_out"))],
                                        tr("Tokens que el servicio cobró por este paso (lo que leyó y lo que escribió) y su coste "
                                           "aproximado. El detalle por servicio está en «Modelos por API…»."))
@@ -3128,6 +3142,7 @@ class ChatPanel(QWidget):
         elif t == "tool_call" and ev["name"] in ("update_plan", "use_tools"):     # plan: en su panel; activar herramientas: interno
             pass                                        # se muestra en el panel del plan (evento «plan»)
         elif t == "plan":
+            self._plan_items = list(ev.get("items") or [])
             if self._loading is not None:      # al abrir una conversación solo cuenta el último plan: se pinta al final
                 self._plan_late = ev.get("items") or []
             else:
@@ -3643,18 +3658,93 @@ class ChatPanel(QWidget):
         self.sync()
         self.changed.emit()
 
-    def reload_quiet(self):
-        """Vuelve a montar la conversación tras recortarla (regenerar, reenviar, volver a un mensaje) sin que se note:
-        no se pinta nada hasta que está entera, sin animaciones de entrada, y queda mostrando el final."""
-        self.open_session(self.sid)                 # ya monta la conversación entera antes de enseñarla
+    def reload_quiet(self, at=None):
+        """La conversación se recortó a partir del evento «at» (regenerar, reintentar, editar, volver a un mensaje): se
+        quita del chat solo lo que vino desde ahí y lo demás se queda en su sitio, sin rehacerlo. Si no se puede (no se
+        sabe dónde, o aún se estaba montando), se vuelve a montar entera sin que se vea a medias."""
+        if at is not None and self._cut_at(at):
+            return
+        self.open_session(self.sid)
+
+    def _mark(self, i):
+        """Justo antes de pintar tu mensaje número i: lo necesario para volver a este punto sin rehacer el chat."""
+        self._marks[i] = {"first": None, "plan": list(self._plan_items or []), "ctx": (self.ctx_ring.used, self.ctx_ring.max),
+                          "waiting": self.waiting}
+        self._mark_next = i
+
+    def _cut_at(self, at):
+        """Quita del chat lo que vino desde el evento «at» (un mensaje tuyo) y deja el chat como estaba justo antes."""
+        import shiboken6
+        s, m = self.session(), (getattr(self, "_marks", None) or {}).get(at)
+        if s is None or m is None or self._loading is not None:
+            return False
+        try:
+            first = m["first"]
+            k = self.cl.indexOf(first) if first is not None else -1
+            if k < 0:
+                return False                             # no se sabe dónde empieza: mejor rehacerla
+            gone = []
+            while self.cl.count() - 1 > k:
+                w = self.cl.takeAt(k).widget()
+                if w is not None:
+                    gone.append(w)
+            dead = {shiboken6.getCppPointer(w)[0] for w in gone}
+
+            def kept(x):
+                try:
+                    p = x
+                    while p is not None:
+                        if shiboken6.getCppPointer(p)[0] in dead:
+                            return False
+                        p = p.parentWidget()
+                    return shiboken6.isValid(x)
+                except RuntimeError:
+                    return False
+            self.blocks = [b for b in self.blocks if kept(b)]
+            self.boxes = [b for b in self.boxes if kept(b)]
+            self.change_cards = [c for c in self.change_cards if kept(c)]
+            self._plan_cards = [c for c in self._plan_cards if kept(c)]
+            self.rows = {cid: r for cid, r in self.rows.items() if kept(r)}
+            self.questions = {qid: q for qid, q in self.questions.items() if kept(q)}
+            if self.empty is not None and not kept(self.empty):
+                self.empty = None
+            for w in gone:
+                w.hide()
+                w.deleteLater()
+        except RuntimeError:
+            return False
+        self.cur = self.steps = self._turn_card = self.turn_spent = self.last_tool = None
+        self.turn_blocks, self.turn_images, self.turn_rows = [], [], []
+        self.turn_undo = False
+        self.waiting = m["waiting"]
+        self._marks = {i: v for i, v in self._marks.items() if i < at}
+        self.ev_i = at
+        self._plan_items = m["plan"]
+        self.plan_panel.set_items(m["plan"], live=False)
+        self.ctx_ring.set_value(*m["ctx"])
+        with s.cond:
+            left = len(s.events)
+        if not left and self.empty is None:              # volviste al primer mensaje y no queda nada
+            self.empty = self.add(self._empty_state())
+        if self.blocks and self.blocks[-1].has("actions") and s.run is None:
+            self.blocks[-1].b_regen.show()               # la respuesta que queda al final se puede regenerar
+        self.stick = True
+        self.scroll.setUpdatesEnabled(True)
+        sb = self.scroll.verticalScrollBar()
+        QTimer.singleShot(0, lambda: sb.setValue(sb.maximum()))
+        self.sync()
+        self.changed.emit()
+        return True
 
     def regenerate(self):
         s = self.session()
         if s:
+            last = s.last_user()
+            at = last["i"] if last else None
             err = s.regenerate()
             if err:
                 QMessageBox.information(self, APP_NAME, err)
-            self.reload_quiet()
+            self.reload_quiet(at)
 
     # ---- tus mensajes: editar y reenviar, reintentar, volver a un punto, conversación nueva desde aquí
     def can_rewind(self):
@@ -3712,7 +3802,7 @@ class ChatPanel(QWidget):
             err, files = s.resend(i, text, undo)
         except ValueError as e:
             return QMessageBox.information(self, APP_NAME, str(e))
-        self.reload_quiet()
+        self.reload_quiet(i)
         self._restored(files)
         if err:
             return QMessageBox.information(self, APP_NAME, err)
@@ -3739,7 +3829,7 @@ class ChatPanel(QWidget):
             old, files = s.rewind(i, undo)
         except ValueError as e:
             return QMessageBox.information(self, APP_NAME, str(e))
-        self.reload_quiet()
+        self.reload_quiet(i)
         self._restored(files)
         self.input.setPlainText(old["text"])
         self.pending_imgs = [n for n in old["images"] if os.path.isfile(os.path.join(paths.IMG_DIR, n))]
@@ -4211,8 +4301,10 @@ class ChatPanel(QWidget):
         name = ((cfg["external_model"] or tr("servidor externo")).split("/")[-1]) if ext else (core.model_title(m) if m else tr("Elegir modelo"))
         self._chip_name, self._chip_label = name, label
         self._fit_model_chip()                                          # modelo · esfuerzo (se cambian en el mismo menú)
+        why = core.effort_support(cfg)[1]
         self.model_chip.setToolTip(tr("%s\nEsfuerzo %s: %s\nPulsa para cambiar de modelo o de esfuerzo.") % (
-            ("%s · %s" % (core.model_title(m), core.model_quant(m))) if (m and not ext) else name, label.lower(), desc))
+            ("%s · %s" % (core.model_title(m), core.model_quant(m))) if (m and not ext) else name, label.lower(), desc)
+            + (("\n" + why) if why else ""))
         if not self.rec_bar.isVisible():         # mientras se dicta, la caja dice «Escuchando…» / «Pasando tu voz a texto…»
             self.input.setPlaceholderText(tr("Escribe para corregirle o añadir algo; lo verá en su próximo paso") if self.busy else
                                           tr("Pide algo sobre el proyecto…") if self.project_id else tr("Escribe un mensaje…"))
@@ -4521,6 +4613,7 @@ class CodePage(QWidget):
 
 class _Sig(QObject):
     status = Signal(object)
+    engine = Signal(object)       # comprobación del motor (oferta de aceleración) o el fin de su instalación
 
 
 # ---------------------------------------------------------------- ventana principal
@@ -4580,6 +4673,8 @@ class Main(QMainWindow):
         self.news_t = QTimer(self, interval=6 * 3600 * 1000, timeout=self.check_news)   # …y cada 6 horas
         self.news_t.start()
         QTimer.singleShot(1500, self.sync_mcp)
+        self.sig.engine.connect(self._engine_event)
+        QTimer.singleShot(12000, self.check_engine)                                # ¿una gráfica que el motor no aprovecha?
         # distribucion de paneles guardada (anchos, paneles plegados, lados) y atajos
         self._restore_layout(cfg.get("layout") or {})
         self.code.layout_changed.connect(self._save_layout_soon)
@@ -5782,6 +5877,17 @@ class Main(QMainWindow):
         label = next(l for k, l, d in core.EFFORTS if k == eff)
         em = m.addMenu(icon("ia_memoria"), tr("Esfuerzo\t%s") % label)
         em.setToolTipsVisible(True)
+        kind, why = core.effort_support(cfg)
+        if why:                                          # qué hace de verdad el esfuerzo con este modelo
+            note = QWidgetAction(em)
+            nl = QLabel(why)
+            nl.setWordWrap(True)
+            nl.setFixedWidth(300)
+            nl.setObjectName("faint")
+            nl.setContentsMargins(12, 6, 12, 6)
+            note.setDefaultWidget(nl)
+            em.addAction(note)
+            em.addSeparator()
         eg = QActionGroup(em)
         hints = {"low": tr("más rápido"), "medium": tr("equilibrado"), "high": tr("más preciso")}
         for k, l, d in core.EFFORTS:
@@ -6047,9 +6153,72 @@ class Main(QMainWindow):
             self.sig.status.emit(st)
         threading.Thread(target=work, daemon=True).start()
 
+    def check_engine(self):
+        """¿Tiene este equipo una gráfica que el motor instalado no aprovecha? Se mira en segundo plano y, si la hay, se
+        ofrece instalar el motor acelerado (una vez por recomendación; Ajustes › Rendimiento permite que no se ofrezca)."""
+        def work():
+            try:
+                self.sig.engine.emit(("offer", core.engine_offer()))
+            except Exception:
+                pass
+        threading.Thread(target=work, daemon=True).start()
+
+    def _engine_event(self, ev):
+        kind, data = ev
+        if kind == "offer" and data:
+            core.SET.update({"engine_offer_seen": data["key"]})
+            name = core.ENGINE_NAMES.get(data["backend"], data["backend"])
+            self.toast(tr("Tu equipo tiene %s: con el motor de %s el modelo irá mucho más rápido.") % (data.get("gpu") or tr("una gráfica"), name),
+                       tr("Instalar"), lambda d=data: self.install_engine(d["backend"], d.get("cuda") or ""), ms=30000, icon_name="prof_cpu")
+        elif kind == "done":
+            backend, err = data
+            if err:
+                self.toast(tr("No se pudo instalar el motor acelerado: %s") % err, ms=12000, icon_name="est_aviso", color=C["warn"])
+                return
+            if core.LLM_MGR.mine():
+                self.toast(tr("Motor de %s instalado. Se usará al volver a encender el modelo.") % core.ENGINE_NAMES.get(backend, backend),
+                           tr("Reiniciar ahora"), self._restart_model, ms=20000, icon_name="ui_check", color=C["ok"])
+            else:
+                self.toast(tr("Motor de %s instalado: se usará al encender el modelo.") % core.ENGINE_NAMES.get(backend, backend),
+                           ms=9000, icon_name="ui_check", color=C["ok"])
+
+    def install_engine(self, backend, cuda=""):
+        """Descarga e instala en segundo plano el motor para esta gráfica; el que funciona sigue hasta que el nuevo está listo."""
+        if getattr(self, "_engine_job", False):
+            return
+        self._engine_job = True
+        self.toast(tr("Descargando el motor de %s… Puedes seguir usando Jayth.") % core.ENGINE_NAMES.get(backend, backend), ms=8000, icon_name="acc_descargar")
+
+        def work():
+            err = ""
+            try:
+                from . import provision as P
+                exe, tag = P.install_llama(backend, cuda)
+                core.SET.update({"backend_auto": True})
+                core.engine_installed(exe, tag, backend, cuda)
+            except Exception as e:
+                err = str(e)
+            self._engine_job = False
+            self.sig.engine.emit(("done", (backend, err)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _restart_model(self):
+        if any(s.run for s in core.SESSIONS.values()):
+            return self.toast(tr("Espera a que el agente termine para reiniciar el modelo."), icon_name="est_aviso", color=C["warn"])
+        core.LLM_MGR.stop()
+        err = core.LLM_MGR.start()
+        if err:
+            self.toast(err, icon_name="est_aviso", color=C["warn"])
+        self.poll()
+
     def _got_status(self, st):
         self._polling = False
         self.llm = st
+        while core.LLM_MGR.gpu_events:                   # la gráfica falló al cargar el modelo: sigue en el procesador
+            kind, note = core.LLM_MGR.gpu_events.pop(0)
+            if kind == "cpu":
+                self.toast(tr("La gráfica no pudo cargar el modelo (%s). Lo enciendo en el procesador: irá más lento, pero funciona.") % (note or "?"),
+                           ms=15000, icon_name="est_aviso", color=C["warn"])
         cfg = core.SET.snapshot()
         mine = core.LLM_MGR.mine()
         # precalentamiento: en cuanto el modelo propio esta listo, procesar instrucciones y herramientas en segundo plano
