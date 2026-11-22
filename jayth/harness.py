@@ -280,13 +280,19 @@ def bg_start(command, cwd):
             ctypes.windll.kernel32.SetConsoleCtrlHandler(None, False)
         except Exception:
             pass
+    # sin el envoltorio de run_command (osys._ps_wrapped): con él, Ctrl+C cerraba la tubería de PowerShell antes de que el
+    # programa terminara con orden (un servidor no hacía su limpieza al pedírselo con stop_command)
     p = subprocess.Popen(osys.shell_argv(command), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          env=cmd_env(), **osys.popen_kwargs())
     rec = {"proc": p, "cmd": command, "lines": [], "started": time.time()}
 
     def reader():
+        from .tools import decode_output
         for b in iter(p.stdout.readline, b""):
-            rec["lines"].append(b.decode("utf-8", "replace").rstrip())
+            line = decode_output(b).rstrip()
+            if line.startswith(osys.EXIT_MARK):       # la marca interna de un error de sintaxis (osys._ps_wrapped)
+                continue
+            rec["lines"].append(line)
             del rec["lines"][:-2000]
     threading.Thread(target=reader, daemon=True).start()
     BG[pid] = rec

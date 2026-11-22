@@ -310,7 +310,7 @@ an der Engine werden beim Neustart des Modells wirksam (**Modell neu starten**).
 
 ## Einstellungen
 
-Du öffnest sie über das Profilmenü (**Einstellungen**). Änderungen werden automatisch gespeichert. Seiten und Optionen
+Du öffnest sie über das Profilmenü (**Einstellungen**). Änderungen werden automatisch gespeichert. Oben findet „Einstellung suchen“ jede Option über ihren Namen oder ihre Erklärung. Seiten und Optionen
 (mit ihrem genauen Namen):
 - **Allgemein:** „Sprache der Oberfläche“, „Design“, „Textgröße“, „Animationen (Einblenden von Nachrichten,
   Seitenleiste, Hinweise)“, „Titelleiste ins Fenster integriert“ (nur Windows).
@@ -327,6 +327,7 @@ Du öffnest sie über das Profilmenü (**Einstellungen**). Änderungen werden au
   „Ordner, in den Modelle heruntergeladen werden“.
   - **Anbieter:** „Welche Engine nutzt der Agent?“ (lokal oder externer Server), „URL des externen Servers (endet auf
     /v1)“, „Modellname auf diesem Server“, „API-Schlüssel (falls der Server einen verlangt)“ und **Verbindung testen**. Der Schlüssel wird verschlüsselt auf dem Computer gespeichert, nicht in der Einstellungsdatei.
+  - **Ausgaben für API-Modelle:** „Warnen, wenn eine Unterhaltung mehr kostet als (US$)“, „Warnen, wenn die Tagesausgaben mehr betragen als (US$)“ und „Bei einer Warnung die Aufgabe anhalten, bis du sagst, ob es weitergeht“.
 - **Generierung:** „Standardmäßig gründlich nachdenken (bessere Antworten, langsamer)“, „Sampling-Parameter“ (empfohlen
   für das aktive Modell oder benutzerdefiniert), „Temperatur“, „Maximale Länge jeder Antwort (Tokens)“.
   - **Erweitertes Sampling:** „Top-p“, „Top-k“, „Min-p“, „Wiederholungsstrafe“, „Seed“ und **Empfohlene Werte

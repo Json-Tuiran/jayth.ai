@@ -290,7 +290,7 @@ locale. Le modifiche del motore si applicano al riavvio del modello (**Riavvia m
 
 ## Impostazioni
 
-Si aprono dal menu del profilo (**Impostazioni**). Le modifiche si salvano da sole. Pagine e opzioni (con il loro nome
+Si aprono dal menu del profilo (**Impostazioni**). Le modifiche si salvano da sole. In alto, «Cerca impostazione» trova qualsiasi opzione per nome o per spiegazione. Pagine e opzioni (con il loro nome
 esatto):
 - **Generale:** «Lingua dell'interfaccia», «Tema», «Dimensione del testo», «Animazioni (comparsa dei messaggi, barra
   laterale, avvisi)», «Barra del titolo integrata nella finestra» (solo Windows).
@@ -307,6 +307,7 @@ esatto):
   in cui vengono scaricati i modelli».
   - **Provider:** «Quale motore usa l'agente?» (locale o server esterno), «URL del server esterno (termina con /v1)»,
     «Nome del modello su quel server», «Chiave API (se il server la richiede)» e **Prova connessione**. La chiave viene salvata cifrata sul computer, non nel file delle impostazioni.
+  - **Spesa per i modelli via API:** «Avvisa se una conversazione supera (US$)», «Avvisa se la spesa del giorno supera (US$)» e «Quando avvisa, metti in pausa l'attività finché non dici se continuare».
 - **Generazione:** «Ragiona a fondo di default (risposte migliori, più lento)», «Parametri di campionamento» (consigliati
   per il modello attivo o personalizzati), «Temperatura», «Lunghezza massima di ogni risposta (token)».
   - **Campionamento avanzato:** «Top-p», «Top-k», «Min-p», «Penalità di ripetizione», «Seme» e **Ripristina i valori

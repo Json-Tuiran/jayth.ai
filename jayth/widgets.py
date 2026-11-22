@@ -163,6 +163,11 @@ class TextView(QTextBrowser):
         from .osys import mono_font
         mono = QTextCharFormat()
         mono.setFontFamilies([mono_font()])          # el Markdown usa la monoespaciada del sistema (Courier); la de la app se lee mejor
+        base = doc.defaultFont().pointSizeF()
+        if base <= 0:
+            base = self.font().pointSizeF()
+        if base > 0:                                  # la monoespaciada se ve más grande que el texto al mismo tamaño
+            mono.setFontPointSize(round(base * 0.9, 1))
         while b.isValid():
             f = b.blockFormat()
             if f.nonBreakableLines() or f.hasProperty(_CODE_FENCE):

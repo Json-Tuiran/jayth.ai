@@ -370,15 +370,50 @@ def read_file(a, ctx):
     return "\n".join(out)
 
 
-@tool("write_file", "write", "Crea o sobrescribe un archivo de texto (crea las carpetas necesarias).",
-      {"path": S("Ruta del archivo"), "content": S("Contenido completo")}, ["path", "content"])
+BOM_EXTS = (".ps1", ".psm1", ".psd1")      # Windows PowerShell 5.1 lee un .ps1 sin BOM como ANSI: «ñ» sale «Ã±»
+ENCODINGS = {"utf-8": "utf-8", "utf-8-bom": "utf-8-sig", "utf-16": "utf-16", "ansi": "mbcs" if osys.WIN else "cp1252"}
+
+
+def _has_bom(p):
+    try:
+        with open(p, "rb") as f:
+            return f.read(3) == b"\xef\xbb\xbf"
+    except OSError:
+        return False
+
+
+@tool("write_file", "write", "Crea o sobrescribe un archivo de texto (crea las carpetas necesarias). Se guarda en UTF-8; en "
+      "Windows, los scripts de PowerShell (.ps1, .psm1, .psd1) con BOM para que Windows PowerShell lea bien las tildes, y "
+      "un archivo que ya tenía BOM lo conserva.",
+      {"path": S("Ruta del archivo"), "content": S("Contenido completo"),
+       "encoding": S("Opcional: utf-8, utf-8-bom, utf-16 o ansi (por defecto, lo adecuado para ese archivo)")}, ["path", "content"])
 def write_file(a, ctx):
     p = ctx.path(a["path"])
     os.makedirs(os.path.dirname(p), exist_ok=True)
     data = str(a.get("content", ""))
-    with open(p, "w", encoding="utf-8", newline="") as f:
-        f.write(data)
-    return "Escrito %s (%d bytes)" % (p, len(data.encode("utf-8")))
+    want = str(a.get("encoding") or "").strip().lower().replace("_", "-")
+    want = {"utf8": "utf-8", "utf-8-sig": "utf-8-bom", "utf8-bom": "utf-8-bom", "bom": "utf-8-bom", "utf16": "utf-16",
+            "cp1252": "ansi", "windows-1252": "ansi", "latin-1": "ansi"}.get(want, want)
+    if want and want not in ENCODINGS:
+        raise ToolError("Codificación desconocida: %s. Usa utf-8, utf-8-bom, utf-16 o ansi." % a.get("encoding"))
+    why = ""
+    if not want:
+        if _has_bom(p):
+            want, why = "utf-8-bom", " (UTF-8 con BOM, como ya estaba)"
+        elif osys.WIN and p.lower().endswith(BOM_EXTS):
+            want, why = "utf-8-bom", " (UTF-8 con BOM, para que Windows PowerShell lea bien las tildes)"
+        else:
+            want = "utf-8"
+    enc = ENCODINGS[want]
+    if enc in ("utf-8-sig", "utf-16") and data.startswith("\ufeff"):
+        data = data[1:]                                 # el BOM ya lo pone la codificación: no dos veces
+    try:
+        raw = data.encode(enc)
+    except UnicodeEncodeError as e:
+        raise ToolError("El texto tiene caracteres que %s no puede guardar (%s): usa utf-8 o utf-8-bom." % (want, e.reason))
+    with open(p, "wb") as f:
+        f.write(raw)
+    return "Escrito %s (%d bytes)%s" % (p, len(raw), why)
 
 
 def _apply_edit(text, old, new, replace_all=False):
@@ -410,8 +445,14 @@ def _read_text(p, ctx=None):
 
 
 def _write_text(p, text):
+    if osys.WIN and p.lower().endswith(BOM_EXTS) and not text.startswith("\ufeff") and any(ord(c) > 127 for c in text):
+        text = "\ufeff" + text                        # .ps1 con tildes: con BOM o Windows PowerShell 5.1 las lee mal
     with open(p, "w", encoding="utf-8", newline="") as f:
         f.write(text)
+
+
+NO_CHANGE = ("Sin cambios: el archivo ya tenía exactamente ese texto ('old' y 'new' dan lo mismo). No hace falta repetirlo; "
+             "si querías cambiar otra cosa, revisa 'new'.")
 
 
 @tool("edit_file", "write", "Reemplaza un fragmento de un archivo. 'old' debe aparecer una vez (añade contexto) salvo replace_all.",
@@ -419,7 +460,10 @@ def _write_text(p, text):
       ["path", "old", "new"])
 def edit_file(a, ctx):
     p = ctx.path(a["path"])
-    text, n = _apply_edit(_read_text(p, ctx), str(a["old"]), str(a["new"]), bool(a.get("replace_all")))
+    orig = _read_text(p, ctx)
+    text, n = _apply_edit(orig, str(a["old"]), str(a["new"]), bool(a.get("replace_all")))
+    if text == orig:
+        raise ToolError(NO_CHANGE)
     _write_text(p, text)
     return "Editado %s (%d reemplazo%s)" % (p, n, "s" if n > 1 else "")
 
@@ -431,7 +475,7 @@ def edit_file(a, ctx):
       ["path", "edits"])
 def multi_edit(a, ctx):
     p = ctx.path(a["path"])
-    text = _read_text(p, ctx)
+    text = orig = _read_text(p, ctx)
     edits = a.get("edits") or []
     if isinstance(edits, str):
         edits = json.loads(edits)
@@ -442,6 +486,8 @@ def multi_edit(a, ctx):
         except ToolError as err:
             raise ToolError("Edición %d de %d: %s (no se aplicó ningún cambio)" % (i, len(edits), err))
         total += n
+    if text == orig:
+        raise ToolError(NO_CHANGE)
     _write_text(p, text)
     return "Editado %s (%d %s, %d %s)" % (p, len(edits), "edición" if len(edits) == 1 else "ediciones",
                                           total, "reemplazo" if total == 1 else "reemplazos")
@@ -521,26 +567,43 @@ def _human(n):
 DOC_EXTS = (".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pdf")
 
 
-def _lines_of(fp):
-    """Lineas de texto de un archivo para buscar: documentos por su texto real; binarios, ninguna."""
+class _Skip(Exception):
+    """Un archivo en el que no se pudo buscar (el motivo va en el mensaje)."""
+
+
+def _lines_of(fp, deadline=None):
+    """Líneas de texto de un archivo para buscar, poco a poco (un archivo grande no se carga entero: antes, los de más de
+    2 MB se saltaban en silencio y la búsqueda decía «sin resultados»). Documentos por su texto real. Si no se puede
+    buscar en él (binario, documento enorme, sin tiempo), lanza _Skip con el motivo."""
     ext = os.path.splitext(fp)[1].lower()
     if ext in DOC_EXTS:
         if os.path.getsize(fp) > 30_000_000:
-            return []
+            raise _Skip("documentos de más de 30 MB")
         from . import harness
-        return harness.read_document(fp, 400000).splitlines()
-    if os.path.getsize(fp) > 2_000_000:
-        return []
+        yield from harness.read_document(fp, 400000).splitlines()
+        return
     with open(fp, "rb") as f:
-        raw = f.read()
-    if b"\0" in raw[:8192]:
-        return []                                   # binario (imagen, ejecutable…)
-    for enc in ("utf-8", "cp1252"):
-        try:
-            return raw.decode(enc).splitlines()
-        except UnicodeDecodeError:
-            continue
-    return raw.decode("utf-8", "replace").splitlines()
+        if b"\0" in f.read(8192):
+            raise _Skip("binarios")                 # imagen, ejecutable… (o texto UTF-16)
+        f.seek(0)
+        for i, raw in enumerate(f):
+            if deadline and not i % 20000 and time.time() > deadline:
+                raise _Skip("sin tiempo para terminar de leerlos")
+            try:
+                yield raw.decode("utf-8").rstrip("\r\n")
+            except UnicodeDecodeError:
+                yield raw.decode("cp1252", "replace").rstrip("\r\n")
+
+
+def _skipped_note(skipped, short):
+    """«[No se miraron 3: binarios: 2; documentos de más de 30 MB: a.pdf]»: que «sin resultados» no parezca seguro."""
+    if not skipped:
+        return ""
+    parts = []
+    for why, files in skipped.items():
+        names = "" if why == "binarios" else ": " + ", ".join(short(f) for f in files[:5]) + (" y %d más" % (len(files) - 5) if len(files) > 5 else "")
+        parts.append("%s (%d)%s" % (why, len(files), names))
+    return "\n[No se miraron %d archivos: %s]" % (sum(len(v) for v in skipped.values()), "; ".join(parts))
 
 
 @tool("search_files", "read", "Busca texto (regex, sin distinguir mayúsculas) dentro de archivos, también dentro de documentos "
@@ -564,7 +627,9 @@ def search_files(a, ctx):
     def short(fp):                                  # rutas cortas (relativas a la carpeta de trabajo) ahorran contexto
         r = os.path.relpath(fp, ws) if os.path.abspath(fp).lower().startswith(ws.lower() + os.sep) else fp
         return r
-    res, seen, total, t_end, cut = [], 0, 0, time.time() + 6, False
+    t0 = time.time()
+    res, seen, total, t_end, cut, skipped, timeout = [], 0, 0, t0 + 6, False, {}, False
+    hard = t0 + 25                                  # tope total: una carpeta enorme no deja la búsqueda colgada
     for root, dirs, files in os.walk(base):
         dirs[:] = sorted(d for d in dirs if d not in skip)
         for fn in sorted(files):
@@ -576,27 +641,34 @@ def search_files(a, ctx):
                 if len(res) < mx:
                     res.append(short(fp))
             else:
-                seen += 1
+                if time.time() > hard:
+                    timeout = True
+                    break
                 try:
-                    lines = _lines_of(fp)
-                except Exception:
-                    continue
-                for i, line in enumerate(lines, 1):
-                    if pat.search(line):
-                        total += 1                  # pasado el máximo se sigue contando: saber cuántos hay ayuda a afinar
-                        if len(res) < mx:
-                            res.append("%s:%d: %s" % (short(fp), i, line.strip()[:200]))
+                    for i, line in enumerate(_lines_of(fp, hard), 1):
+                        if pat.search(line):
+                            total += 1              # pasado el máximo se sigue contando: saber cuántos hay ayuda a afinar
+                            if len(res) < mx:
+                                res.append("%s:%d: %s" % (short(fp), i, line.strip()[:200]))
+                    seen += 1
+                except _Skip as e:
+                    skipped.setdefault(str(e), []).append(fp)
+                except Exception as e:
+                    skipped.setdefault("no se pudieron leer", []).append(fp)
             if total > mx and time.time() > t_end:   # …sin eternizarse en una carpeta enorme
                 cut = True
                 break
-        if cut:
+        if cut or timeout:
             break
+    note = _skipped_note(skipped, short)
+    if timeout:
+        note += "\n[La búsqueda se paró a los 25 s con %d archivos revisados: quedan sin mirar. Acota con path o glob.]" % seen
     if not res:
-        return "Sin resultados%s." % (" (revisados %d archivos)" % seen if pat else "")
+        return "Sin resultados%s.%s" % (" (revisados %d archivos)" % seen if pat else "", note)
     if total > mx:
         return "\n".join(res) + "\n...[se muestran %d de %s%d resultados: afina la búsqueda con path o glob, o sube max_results]" % (
-            len(res), "más de " if cut else "", total)
-    return "\n".join(res)
+            len(res), "más de " if cut or timeout else "", total) + note
+    return "\n".join(res) + note
 
 
 # ---------------------------------------------------------------- ejecucion
@@ -659,7 +731,7 @@ _SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cac
 
 def replace_plan(a, ctx):
     """Qué cambiaría replace_in_files: [(ruta, texto nuevo, codificación, nº de reemplazos, [(línea, antes, después)])],
-    archivos revisados. No escribe nada."""
+    archivos revisados, {motivo: [archivos que no se miraron]}. No escribe nada."""
     base = ctx.path(a.get("path") or ".")
     if not os.path.isdir(base):
         raise missing(base, ctx)
@@ -679,7 +751,7 @@ def replace_plan(a, ctx):
         raise ToolError("La expresión regular no es válida: %s" % e)
     rep = repl if is_re else (lambda m: repl)
     gl = str(a.get("glob") or "*").lower()
-    plan, seen = [], 0
+    plan, seen, skipped = [], 0, {}
     for root, dirs, files in os.walk(base):
         dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS and not d.startswith("."))
         for fn in sorted(files):
@@ -687,13 +759,16 @@ def replace_plan(a, ctx):
                 continue
             fp = os.path.join(root, fn)
             try:
-                if os.path.getsize(fp) > 2_000_000:
+                if os.path.getsize(fp) > 20_000_000:
+                    skipped.setdefault("de más de 20 MB", []).append(fp)
                     continue
                 with open(fp, "rb") as f:
                     raw = f.read()
             except OSError:
+                skipped.setdefault("no se pudieron leer", []).append(fp)
                 continue
             if b"\0" in raw[:4096]:
+                skipped.setdefault("binarios", []).append(fp)
                 continue
             for enc in ("utf-8", "cp1252"):
                 try:
@@ -702,6 +777,7 @@ def replace_plan(a, ctx):
                 except UnicodeDecodeError:
                     text = None
             if text is None:
+                skipped.setdefault("con una codificación desconocida", []).append(fp)
                 continue
             seen += 1
             new, n = rx.subn(rep, text)
@@ -714,7 +790,7 @@ def replace_plan(a, ctx):
                     if len(samples) >= 2:
                         break
             plan.append((fp, new, enc, n, samples))
-    return plan, seen
+    return plan, seen, skipped
 
 
 @tool("replace_in_files", "write",
@@ -729,13 +805,15 @@ def replace_plan(a, ctx):
        "case_sensitive": B("Distinguir mayúsculas y minúsculas (por defecto sí)"), "preview": B("Solo mostrar qué cambiaría, sin tocar nada")},
       ["pattern", "replacement"])
 def replace_in_files(a, ctx):
-    plan, seen = replace_plan(a, ctx)
-    if not plan:
-        return "Sin coincidencias de «%s» (revisados %d archivos): no se cambió nada." % (a.get("pattern"), seen)
-    if len(plan) > 300:
-        raise ToolError("Cambiaría %d archivos: demasiados para un solo reemplazo. Acota con glob o path." % len(plan))
+    plan, seen, skipped = replace_plan(a, ctx)
     ws = os.path.abspath(ctx.workspace)
     short = lambda fp: os.path.relpath(fp, ws) if os.path.abspath(fp).lower().startswith(ws.lower() + os.sep) else fp
+    skipped.pop("binarios", None) if a.get("glob") in (None, "", "*") else None   # con «todos», los binarios no interesan
+    note = _skipped_note(skipped, short)
+    if not plan:
+        return "Sin coincidencias de «%s» (revisados %d archivos): no se cambió nada.%s" % (a.get("pattern"), seen, note)
+    if len(plan) > 300:
+        raise ToolError("Cambiaría %d archivos: demasiados para un solo reemplazo. Acota con glob o path." % len(plan))
     preview = bool(a.get("preview"))
     if not preview:
         for fp, new, enc, n, samples in plan:
@@ -750,7 +828,7 @@ def replace_in_files(a, ctx):
             lines.append("    %d: %s  →  %s" % (i, old_l, new_l))
     if len(plan) > 60:
         lines.append("… y %d archivos más" % (len(plan) - 60))
-    return "\n".join(lines)
+    return "\n".join(lines) + note
 
 
 def clixml_text(out):
@@ -779,17 +857,40 @@ _NATIVE_ERR = re.compile(r"(?m)^[^\n:]{1,80} : ([^\n]*)\n[^\n+]*\n(?:[ \t]*\+[^\
 def powershell_text(out):
     """Windows PowerShell 5.1: lo que un programa escribe en stderr, si la orden lleva «2>&1», sale envuelto como un error de
     PowerShell («python : … / En línea: 1 Carácter: … / CategoryInfo … NativeCommandError») aunque el programa haya ido
-    bien. Aquí queda solo el texto del programa. Y como Jayth antepone una línea a la orden, las líneas que citan los
-    errores de PowerShell se corrigen para que sean las de la orden del modelo."""
+    bien. Aquí queda solo el texto del programa. (Las líneas que citan los errores ya son las de la orden del modelo:
+    osys._ps_wrapped la ejecuta como un bloque aparte.)"""
     out = out.replace("\r\n", "\n")
-    out = _NATIVE_ERR.sub(lambda m: m.group(1) + "\n", out)
-    return re.sub(r"(?m)^(En línea: |At line:)(\d+)", lambda m: m.group(1) + str(max(1, int(m.group(2)) - 1)), out)
+    return _NATIVE_ERR.sub(lambda m: m.group(1) + "\n", out)
+
+
+def decode_output(raw):
+    """Salida de un comando como texto: UTF-8; las líneas que no lo son (programas que escriben en la página de códigos de
+    la consola, como ipconfig o ping en Windows) se leen con esa página en vez de salir con «�»."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    alt = "utf-8"
+    if osys.WIN:
+        try:
+            alt = "cp%d" % ctypes.windll.kernel32.GetOEMCP()
+            "".encode(alt)
+        except Exception:
+            alt = "cp850"
+    out = []
+    for line in raw.split(b"\n"):
+        try:
+            out.append(line.decode("utf-8"))
+        except UnicodeDecodeError:
+            out.append(line.decode(alt, errors="replace"))
+    return "\n".join(out)
 
 
 @tool("run_command", "exec", "Ejecuta un comando de la terminal del sistema (%s) en la carpeta de trabajo y devuelve su salida. "
       "Para scripts: `python archivo.py`. Con background=true lo deja corriendo (servidores, vigilantes) y devuelve un id "
-      "para command_output/stop_command.%s" % (osys.shell_label(), " La salida ya trae también los errores (stderr): no añadas "
-                                                "2>&1. No existen &&, || ni el operador ?: (usa ; e if)." if osys.WIN else ""),
+      "para command_output/stop_command.%s" % (osys.shell_label(), " La salida ya trae también los errores (stderr), en su sitio: "
+                                                "no añadas 2>&1. No existen &&, || ni el operador ?: (usa ; e if). El código de salida "
+                                                "es el de la última orden: puede haber errores antes aunque sea 0." if osys.WIN else ""),
       {"command": S("Comando o script de %s" % osys.shell_label()), "timeout": I("Segundos máximos (por defecto 60, máx. 900)"), "cwd": S("Carpeta donde ejecutar (opcional)"),
        "background": B("Dejarlo corriendo en segundo plano")}, ["command"])
 def run_command(a, ctx):
@@ -809,7 +910,7 @@ def run_command(a, ctx):
         pid = harness.bg_start(cmd, cwd)
         time.sleep(2.5)
         return "Iniciado en segundo plano con id %s.\n%s" % (pid, harness.bg_output(pid, 30))
-    p = subprocess.Popen(osys.shell_argv(cmd, report_exit=True), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+    p = subprocess.Popen(osys.shell_argv(cmd, report_exit=True, wrap=True), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT, env=cmd_env(), **osys.popen_kwargs())
     chunks = []
 
@@ -830,7 +931,7 @@ def run_command(a, ctx):
     if why:
         _kill_tree(p.pid)
     th.join(2)
-    out = b"".join(chunks).decode("utf-8", errors="replace")
+    out = decode_output(b"".join(chunks))
     last = None                                  # código del último programa, según la propia terminal (Windows)
     m = re.search(r"(?m)^%s(-?\d*)[ \t]*\r?\n?" % re.escape(osys.EXIT_MARK), out)
     if m:                                        # (los errores de PowerShell llegan después de la marca: no es la última línea)
@@ -849,6 +950,8 @@ def run_command(a, ctx):
     if why:
         return (out + "\n" if out else "(sin salida hasta ese momento)\n") + "[Proceso terminado junto con los que abrió: %s]" % why
     code = p.returncode
+    if osys.WIN and code == 0 and "FullyQualifiedErrorId" in out:     # errores a mitad que el código final no refleja
+        out += "\n[Hubo errores de PowerShell aunque el código final sea 0: revisa la salida]"
     if last is not None and last != code:        # PowerShell da error por su cuenta (p. ej. texto en stderr) o lo oculta
         return (out or "(sin salida)") + "\n[código de salida del último programa: %d · PowerShell terminó con %d]" % (last, code)
     return (out or "(sin salida)") + "\n[código de salida %d]" % code
@@ -858,7 +961,8 @@ def run_command(a, ctx):
       "Ejecuta un script de Python para analizar datos o hacer cálculos y gráficos. Tiene pandas (pd), numpy y matplotlib. "
       "Lee los archivos de la carpeta de trabajo (pd.read_csv, pd.read_excel…), imprime con print() lo que quieras ver "
       "y dibuja con matplotlib: cada figura se muestra al usuario en la conversación (no hace falta plt.show ni guardar). "
-      "Para dejar un gráfico como archivo usa plt.savefig('nombre.png').",
+      "Para dejar un gráfico como archivo usa plt.savefig('nombre.png'). Se ejecuta en la carpeta de trabajo y puede importar "
+      "sus módulos. Cada llamada empieza de cero: no recuerda variables ni datos de llamadas anteriores (vuelve a cargarlos).",
       {"code": S("Código Python completo"), "timeout": I("Segundos máximos (por defecto 120, máx. 900)")}, ["code"])
 def run_python(a, ctx):
     from . import analysis
@@ -1507,8 +1611,28 @@ def _win(q, ctx, wait=6):
         if any(str(q).strip().lower() in t.lower() and _own_window(h) for h, t in _windows()):
             raise ToolError("«%s» es la propia ventana de Jayth, que no se maneja ni se captura a sí misma con el control del "
                             "ordenador. Para ver la pantalla entera usa screenshot sin window." % q)
-        raise ToolError("No hay ninguna ventana cuyo título contenga «%s». Mira los títulos con list_windows." % q)
+        raise ToolError(_no_window_msg(q))
     return hwnd, title
+
+
+def _no_window_msg(q):
+    """Al no encontrar la ventana: los títulos que hay ahora (sin las de Jayth), para elegir sin otra llamada."""
+    titles, seen = [], set()
+    try:
+        for h, t in _windows():
+            if t and t not in seen and not _own_window(h):
+                seen.add(t)
+                titles.append(t)
+    except Exception:
+        pass
+    msg = "No hay ninguna ventana cuyo título contenga «%s»." % q
+    if titles:
+        msg += " Ventanas abiertas ahora: %s%s." % ("; ".join("«%s»" % t for t in titles[:15]),
+                                                  " y %d más (list_windows)" % (len(titles) - 15) if len(titles) > 15 else "")
+    if osys.WIN:
+        msg += (" Ojo: el Explorador de archivos de Windows 11 junta las carpetas en pestañas de una misma ventana, cuyo "
+                "título es el de la pestaña activa.")
+    return msg
 
 
 def _own_window(hwnd):
@@ -1724,21 +1848,79 @@ def scroll(a, ctx):
 def _send_unicode(unit, up):
     inp = _INPUT(type=1)
     inp.ki = _KI(0, unit, 0x4 | (0x2 if up else 0), 0, 0)
-    user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+    return user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
 
 
-@tool("type_text", "control", "Escribe texto con el teclado en la ventana que tenga el foco.", {"text": S("Texto a escribir")}, ["text"])
+def _wtitle(hwnd):
+    try:
+        n = user32.GetWindowTextLengthW(hwnd)
+        b = ctypes.create_unicode_buffer(n + 1)
+        user32.GetWindowTextW(hwnd, b, n + 1)
+        return b.value or "(sin título)"
+    except Exception:
+        return "?"
+
+
+_FOCUS_VALUE_PS = r"""
+Add-Type -AssemblyName UIAutomationClient
+$e = [System.Windows.Automation.AutomationElement]::FocusedElement
+$v = $null
+try { $v = $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value } catch {}
+if ($v -eq $null) { [Console]::Out.Write([char]1) } else { [Console]::Out.Write($v) }
+"""
+
+
+def _focused_value():
+    """El texto del campo que tiene el foco (accesibilidad del sistema), o None si no se puede saber (no es un campo,
+    es una contraseña, el programa no lo expone…)."""
+    if not osys.WIN:
+        return None
+    try:
+        r = subprocess.run(osys.shell_argv(_FOCUS_VALUE_PS), capture_output=True, timeout=10, **osys.popen_kwargs())
+        out = r.stdout.decode("utf-8", "replace")
+        return None if r.returncode or out.startswith("\x01") else out
+    except Exception:
+        return None
+
+
+@tool("type_text", "control", "Escribe texto con el teclado en la ventana que tenga el foco y comprueba lo que llegó (si el foco "
+      "cambia a otra ventana, para y lo dice). Con paste=true lo pega por el portapapeles: mejor para textos largos.",
+      {"text": S("Texto a escribir"), "paste": B("Pegarlo con el portapapeles en vez de teclearlo (textos largos)")}, ["text"])
 def type_text(a, ctx):
     _failsafe()
     _ui("key", *_here())
     txt = str(a["text"])
+    if a.get("paste") in (True, "true", 1, "1"):
+        try:
+            before = clipboard_get()
+        except Exception:
+            before = None
+        clipboard_set(txt)
+        press_keys({"keys": "cmd+v" if osys.MAC else "ctrl+v"}, ctx)
+        time.sleep(0.4)
+        if before is not None:
+            try:
+                clipboard_set(before)               # el portapapeles del usuario queda como estaba
+            except Exception:
+                pass
+        return "Pegado %d caracteres con el portapapeles%s" % (len(txt), _typed_check(txt))
     if not osys.WIN:
         _px(PX.type_text, txt, ctx.stop)
         time.sleep(0.2)
         return "Escrito %d caracteres" % len(txt)
+    fg = user32.GetForegroundWindow()
+    title0 = _wtitle(fg)
+    done, lost, refused, prev = 0, None, False, ""
     for ch in txt:
         if ctx.stop.is_set():
             break
+        now = user32.GetForegroundWindow()
+        if now != fg:
+            if prev == "\n":                       # un Intro puede abrir otra ventana a propósito: se sigue en ella
+                fg = now
+            else:
+                lost = now
+                break
         if ch == "\n":
             _key(0x0D, False), _key(0x0D, True)
         elif ch == "\t":
@@ -1747,11 +1929,39 @@ def type_text(a, ctx):
             data = ch.encode("utf-16-le")
             for i in range(0, len(data), 2):
                 unit = struct.unpack("<H", data[i:i + 2])[0]
-                _send_unicode(unit, False)
-                _send_unicode(unit, True)
+                if not (_send_unicode(unit, False) and _send_unicode(unit, True)):
+                    refused = True
+            if refused:                             # Windows no lo aceptó (p. ej. la ventana es de un administrador)
+                break
+        done += 1
+        prev = ch
         time.sleep(0.01)
     time.sleep(0.2)
-    return "Escrito %d caracteres" % len(txt)
+    if lost is not None:
+        return ("Escritos solo %d de %d caracteres: el foco pasó de «%s» a «%s» a mitad (paré para no escribir en otra ventana). "
+                "Vuelve a poner el foco en el campo (click o focus_window) y escribe lo que falta: «%s»."
+                % (done, len(txt), title0, _wtitle(lost), txt[done:][:200]))
+    if refused:
+        return ("Escritos %d de %d caracteres: Windows no aceptó el resto (pasa si la ventana es de un programa abierto como "
+                "administrador o hay una pantalla de seguridad)." % (done, len(txt)))
+    if done < len(txt):
+        return "Detenido: escritos %d de %d caracteres." % (done, len(txt))
+    return "Escrito %d caracteres en «%s»%s" % (len(txt), title0, _typed_check(txt))
+
+
+def _typed_check(txt):
+    """Tras escribir: si el campo con el foco se puede leer y no contiene lo escrito, se dice (letras perdidas, el foco en
+    otro sitio…). Solo para textos de una línea de 3 caracteres o más (lo demás no se puede comparar bien)."""
+    t = txt.strip()
+    if len(t) < 3 or "\n" in t or len(t) > 2000:
+        return ""
+    v = _focused_value()
+    if v is None:
+        return ""
+    if t in v:
+        return " (comprobado: el campo lo contiene)"
+    return (". Atención: el campo con el foco contiene «%s», que no incluye todo lo escrito (pudieron perderse letras o el "
+            "foco estaba en otro campo). Compruébalo antes de seguir." % (v[:200] + ("…" if len(v) > 200 else "")))
 
 
 VK = {"ctrl": 0x11, "control": 0x11, "alt": 0x12, "shift": 0x10, "win": 0x5B, "windows": 0x5B, "super": 0x5B, "enter": 0x0D, "return": 0x0D,
@@ -1819,20 +2029,18 @@ def list_windows(a, ctx):
 
 @tool("focus_window", "control", "Trae al frente la primera ventana cuyo título contenga el texto dado.", {"title": S("Parte del título")}, ["title"])
 def focus_window(a, ctx):
-    q = str(a["title"]).lower()
+    # la misma búsqueda que las demás herramientas de ventanas: la mejor coincidencia y nunca una ventana de Jayth
+    hwnd, t = _win(str(a["title"]), ctx, wait=2)
     _ui("focus")
-    for hwnd, t in _windows():
-        if q in t.lower():
-            if not osys.WIN:
-                _px(PX.focus, hwnd, t)
-                time.sleep(0.4)
-                return "Foco en: " + t + unsaved_note(t)
-            user32.ShowWindow(hwnd, 9)
-            _key(0x12, False), _key(0x12, True)
-            user32.SetForegroundWindow(hwnd)
-            time.sleep(0.4)
-            return "Foco en: " + t + unsaved_note(t)
-    raise ToolError("No hay ventana con ese título.")
+    if not osys.WIN:
+        _px(PX.focus, hwnd, t)
+        time.sleep(0.4)
+        return "Foco en: " + t + unsaved_note(t)
+    user32.ShowWindow(hwnd, 9)
+    _key(0x12, False), _key(0x12, True)
+    user32.SetForegroundWindow(hwnd)
+    time.sleep(0.4)
+    return "Foco en: " + t + unsaved_note(t)
 
 
 # ---------------------------------------------------------------- interfaz de los programas (accesibilidad)
@@ -1980,9 +2188,9 @@ def ui_elements(a, ctx):
     items = _ui_filter(every, f)
     if not every:
         raise ToolError(_ui_empty_reason(hwnd, title))
-    if f and every and not items:                    # no es que la ventana no tenga nada: es el filtro
-        raise ToolError("Ninguno de los %d elementos de «%s» encaja con «%s». Lista sin filtro o filtra por parte de su nombre "
-                        "(«Guardar») o por tipo (botón, texto, menú…)." % (len(every), title, a["filter"]))
+    if f and every and not items:                    # no es un fallo: la ventana tiene elementos, pero ninguno encaja
+        return ("Ventana «%s»: 0 de %d elementos encajan con «%s». Lista sin filtro o filtra por parte de su nombre "
+                "(«Guardar») o por tipo (botón, texto, menú…)." % (title, len(every), a["filter"])) + unsaved_note(title)
     ctx.ui = {"window": title, "hwnd": hwnd, "items": items, "all": every, "filter": f}
     _ui("look")
     return _ui_text(title, items) + unsaved_note(title)
@@ -2250,11 +2458,14 @@ def browser_nav(a, ctx):
 
 @tool("browser_screenshot", "net", "Captura la página del navegador integrado para ver su diseño (el usuario también la ve). El panel "
       "suele ser estrecho y muchas páginas muestran ahí su versión de móvil: con width eliges el ancho con el que se maqueta "
-      "(1280 para la versión de escritorio). Con full_page=true captura la página entera y no solo lo que se ve.",
+      "(1280 para la versión de escritorio; la imagen se entrega como mucho a 1024 px de ancho). Con full_page=true captura "
+      "la página entera y no solo lo que se ve (hasta 8 pantallas: si no cabe, lo dice y con from_px pides el resto).",
       {"width": I("Ancho en píxeles con el que se maqueta la página (opcional; p. ej. 1280 escritorio, 390 móvil)"),
-       "full_page": B("Capturar la página entera, de arriba abajo")})
+       "full_page": B("Capturar la página entera, de arriba abajo"),
+       "from_px": I("Con full_page: desde qué altura de la página (px) empezar, para capturar el resto de una página larga")})
 def browser_screenshot(a, ctx):
-    return _web("shot", ctx, 60, width=int(a.get("width") or 0), full_page=bool(a.get("full_page")))
+    return _web("shot", ctx, 60, width=int(a.get("width") or 0), full_page=bool(a.get("full_page")),
+                from_px=max(0, int(a.get("from_px") or 0)))
 
 
 # ---------------------------------------------------------------- procesos en segundo plano
@@ -2324,7 +2535,7 @@ def create_document(a, ctx):
         detail = "; %d diapositivas" % info["diapositivas"]
     elif info.get("paginas"):
         detail = "; %d páginas" % info["paginas"]
-    return "%s documento %s %s (%s%s). Puedes comprobarlo con read_document; si el usuario quiere verlo, ábreselo tú con open_target (él no puede usar tus herramientas)." % (
+    return "%s documento %s %s (%s%s). Puedes comprobarlo con read_document. En el chat el usuario ya tiene un botón para abrirlo: no lo abras tú con open_target salvo que te lo pida." % (
         "Reemplazado" if existed else "Creado", kind, p, _human(os.path.getsize(p)), detail)
 
 
@@ -2603,7 +2814,9 @@ def undo_changes(a, ctx):
        "mode": S("Qué puede hacer: read (por defecto: leer, buscar y consultar la web), edit (además crear y cambiar archivos) o full "
                  "(además ejecutar comandos)"),
        "paths": {"type": "array", "items": {"type": "string"},
-                 "description": "Con edit o full: carpetas o archivos que puede cambiar (por defecto, toda la carpeta de trabajo)"}},
+                 "description": "Con edit o full: carpetas o archivos que puede cambiar con sus herramientas de archivos (por defecto, "
+                                "toda la carpeta de trabajo). No limita los comandos de mode=full, que pueden escribir en cualquier "
+                                "sitio: si importa, usa edit"}},
       ["task"])
 def delegate(a, ctx):
     return "(lo gestiona el agente)"

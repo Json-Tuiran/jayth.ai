@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Bucle del agente (el «arnés»): habla con el modelo (API compatible con OpenAI), ejecuta herramientas con permisos,
 mantiene el contexto bajo control y aprovecha al máximo modelos locales pequeños y lentos."""
-import os, re, json, time, uuid, base64, socket, threading, datetime, http.client, urllib.parse
+import os, re, json, time, uuid, base64, socket, hashlib, threading, datetime, http.client, urllib.parse
 from collections import Counter
 from . import tools as T
 from . import harness as H
 from . import apis as API
 from . import consumo as USAGE
+from . import errores as ERR
 from . import claude as CL
 from . import osys
 from . import i18n
@@ -47,7 +48,7 @@ Herramientas:
 %(tools)s- Preguntas sobre Jayth (cómo se usa, dónde está un botón, menú o ajuste, qué versión es, dónde guarda las cosas, qué puedes hacer): consulta jayth_guide y responde con lo que diga, nombrando los botones y menús tal como aparecen en ella (es el idioma de su interfaz). No inventes menús ni opciones.
 - remember: guarda una preferencia duradera cuando el usuario te la diga (p. ej. "usa pnpm", "mis proyectos están en %(example)s").
 - Si el usuario deniega una acción, no insistas: propón otra vía.
-Responde en el idioma del usuario, claro y sin relleno."""
+Responde en el idioma del usuario, claro y sin relleno. Si razonas antes de responder, razona también en su idioma."""
 
 # Herramientas a demanda: un grupo básico siempre a mano y el resto por grupos que se activan cuando hacen falta (lo
 # detecta Jayth por el mensaje o lo pide el modelo con use_tools). Con modelos locales, ofrecer 50 herramientas gasta
@@ -553,7 +554,15 @@ def services_prompt(cfg):
 
 
 class LLMError(Exception):
-    pass
+    """Error del modelo o del servicio. status: código HTTP (si lo hubo); body: lo que respondió; retry_after: segundos
+    que pidió esperar; tries: cuántas veces se reintentó antes de rendirse."""
+
+    def __init__(self, msg, status=None, body="", retry_after=None):
+        super().__init__(msg)
+        self.status, self.body, self.retry_after, self.tries = status, body or str(msg), ERR.retry_after(retry_after), 0
+
+
+RETRY_WAITS = (4, 10, 25, 60)     # espera entre intentos ante un error pasajero (o lo que pida el servicio, hasta 120 s)
 
 
 def group_guide(g):
@@ -862,6 +871,10 @@ def local_think(effort, style, budgets=None):
 
 
 INTERRUPTED = "Interrumpido."
+_DAY_WARNED = {}     # aviso de gasto del día ya dado: fecha -> límite (una vez por día y límite)
+# Consultas sin efectos fuera de la categoría «read»: repetirlas tras una acción no es un bucle
+QUERY_TOOLS = {"list_windows", "screenshot", "ui_elements", "browser_read", "browser_screenshot", "command_output", "wait",
+               "list_tasks"}
 CUT_CALL = ("No se ejecutó: tu respuesta se cortó por el límite de salida a mitad de esta acción y sus datos llegaron "
             "incompletos (hacerla así habría dejado, por ejemplo, un archivo a medias). Divídela en partes más pequeñas: "
             "escribe el archivo en varias veces (write_file con la primera parte y luego edit_file o multi_edit para añadir "
@@ -1026,12 +1039,52 @@ def delta_parts(d):
     return out
 
 
+# campos de un trozo de respuesta que Jayth ya entiende; el resto (si un servicio añade algo propio) se guarda para devolvérselo
+_KNOWN_DELTA = {"role", "content", "tool_calls", "reasoning_content", "reasoning", "thinking", "refusal", "function_call", "audio",
+                "annotations", "logprobs"}
+_KNOWN_CALL = {"index", "id", "type", "function"}
+
+
+def merge_extra(dst, src):
+    """Junta lo que llega por partes de un campo extra: textos seguidos se concatenan, diccionarios se mezclan y en las
+    listas de trozos con «index» (los reasoning_details de OpenRouter) cada trozo se junta con el suyo."""
+    for k, v in src.items():
+        cur = dst.get(k)
+        if isinstance(v, dict) and isinstance(cur, dict):
+            merge_extra(cur, v)
+        elif isinstance(v, list) and isinstance(cur, list):
+            for item in v:
+                same = None
+                if isinstance(item, dict) and "index" in item:
+                    same = next((x for x in cur if isinstance(x, dict) and x.get("index") == item["index"]
+                                 and x.get("type") == item.get("type")), None)
+                if same is None:
+                    cur.append(item if not isinstance(item, dict) else dict(item))
+                else:
+                    for kk, vv in item.items():
+                        if kk in ("text", "summary") and isinstance(vv, str) and isinstance(same.get(kk), str):
+                            same[kk] += vv
+                        else:
+                            same[kk] = vv
+        elif isinstance(v, str) and isinstance(cur, str) and k not in ("id", "type", "signature", "thought_signature"):
+            dst[k] = cur + v
+        else:
+            dst[k] = json.loads(json.dumps(v)) if isinstance(v, (dict, list)) else v
+    return dst
+
+
 def llm_stream(base_url, api_key, payload, holder, on_delta):
     """Llama a una API compatible con OpenAI (base_url termina en /v1) con streaming.
     holder['conn'] permite cortar la conexion desde otro hilo."""
     u = urllib.parse.urlparse(base_url)
-    if any(k.startswith("_") for m in payload.get("messages") or [] for k in m):   # lo interno no va al servicio
-        payload = dict(payload, messages=[{k: v for k, v in m.items() if not k.startswith("_")} for m in payload["messages"]])
+    if any(k.startswith("_") for m in payload.get("messages") or [] for k in m) or \
+            any(k.startswith("_") for m in payload.get("messages") or [] for c in m.get("tool_calls") or [] for k in c):
+        def clean(m):                                  # lo interno no va al servicio (tampoco dentro de las llamadas)
+            m = {k: v for k, v in m.items() if not k.startswith("_")}
+            if m.get("tool_calls"):
+                m["tool_calls"] = [{k: v for k, v in c.items() if not k.startswith("_")} for c in m["tool_calls"]]
+            return m
+        payload = dict(payload, messages=[clean(m) for m in payload["messages"]])
     if u.scheme == "https":
         conn = http.client.HTTPSConnection(u.hostname, u.port or 443, timeout=10, context=tls_context())
     else:
@@ -1045,8 +1098,10 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
                      {"Content-Type": "application/json", "Authorization": "Bearer " + (api_key or "local"), "Accept": "text/event-stream"})
         resp = conn.getresponse()
         if resp.status != 200:
-            raise LLMError("HTTP %d: %s" % (resp.status, resp.read(2000).decode("utf-8", "replace")))
+            body = resp.read(4000).decode("utf-8", "replace")
+            raise LLMError("HTTP %d: %s" % (resp.status, body[:2000]), resp.status, body, resp.getheader("retry-after"))
         content, reasoning, tcs, finish, timings, usage = [], [], {}, None, None, None
+        extra = {}                                     # campos propios del servicio en su respuesta (ver merge_extra)
         tags = ThinkTags() if payload.get("model") != "local" else None    # (el motor propio de Jayth ya lo separa)
         heads = {k.lower(): v for k, v in resp.getheaders() if "ratelimit" in k.lower() or k.lower() == "retry-after"}
         holder["rx"], holder["rx_n"], holder["t_gen"] = time.time(), 0, None      # último trozo visible (lo mira el vigilante)
@@ -1091,10 +1146,16 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
                     for kind2, text2 in (tags.feed(text) if (tags is not None and kind == "content") else [(kind, text)]):
                         (reasoning if kind2 == "reasoning" else content).append(text2)
                         on_delta(kind2, text2)
+                more = {k: v for k, v in d.items() if k not in _KNOWN_DELTA and v not in (None, "", [], {})}
+                if more:
+                    merge_extra(extra, more)
                 for tc in d.get("tool_calls") or []:
                     slot = tcs.setdefault(tc.get("index", 0), {"id": "", "name": "", "args": ""})
                     if tc.get("id"):
                         slot["id"] = tc["id"]
+                    xc = {k: v for k, v in tc.items() if k not in _KNOWN_CALL and v not in (None, "", [], {})}
+                    if xc:                       # p. ej. Gemini: extra_content.google.thought_signature (la exige de vuelta)
+                        merge_extra(slot.setdefault("extra", {}), xc)
                     f = tc.get("function") or {}
                     if f.get("name"):
                         slot["name"] += f["name"]
@@ -1108,7 +1169,7 @@ def llm_stream(base_url, api_key, payload, holder, on_delta):
             (reasoning if kind == "reasoning" else content).append(text)
             on_delta(kind, text)
         return {"content": "".join(content), "reasoning": "".join(reasoning), "tool_calls": [tcs[k] for k in sorted(tcs)],
-                "finish": finish, "timings": timings, "usage": usage, "headers": heads}
+                "finish": finish, "timings": timings, "usage": usage, "headers": heads, "extra": extra}
     finally:
         try:
             conn.close()
@@ -1281,9 +1342,12 @@ class Run:
         self.cfg = settings
         self._failed = False        # el turno acabó en un error del modelo o del servicio (se le cuenta en su siguiente turno)
 
+        self._last_err = ""
+
         def emit_(ev):
             if ev.get("t") == "error":
                 self._failed = True
+                self._last_err = str(ev.get("text") or "")
             return emit(ev)
         self.emit = emit_
         self.images_dir = images_dir
@@ -1298,7 +1362,10 @@ class Run:
         self._prep = ("", 0.0)
         self.calls_seen = Counter()
         self.fails_seen = Counter()
+        self._effects = 0                 # acciones con efectos ejecutadas (las consultas repetidas entre medias no son bucle)
+        self._sig_epoch = {}
         self.truncated = False
+        self._deltas = 0                  # trozos de respuesta recibidos (si ya llegó algo, un error no se reintenta: se duplicaría)
         self._cut_ids = set()             # acciones que llegaron cortadas por el límite de salida (no se ejecutan)
         self._cut_nudges = 0
         self._read_ev, self._ptps = 0.0, 0.0           # avance de lectura: último aviso y velocidad medida (tok/s)
@@ -1369,6 +1436,8 @@ class Run:
 
     # ---- salida de texto con agrupacion de deltas
     def _delta(self, kind, text):
+        if kind in ("content", "reasoning"):
+            self._deltas += 1
         if kind == "reading":          # «leídos\ttotal\tde_caché\tms»: el motor va leyendo el mensaje (no se guarda en disco)
             try:
                 done, total, cache, ms = (int(x) for x in text.split("\t"))
@@ -1512,7 +1581,7 @@ class Run:
                 m = dict(m, content=parts)
             # claves internas (_auto) no van al modelo; la respuesta tal cual de Claude (_ant) y el razonamiento (_reasoning)
             # sí, para devolvérselos al servicio que los pida (los quita llm_stream para los demás)
-            out.append({k: v for k, v in m.items() if not k.startswith("_") or k in ("_ant", "_ant_model", "_reasoning")})
+            out.append({k: v for k, v in m.items() if not k.startswith("_") or k in ("_ant", "_ant_model", "_reasoning", "_x", "_xbase", "_xmodel")})
         if self._split is None:
             self._split = text_then_call_apart(self.cfg)
         return split_text_and_calls(out) if self._split else out
@@ -1716,10 +1785,11 @@ class Run:
                 m["content"] = m["content"][:300] + "\n...[recortado para ahorrar contexto]" + (note.group(0) if note else "")
                 if self._estimate(msgs) <= budget:
                     return msgs
-        while self._estimate(msgs) > budget and len(msgs) > 2:   # 2) ultimo recurso: descartar lo mas antiguo
-            msgs.pop(0)
-            while msgs and msgs[0]["role"] != "user":
-                msgs.pop(0)
+        while self._estimate(msgs) > budget:              # 2) ultimo recurso: descartar lo mas antiguo, hasta el siguiente
+            nxt = next((i for i in range(1, len(msgs)) if msgs[i]["role"] == "user"), None)    # mensaje del usuario
+            if nxt is None:
+                break       # nunca el mensaje en curso ni lo que va detrás: antes se iba todo y el modelo solo recibía sus
+            del msgs[:nxt]  # instrucciones (sin nada que responder); así, como mucho, el servicio dice que no cabe
         return msgs
 
     # ---- herramientas
@@ -1849,12 +1919,19 @@ class Run:
         # (solo las herramientas propias: las de conectores tienen esquemas ajenos y más laxos)
         args, missing_args, extra_args = T.normalize_args(tool, args) if name in T.TOOLS else (args if isinstance(args, dict) else {}, [], [])
         args = coerce(args, tool["parameters"])
-        sig = name + json.dumps(args, sort_keys=True, ensure_ascii=False)[:2000]
-        self.calls_seen[sig] += 1
-        if self.fails_seen[sig] >= 2 or self.calls_seen[sig] >= 4:
+        # firma con todos los argumentos (antes, cortados a 2000 letras: dos write_file distintos con el mismo principio
+        # contaban como el mismo). Una consulta sin efectos (mirar la pantalla, listar ventanas…) solo cuenta como
+        # repetida si entre medias no se hizo nada: después de un clic, volver a mirar es lo correcto.
+        sig = name + hashlib.sha1(json.dumps(args, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+        query = name in QUERY_TOOLS or tool["category"] == "read"
+        if query and self._sig_epoch.get(sig) != self._effects:
+            self.calls_seen[sig] = self.fails_seen[sig] = 0
+        self._sig_epoch[sig] = self._effects
+        if self.fails_seen[sig] >= 2 or self.calls_seen[sig] >= 3:   # la 4.ª vez (o la 3.ª tras dos fallos); las bloqueadas no suman
             self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": tool["category"], "approval": "auto"})
             return False, ("Ya intentaste exactamente esta misma acción varias veces. No la repitas: cambia de enfoque, revisa la causa del fallo "
                            "o pregunta al usuario con ask_user."), None, {}
+        self.calls_seen[sig] += 1
         if missing_args:
             self.fails_seen[sig] += 1
             self.emit({"t": "tool_call", "id": cid, "name": name, "args": args, "category": tool["category"], "approval": "auto"})
@@ -1924,6 +2001,8 @@ class Run:
                 pass
         if tool["category"] == "control":
             T.CONTROL_RUN = self                     # el botón «Parar» del aviso en pantalla detiene esta tarea
+        if not query:
+            self._effects += 1
         try:
             self.ctx.call_id = cid                   # las herramientas largas publican su avance con este id
             r = self._undo_changes(args) if name == "undo_changes" else tool["fn"](args, self.ctx)
@@ -1975,6 +2054,24 @@ class Run:
         return "Deshecho (%d):\n%s\nLos archivos están como antes de esas acciones.%s" % (
             len(done), "\n".join("- " + d for d in done), (" Quedan %d acciones anteriores que también se pueden deshacer." % left) if left else "")
 
+    @staticmethod
+    def _tree_state(root, limit=20000, seconds=3.0):
+        """{ruta: (fecha, tamaño)} de los archivos bajo root (sin .git, node_modules…), o None si es demasiado grande para
+        mirarlo en un momento. Sirve para ver qué cambiaron los comandos de un ayudante."""
+        out, t_end = {}, time.time() + seconds
+        for r, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in T._SKIP_DIRS and not d.startswith(".")]
+            for f in files:
+                p = os.path.join(r, f)
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                out[os.path.normcase(os.path.abspath(p))] = (st.st_mtime_ns, st.st_size)
+            if len(out) > limit or time.time() > t_end:
+                return None
+        return out
+
     def _delegate(self, args):
         """Ejecuta una subtarea con un ayudante: un Run aparte, con la conversación en blanco y solo herramientas de lectura.
         Devuelve (ok, informe, None, extra) como cualquier herramienta."""
@@ -2009,6 +2106,8 @@ class Run:
             log.append(ev)
             if ev.get("t") in ("tool_call", "tool_result", "undo") and ev.get("name") != "use_tools":
                 self.emit(dict(ev, sub=title or True))
+        ws = os.path.abspath(self.ctx.workspace)
+        before = self._tree_state(ws) if mode == "full" else None     # sus comandos pueden cambiar lo que sea
         sub = Run(data, cfg, emit, self.images_dir)
         sub.stop = self.stop                         # «Parar» detiene también al ayudante…
         sub.ctx.stop = self.stop
@@ -2031,22 +2130,111 @@ class Run:
             sum(used.values()), ", ".join("%s ×%d" % (k, v) for k, v in used.most_common(6)) or "ninguna", time.time() - t0,
             ("; %d acciones se le negaron por necesitar permiso del usuario" % denied) if denied else "",
             ("; terminó con un error: " + errs[-1]) if errs else "")
+        short = lambda p: os.path.relpath(p, ws) if os.path.abspath(p).lower().startswith(ws.lower() + os.sep) else p
+        tracked = {}                                 # ruta normalizada -> (cómo mostrarla, si era nuevo)
         if done:                                     # lo que cambió, para que el agente principal lo revise: responde de ello
-            ws = os.path.abspath(self.ctx.workspace)
-            files = []
             for it in done:
                 for e in H.snapshot_files(self.sid, it["cid"]):
-                    p = e["path"]
-                    rel = os.path.relpath(p, ws) if os.path.abspath(p).lower().startswith(ws.lower() + os.sep) else p
-                    rel += "" if e.get("existed", True) else " (nuevo)"
-                    if rel not in files:
-                        files.append(rel)
-            tail += ("\n[El ayudante cambió %d archivos en %d acciones: %s%s. Eres responsable de esos cambios: revísalos (read_file) antes "
+                    key = os.path.normcase(os.path.abspath(e["path"]))
+                    if key not in tracked:           # crear y luego editar el mismo archivo es UN archivo (nuevo)
+                        tracked[key] = (short(e["path"]), not e.get("existed", True))
+            files = [rel + (" (nuevo)" if new else "") for rel, new in tracked.values()]
+            tail += ("\n[El ayudante cambió %d %s en %d acciones: %s%s. Eres responsable de esos cambios: revísalos (read_file) antes "
                      "de darlos por buenos; undo_changes(count=%d) los deshace todos.]"
-                     % (len(files), len(done), ", ".join(files[:20]), " …" if len(files) > 20 else "", len(done)))
+                     % (len(files), "archivo" if len(files) == 1 else "archivos", len(done), ", ".join(files[:20]),
+                        " …" if len(files) > 20 else "", len(done)))
+        if before is not None:                       # lo que cambiaron sus comandos: no se puede deshacer
+            after = self._tree_state(ws)
+            if after is not None:
+                changed = sorted(p for p in set(before) | set(after) if before.get(p) != after.get(p) and p not in tracked)
+                if changed:
+                    norm_roots = [os.path.normcase(os.path.abspath(r)) for r in roots or []]
+                    outside = [p for p in changed if not any(p == r or p.startswith(r + os.sep) for r in norm_roots)]
+                    names = [short(p) + ("" if p in after else " (borrado)") for p in changed]
+                    one = len(changed) == 1
+                    where = ""
+                    if outside and roots:
+                        where = (" Está fuera de las carpetas que le encargaste." if one else
+                                 " %d de ellos están fuera de las carpetas que le encargaste." % len(outside))
+                    tail += ("\n[Con comandos, el ayudante cambió además %s que undo_changes NO puede deshacer: %s%s.%s]"
+                             % ("1 archivo" if one else "%d archivos" % len(changed), ", ".join(names[:20]),
+                                " …" if len(names) > 20 else "", where))
         if not report:
             return False, "El ayudante no devolvió ningún informe." + tail, None, {}
         return True, T.clip(report, max(self.ctx.max_out, 12000)) + tail, None, {}
+
+    def _spend_check(self):
+        """Modelos por API: si esta conversación o el día superan el gasto que el usuario puso como aviso, se le dice (una
+        vez por límite) y, si lo pidió, la tarea espera a que diga si sigue."""
+        lim_c = float(self.cfg.get("spend_alert_conv") or 0)
+        lim_d = float(self.cfg.get("spend_alert_day") or 0)
+        if (lim_c <= 0 and lim_d <= 0) or self.cfg.get("_sub"):
+            return
+        usd = lambda x: "%s US$" % i18n.number(x, 2)
+        msgs = []
+        try:
+            if lim_c > 0:
+                conv = USAGE.session_total(self.sid).get("usd") or 0.0
+                if conv >= lim_c and self.s.get("_spend_warned") != lim_c:
+                    self.s["_spend_warned"] = lim_c
+                    msgs.append(tr("Esta conversación ya lleva ≈ %s con el modelo por API (tu aviso: %s).") % (usd(conv), usd(lim_c)))
+            if lim_d > 0:
+                day = USAGE.summary()["hoy"]["usd"]
+                key = time.strftime("%Y-%m-%d")
+                if day >= lim_d and _DAY_WARNED.get(key) != lim_d:
+                    _DAY_WARNED[key] = lim_d
+                    msgs.append(tr("Hoy llevas ≈ %s con modelos por API (tu aviso: %s).") % (usd(day), usd(lim_d)))
+        except Exception:
+            return
+        if not msgs:
+            return
+        text = " ".join(msgs)
+        self.emit({"t": "spend_alert", "text": text})
+        if not self.cfg.get("spend_alert_pause"):
+            return
+        cid = "gasto_" + uuid.uuid4().hex[:8]
+        go, halt = tr("Sí, sigue"), tr("Para aquí")
+        self.emit({"t": "question", "id": cid, "question": text + " " + tr("¿Sigo con la tarea?"), "options": [go, halt]})
+        d = self._wait(cid)
+        ans = d[7:] if d and d.startswith("answer:") else ""
+        self.emit({"t": "answer", "id": cid, "text": ans})
+        if not d or ans.strip() == halt:
+            self.stop.set()
+
+    def _call_llm(self, external, base, key, payload):
+        """Pide la respuesta al modelo. Con un servicio por API, un error pasajero (saturado, demasiadas peticiones por
+        minuto, fallo del servidor, se cortó antes de empezar a responder) se reintenta solo, esperando cada vez más (o lo
+        que pida el servicio) y diciéndolo en el chat; antes la tarea se paraba con el error tal cual. Si ya había llegado
+        parte de la respuesta no se reintenta (se duplicaría): queda el error y «Reintentar»."""
+        fn = ext_stream if external else llm_stream
+        tries = 0
+        while True:
+            n0 = self._deltas
+            try:
+                return fn(base, key, payload, self.holder, self._delta)
+            except LLMError as e:
+                err, again = e, external and ERR.transient(e.status, e.body)
+            except (socket.timeout, TimeoutError, ConnectionResetError, ConnectionAbortedError) as e:
+                if not external:
+                    raise
+                err, again = e, True
+            if not again or tries >= len(RETRY_WAITS) or self.stop.is_set() or self._deltas != n0 or self.holder.get("cut"):
+                if isinstance(err, LLMError):
+                    err.tries = tries
+                raise err
+            wait = float(RETRY_WAITS[tries])
+            if getattr(err, "retry_after", None):
+                wait = min(120.0, max(wait, err.retry_after))
+            tries += 1
+            k = ERR.kind(err.status, err.body) if isinstance(err, LLMError) else "timeout"
+            what = {"busy": tr("El servicio está saturado"), "rate": tr("El servicio pide esperar (límite por minuto)"),
+                    "server": tr("El servicio tuvo un fallo pasajero"), "timeout": tr("El servicio no responde")}.get(k, tr("El servicio falló"))
+            self.emit({"t": "info", "text": tr("%s. Reintento en %d s (intento %d de %d)…") % (what, int(wait), tries + 1, len(RETRY_WAITS) + 1)})
+            end = time.time() + wait
+            while time.time() < end and not self.stop.is_set():
+                time.sleep(0.2)
+            if self.stop.is_set():
+                raise err
 
     def _repair(self):
         """Si se corto a mitad, toda llamada a herramienta debe tener su respuesta para que el historial sea valido."""
@@ -2078,12 +2266,14 @@ class Run:
         # cómo acabó su turno anterior, si no acabó bien: el modelo no lo ve en la conversación y no puede saberlo solo
         how = "closed" if self.s.pop("_turn_open", None) else self.s.pop("_cut_short", None)
         self.s.pop("_cut_short", None)
+        err = self.s.pop("_cut_err", "")
         if how in CUT_SHORT and msgs:
-            body += "\n\n[Aviso de Jayth: " + CUT_SHORT[how] + "]"
+            body += "\n\n[Aviso de Jayth: " + CUT_SHORT[how] + ((" El error fue: «%s»." % err) if how == "error" and err else "") + "]"
         self.s["_turn_open"] = True
         self._failed = False
         content = body if not image_names else [{"type": "text", "text": body}] + [{"type": "image_ref", "name": n} for n in image_names]
-        msgs.append({"role": "user", "content": content})
+        # _attach: los adjuntos tal cual, para reintentar o editar sin arrastrar los avisos que Jayth añadió al mensaje
+        msgs.append({"role": "user", "content": content, "_attach": attachments or ""})
         uev = {"t": "user", "text": text, "images": list(image_names), "files": [l[4:].strip() for l in attachments.splitlines() if l.startswith("### ")]}
         if marker:                                      # p. ej. «plan»: el chat lo muestra como marca, no como mensaje tuyo
             uev["marker"] = marker
@@ -2152,7 +2342,7 @@ class Run:
                 watched = threading.Event()
                 threading.Thread(target=self._watch, args=(external, watched), daemon=True).start()
                 try:
-                    res = (ext_stream if external else llm_stream)(base, key, payload, self.holder, self._delta)
+                    res = self._call_llm(external, base, key, payload)
                 except (ConnectionRefusedError, socket.timeout, OSError) as e:
                     watched.set()
                     self._flush()
@@ -2171,7 +2361,13 @@ class Run:
                 except LLMError as e:
                     watched.set()
                     self._flush()
-                    self.emit({"t": "error", "text": tr("Error del modelo: %s") % e})
+                    if self.stop.is_set():
+                        break
+                    if external:                 # explicado igual para cualquier servicio (y con su detalle, corto)
+                        self.emit({"t": "error", "text": ERR.friendly(e.status, e.body, payload.get("model"), e.tries),
+                                   "detail": str(e)[:2000]})
+                    else:
+                        self.emit({"t": "error", "text": tr("Error del modelo: %s") % e})
                     break
                 except Exception as e:
                     watched.set()
@@ -2208,8 +2404,9 @@ class Run:
                 self.truncated = res["finish"] == "length"
                 # ids propios y unicos: algunos servidores repiten ids (p. ej. "call_0") entre turnos
                 # (Claude por su API nativa: sus propios ids, que deben coincidir con los de su respuesta guardada)
-                calls = [{"id": c["id"] if res.get("keep_ids") and c.get("id") else "call_" + uuid.uuid4().hex[:12], "type": "function",
-                          "function": {"name": c["name"], "arguments": c["args"] or "{}"}} for c in res["tool_calls"] if c["name"]]
+                calls = [dict({"id": c["id"] if res.get("keep_ids") and c.get("id") else "call_" + uuid.uuid4().hex[:12], "type": "function",
+                               "function": {"name": c["name"], "arguments": c["args"] or "{}"}}, **({"_x": c["extra"]} if c.get("extra") else {}))
+                         for c in res["tool_calls"] if c["name"]]
                 text_out = res["content"]
                 if not calls and "<tool_call>" in text_out:
                     calls, text_out = parse_text_tool_calls(text_out)
@@ -2231,7 +2428,11 @@ class Run:
                            "ctx_used": (res.get("usage") or {}).get("prompt_tokens"), "ctx_max": int(self.cfg["n_ctx"]),
                            "tok_in": spent.get("i"), "tok_out": spent.get("o"), "usd": spent.get("usd"), "usd_src": spent.get("p"),
                            # razonó sin mostrarlo (el servicio solo dice cuántos tokens dedicó a pensar)
-                           "think_tok": hidden_reasoning(res.get("usage")) if external and not (res.get("reasoning") or "").strip() else None})
+                           "think_tok": hidden_reasoning(res.get("usage")) if external and not (res.get("reasoning") or "").strip() else None,
+                           # Claude por su API muestra un resumen de su razonamiento, no el razonamiento entero: el chat lo dice
+                           "think_summary": bool(res.get("blocks") and (res.get("reasoning") or "").strip()) or None})
+                if external and spent.get("usd") is not None:
+                    self._spend_check()
                 am = {"role": "assistant", "content": text_out}
                 if calls:
                     am["tool_calls"] = calls
@@ -2239,6 +2440,11 @@ class Run:
                     am["_ant"], am["_ant_model"] = res["blocks"], payload.get("model")
                 elif external and (res.get("reasoning") or "").strip():
                     am["_reasoning"] = res["reasoning"]  # DeepSeek y Kimi exigen que se les devuelva (API.prepare)
+                if external and (res.get("extra") or any(c.get("_x") for c in calls)):
+                    # lo propio del servicio (firmas de razonamiento…): se le devuelve a él, y solo a él (API.prepare)
+                    am["_xbase"], am["_xmodel"] = base, payload.get("model")
+                    if res.get("extra"):
+                        am["_x"] = res["extra"]
                 msgs.append(am)
                 self.emit({"t": "assistant_end", "text": text_out})
                 wrote = None if calls or self.cfg.get("mode") == "plan" else \
@@ -2314,8 +2520,11 @@ class Run:
             self._flush()
             self._repair()
             self.s.pop("_turn_open", None)
+            self.s.pop("_cut_err", None)
             if self.stop.is_set() or self._failed:      # se le cuenta al modelo al empezar su siguiente turno
                 self.s["_cut_short"] = "stop" if self.stop.is_set() else "error"
+                if not self.stop.is_set() and self._last_err:
+                    self.s["_cut_err"] = re.sub(r"\s+", " ", self._last_err)[:240]
             if T.CONTROL_RUN is self:                   # una pausa pendiente del aviso en pantalla no pasa a la siguiente tarea
                 T.CONTROL_RUN = None
                 T.PAUSED.clear()

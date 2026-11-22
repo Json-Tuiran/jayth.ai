@@ -3,7 +3,7 @@
 """Proveedores de modelos por API: servicios en la nube (OpenAI, Claude, Gemini, OpenRouter…) o servidores propios
 (Ollama, LM Studio, uno de la empresa) con formato compatible con OpenAI. Se pueden guardar varios y elegir sus
 modelos desde el mismo menú que los modelos locales. Las claves se guardan solo en este equipo."""
-import json, uuid, urllib.request, urllib.error
+import json, time, uuid, urllib.request, urllib.error
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QListWidget, QListWidgetItem, QFrame,
                                QMessageBox, QWidget, QScrollArea)
@@ -28,6 +28,45 @@ TEMPLATES = [
 ]
 
 
+def _open(req, timeout):
+    """urlopen con un segundo intento, con el doble de tiempo, si el servicio no responde o está saturado (pasa a menudo
+    con las listas largas de modelos y en horas punta)."""
+    import socket
+    from . import errores as ERR
+    for attempt in (0, 1):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout * (1 + attempt)).read(4_000_000)
+        except urllib.error.HTTPError as e:
+            if attempt or not ERR.transient(e.code, ""):
+                raise
+            time.sleep(2)
+        except (socket.timeout, TimeoutError) as e:
+            if attempt:
+                raise
+        except urllib.error.URLError as e:
+            if attempt or not isinstance(getattr(e, "reason", None), (socket.timeout, TimeoutError)):
+                raise
+
+
+def _http_error(e, model=""):
+    from . import errores as ERR
+    try:
+        body = e.read(2000).decode("utf-8", "replace")
+    except Exception:
+        body = ""
+    return RuntimeError(ERR.friendly(e.code, body, model))
+
+
+def _conn_error(e):
+    import socket
+    from . import errores as ERR
+    r = getattr(e, "reason", e)
+    if isinstance(r, (socket.timeout, TimeoutError)) or "timed out" in str(r).lower():
+        return RuntimeError(tr("El servicio tardó demasiado en responder (también al reintentarlo). Puede estar saturado: "
+                               "prueba en un momento, o escribe el nombre del modelo a mano."))
+    return RuntimeError(tr("No se pudo conectar: %s") % r)
+
+
 def list_models(url, key, timeout=15):
     """Nombres de los modelos que ofrece el servicio (GET /models). Lanza RuntimeError con un mensaje claro."""
     url = (url or "").strip().rstrip("/")
@@ -37,15 +76,15 @@ def list_models(url, key, timeout=15):
     if "anthropic.com" in url:                    # Claude también acepta su cabecera propia
         headers.update({"x-api-key": key or "", "anthropic-version": "2023-06-01"})
     try:
-        raw = urllib.request.urlopen(urllib.request.Request(url + "/models", headers=headers), timeout=timeout).read(4_000_000)
+        raw = _open(urllib.request.Request(url + "/models", headers=headers), timeout)
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
             raise RuntimeError(tr("El servicio rechazó la clave (HTTP %d). Revisa que esté bien copiada y activa.") % e.code)
         if e.code == 404:
             raise RuntimeError(tr("El servicio no ofrece la lista de modelos (HTTP 404). Escribe el nombre del modelo a mano."))
-        raise RuntimeError(tr("El servicio respondió HTTP %d.") % e.code)
+        raise _http_error(e)
     except Exception as e:
-        raise RuntimeError(tr("No se pudo conectar: %s") % getattr(e, "reason", e))
+        raise _conn_error(e)
     try:
         j = json.loads(raw.decode("utf-8", "replace"))
     except ValueError:
@@ -71,17 +110,11 @@ def test_chat(url, key, model, timeout=40):
     req = urllib.request.Request(url.rstrip("/") + "/chat/completions", data=json.dumps(payload).encode("utf-8"),
                                  headers={"Content-Type": "application/json", "Authorization": "Bearer " + (key or "local"), "User-Agent": APP_NAME})
     try:
-        j = json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "replace"))
-    except urllib.error.HTTPError as e:
-        body = e.read(600).decode("utf-8", "replace")
-        try:
-            msg = json.loads(body).get("error")
-            body = msg.get("message") if isinstance(msg, dict) else str(msg or body)
-        except ValueError:
-            pass
-        raise RuntimeError("HTTP %d: %s" % (e.code, str(body)[:300]))
+        j = json.loads(_open(req, timeout).decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:           # cualquier formato de error (Gemini lo manda en una lista), explicado
+        raise _http_error(e, model)
     except Exception as e:
-        raise RuntimeError(tr("No se pudo conectar: %s") % getattr(e, "reason", e))
+        raise _conn_error(e)
     try:
         return (j["choices"][0]["message"].get("content") or "").strip() or tr("(respuesta vacía, pero el servicio contestó)")
     except (KeyError, IndexError, TypeError):

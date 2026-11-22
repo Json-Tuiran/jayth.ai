@@ -104,6 +104,9 @@ DEFAULTS = {
     "effort": "",                # low | medium | high: cuanto razona el modelo antes de responder ("" = segun 'thinking')
     "max_tokens": 4096,
     "max_steps": 30,
+    "spend_alert_conv": 0.0,     # modelos por API: avisar al superar estos US$ en una conversación (0 = nunca)
+    "spend_alert_day": 0.0,      # …o en el día, sumando todas
+    "spend_alert_pause": False,  # al avisar, la tarea espera a que digas si sigue
     "temperature": 0.7,
     "top_p": 0.9,
     "top_k": 20,
@@ -1250,6 +1253,24 @@ class Session:
             self.save()
         return files
 
+    _NOTES = re.compile(r"\n\n\[(?:Herramientas activadas para esta tarea|Datos actualizados por Jayth|Responde en |Aviso de Jayth:)")
+
+    def _attach_of(self, msg, text):
+        """Los adjuntos que el usuario envió con ese mensaje, sin los avisos que Jayth le añadió (antes, al reintentar, se
+        reenviaban como si fueran adjuntos y cada intento sumaba otro aviso)."""
+        if "_attach" in msg:
+            return msg["_attach"] or ""
+        content = msg.get("content")                 # mensajes de versiones anteriores: se quitan los avisos conocidos
+        body = content if isinstance(content, str) else next((c.get("text", "") for c in content or [] if c.get("type") == "text"), "")
+        rest = body[len(text):] if body.startswith(text) else ""
+        m = self._NOTES.search(rest)
+        return (rest[:m.start()] if m else rest).lstrip("\n")
+
+    def _forget_turn_state(self):
+        """Al volver atrás: lo que hubiera que contarle al modelo de un turno que ya no existe se olvida."""
+        for k in ("_cut_short", "_turn_open", "_cut_err"):
+            self.data.pop(k, None)
+
     def last_user(self):
         """Ultimo mensaje escrito por el usuario (evento 'user'), o None."""
         for ev in reversed(self.events):
@@ -1266,8 +1287,11 @@ class Session:
             return tr("No hay ningún mensaje que regenerar.")
         msgs = self.data["messages"]
         idx = max((i for i, m in enumerate(msgs) if m["role"] == "user" and not m.get("_auto")), default=None)
+        attach = ""
         if idx is not None:
+            attach = self._attach_of(msgs[idx], ev.get("text") or "")
             del msgs[idx:]
+        self._forget_turn_state()
         with self.cond:
             del self.events[ev["i"]:]
             try:
@@ -1276,7 +1300,7 @@ class Session:
                         f.write(json.dumps(e, ensure_ascii=False) + "\n")
             except Exception:
                 pass
-        return self.send(ev["text"], ev.get("images") or [], marker=ev.get("marker"))
+        return self.send(ev["text"], ev.get("images") or [], attach_text=attach, marker=ev.get("marker"))
 
     # ---- volver a un mensaje anterior (editar, reintentar, rebobinar, ramificar)
     def _rewrite_events(self):
@@ -1325,11 +1349,10 @@ class Session:
             from . import harness
             for cid in reversed(self.changes_since(ev_i)):
                 files += harness.undo(self.id, cid)
-        content = self.data["messages"][idx].get("content")
-        body = content if isinstance(content, str) else next((c.get("text", "") for c in content or [] if c.get("type") == "text"), "")
         text = ev.get("text") or ""
-        attach = body[len(text):].lstrip("\n") if body.startswith(text) else ""
+        attach = self._attach_of(self.data["messages"][idx], text)
         del self.data["messages"][idx:]
+        self._forget_turn_state()
         with self.cond:
             del self.events[ev_i:]
             self._rewrite_events()

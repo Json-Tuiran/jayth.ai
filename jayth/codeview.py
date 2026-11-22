@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Piezas del modo Jayth Code: editor con resaltado, pestañas, arbol de archivos, terminal y dialogo de proyecto."""
 import os, re, json, time, uuid
-from PySide6.QtCore import Qt, QRect, QSize, Signal, QFileSystemWatcher, QProcess, QDir, QModelIndex, QTimer, QUrl
+from PySide6.QtCore import Qt, QEvent, QRect, QSize, Signal, QFileSystemWatcher, QProcess, QDir, QModelIndex, QTimer, QUrl
 from PySide6.QtGui import (QColor, QFont, QPainter, QTextFormat, QSyntaxHighlighter, QTextCharFormat, QKeySequence, QShortcut,
                            QPixmap, QGuiApplication, QTextCursor, QDesktopServices, QTextOption)
 from PySide6.QtWidgets import (QWidget, QPlainTextEdit, QTextEdit, QTabWidget, QTreeView, QFileSystemModel, QVBoxLayout, QHBoxLayout,
@@ -339,6 +339,7 @@ class FileTab(QWidget):
         k.setObjectName("faint")
         h.addWidget(k)
         h.addStretch(1)
+        self._bar_kind = k
         if toggle:
             seg = QFrame()
             seg.setObjectName("segment")
@@ -355,8 +356,28 @@ class FileTab(QWidget):
             self.b_prev.setToolTip(tr("Ver el archivo ya formateado"))
             self.b_code.setToolTip(tr("Ver y editar el texto del archivo"))
             h.addWidget(seg)
-        h.addWidget(self._open_btn())
+        self._bar_open = self._open_btn()
+        h.addWidget(self._bar_open)
+        self._bar_w = bar
+        bar.installEventFilter(self)
         return bar
+
+    def eventFilter(self, obj, ev):
+        if obj is getattr(self, "_bar_w", None) and ev.type() == QEvent.Resize:
+            self._fit_bar(ev.size().width())
+        return super().eventFilter(obj, ev)
+
+    def _fit_bar(self, w):
+        """La barra del archivo en un panel estrecho: antes se cortaba por los dos lados («a pr», «ódig»). Por debajo de
+        ~460 px se quita la etiqueta del tipo y «Abrir con su programa» queda en su icono; por debajo de ~330, «Vista
+        previa» pasa a «Vista». Lo que se quita sigue en la explicación al pasar el ratón."""
+        narrow, tiny = w < 460, w < 330
+        self._bar_kind.setVisible(not narrow)
+        style = Qt.ToolButtonIconOnly if narrow else Qt.ToolButtonTextBesideIcon
+        if self._bar_open.toolButtonStyle() != style:
+            self._bar_open.setToolButtonStyle(style)
+        if getattr(self, "b_prev", None) is not None:
+            self.b_prev.setText(tr("Vista") if tiny else tr("Vista previa"))
 
     def set_mode(self, mode, save=True):
         """«Vista previa» o «Código» (se recuerda para ese tipo de archivo)."""
@@ -551,6 +572,7 @@ class EditorTabs(QTabWidget):
         super().__init__()
         self.setMovable(True)
         self.setDocumentMode(True)
+        self.tabBar().setDrawBase(False)          # sin la raya clara que el estilo dibuja sobre la barra de pestañas
         self.watch = QFileSystemWatcher(self)
         self.watch.fileChanged.connect(self._external)
         # lo que escribe el agente se abre o recarga agrupado y fuera de la pila del chat (ver refresh)
@@ -583,6 +605,13 @@ class EditorTabs(QTabWidget):
         app = QApplication.instance()
         if app is not None:
             app.applicationStateChanged.connect(lambda st: st != Qt.ApplicationActive and self.autosave_all())
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        # en un panel estrecho, «Ajustar líneas» queda en su icono (la explicación sigue al pasar el ratón)
+        style = Qt.ToolButtonIconOnly if self.width() < 560 else Qt.ToolButtonTextBesideIcon
+        if self.b_wrap.toolButtonStyle() != style:
+            self.b_wrap.setToolButtonStyle(style)
 
     def _tab_changed(self, i):
         prev = self._prev_tab

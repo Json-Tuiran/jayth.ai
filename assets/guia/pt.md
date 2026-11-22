@@ -282,7 +282,7 @@ ao reiniciar o modelo (**Reiniciar modelo**). O log do motor fica em **Configura
 
 ## Configurações
 
-Abrem-se pelo menu do perfil (**Configurações**). As alterações são salvas sozinhas. Páginas e opções (com o nome
+Abrem-se pelo menu do perfil (**Configurações**). As alterações são salvas sozinhas. No alto, “Pesquisar configuração” encontra qualquer opção pelo nome ou pela explicação. Páginas e opções (com o nome
 exato):
 - **Geral:** “Idioma da interface”, “Tema”, “Tamanho do texto”, “Animações (aparição de mensagens, barra
   lateral, avisos)”, “Barra de título integrada à janela” (só Windows).
@@ -299,6 +299,7 @@ exato):
   onde os modelos são baixados”.
   - **Provedor:** “Qual motor o agente usa?” (local ou servidor externo), “URL do servidor externo (termina em /v1)”,
     “Nome do modelo nesse servidor”, “Chave de API (se o servidor pedir)” e **Testar conexão**. A chave fica guardada criptografada no computador, não no arquivo de configurações.
+  - **Gastos com modelos por API:** “Avisar se uma conversa passar de (US$)”, “Avisar se o gasto do dia passar de (US$)” e “Ao avisar, pausar a tarefa até você dizer se continua”.
 - **Geração:** “Pensar a fundo por padrão (respostas melhores, mais lento)”, “Parâmetros de amostragem” (recomendados
   para o modelo ativo ou personalizados), “Temperatura”, “Tamanho máximo de cada resposta (tokens)”.
   - **Amostragem avançada:** “Top-p”, “Top-k”, “Min-p”, “Penalidade de repetição”, “Semente” e **Restaurar valores

@@ -99,6 +99,7 @@ QTreeView { outline: 0; }
 QToolButton { background: transparent; border: none; border-radius: 8px; padding: 4px; color: %(mut)s; }
 QToolButton:hover { background: %(hover)s; color: %(tx)s; }
 QToolButton::menu-indicator { image: none; width: 0; }
+QToolButton#paneBtn:checked { background: %(acc_bg)s; }
 QToolButton#modelBtn { font-size: 11pt; font-weight: 600; color: %(tx)s; padding: 5px 10px; }
 QToolButton#chip { border: 1px solid %(line)s; border-radius: 13px; padding: 3px 10px; color: %(mut)s; font-size: 9pt; }
 QToolButton#chip:checked { background: %(acc_bg)s; color: %(acc)s; border-color: %(acc)s; }

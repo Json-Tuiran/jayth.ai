@@ -274,7 +274,7 @@ reiniciar el modelo (**Reiniciar modelo**). El registro del motor está en **Aju
 
 ## Ajustes
 
-Se abren desde el menú del perfil (**Ajustes**). Los cambios se guardan solos. Páginas y opciones (con su nombre exacto):
+Se abren desde el menú del perfil (**Ajustes**). Los cambios se guardan solos. Arriba, «Buscar ajuste» encuentra cualquier opción por su nombre o su explicación. Páginas y opciones (con su nombre exacto):
 - **General:** «Idioma de la interfaz», «Tema», «Tamaño del texto», «Animaciones (aparición de mensajes, barra
   lateral, avisos)», «Barra de título integrada en la ventana» (solo Windows).
   - **Editor de Jayth Code:** «Guardado automático de los archivos».
@@ -290,6 +290,7 @@ Se abren desde el menú del perfil (**Ajustes**). Los cambios se guardan solos. 
   donde se descargan los modelos».
   - **Proveedor:** «¿Qué motor usa el agente?» (local o servidor externo), «URL del servidor externo (termina en /v1)»,
     «Nombre del modelo en ese servidor», «Clave de API (si el servidor la pide)» y **Probar conexión**. La clave se guarda cifrada en el equipo, no en el archivo de ajustes.
+  - **Gasto con modelos por API:** «Avisar si una conversación supera (US$)», «Avisar si el gasto del día supera (US$)» y «Al avisar, pausar la tarea hasta que digas si sigue».
 - **Generación:** «Pensar a fondo por defecto (mejores respuestas, más lento)», «Parámetros de muestreo» (recomendados
   para el modelo activo o personalizados), «Temperatura», «Longitud máxima de cada respuesta (tokens)».
   - **Muestreo avanzado:** «Top-p», «Top-k», «Min-p», «Penalización por repetición», «Semilla» y **Restablecer valores

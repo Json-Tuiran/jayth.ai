@@ -316,7 +316,7 @@ journal du moteur se trouve dans **Paramètres › Journal du modèle**.
 
 ## Paramètres
 
-Ils s'ouvrent depuis le menu du profil (**Paramètres**). Les changements s'enregistrent automatiquement. Pages et
+Ils s'ouvrent depuis le menu du profil (**Paramètres**). Les changements s'enregistrent automatiquement. En haut, « Rechercher un paramètre » trouve n'importe quelle option par son nom ou son explication. Pages et
 options (avec leur nom exact) :
 - **Général :** « Langue de l'interface », « Thème », « Taille du texte », « Animations (apparition des messages, barre
   latérale, notifications) », « Barre de titre intégrée à la fenêtre » (Windows uniquement).
@@ -334,6 +334,7 @@ options (avec leur nom exact) :
   - **Fournisseur :** « Quel moteur l'agent utilise-t-il ? » (local ou serveur externe), « URL du serveur externe (se
     termine par /v1) », « Nom du modèle sur ce serveur », « Clé API (si le serveur l'exige) » et **Tester la
     connexion**. La clé est enregistrée chiffrée sur l'ordinateur, pas dans le fichier des réglages.
+  - **Dépenses des modèles par API :** « Alerter si une conversation dépasse (US$) », « Alerter si la dépense du jour dépasse (US$) » et « En cas d'alerte, mettre la tâche en pause jusqu'à ce que tu dises de continuer ».
 - **Génération :** « Réfléchir en profondeur par défaut (meilleures réponses, plus lent) », « Paramètres
   d'échantillonnage » (recommandés pour le modèle actif ou personnalisés), « Température », « Longueur maximale de
   chaque réponse (tokens) ».

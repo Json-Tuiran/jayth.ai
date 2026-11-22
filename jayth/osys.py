@@ -36,16 +36,36 @@ def shell_label():
 EXIT_MARK = "__jayth_ultimo_codigo__="        # run_command: con qué código terminó el último programa (lo dice la propia terminal)
 
 
-def shell_argv(command, report_exit=False):
+def _ps_wrapped(command):
+    """La orden del modelo como un bloque que PowerShell analiza DESPUÉS de pasar a UTF-8. Antes se analizaba junto con
+    el prefijo: un error de sintaxis («&&») salía en la página de códigos del sistema («En l�nea»), en XML y con la línea
+    desplazada. Así: los errores de sintaxis, en una línea clara; los demás, en su sitio entre la salida (*>&1) y con la
+    línea real de la orden; un «throw» no se escapa en XML. $__jy guarda si la última orden del modelo fue bien."""
+    import base64
+    b = base64.b64encode((command + "\n$__jy=$?").encode("utf-8")).decode()
+    return ("$__jc=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('%s'))\n"
+            "$__jt=$null;$__je=$null\n"
+            "[void][System.Management.Automation.Language.Parser]::ParseInput($__jc,[ref]$__jt,[ref]$__je)\n"
+            "if($__je.Count){foreach($__e in $__je){Write-Output ('Error de sintaxis en la línea {0}, carácter {1}: {2}' -f "
+            "$__e.Extent.StartLineNumber,$__e.Extent.StartColumnNumber,$__e.Message)};Write-Output ('%s1');exit 1}\n"
+            "$__jy=$true\n"
+            "try { . ([ScriptBlock]::Create($__jc)) *>&1 | Out-String -Stream -Width 200 } "
+            "catch { ($_ | Out-String -Width 200).TrimEnd() | Write-Output; $__jy=$false }" % (b, EXIT_MARK))
+
+
+def shell_argv(command, report_exit=False, wrap=False):
     """Argumentos para ejecutar un comando en la terminal del sistema. report_exit (Windows): la última línea de la salida
-    será EXIT_MARK + el código del último programa ejecutado, que PowerShell no devuelve como código propio."""
+    será EXIT_MARK + el código del último programa ejecutado, que PowerShell no devuelve como código propio. wrap
+    (Windows): la orden es del modelo (ver _ps_wrapped)."""
     if WIN:
         import base64
         # el prefijo, en su propia línea: así los errores de PowerShell señalan la columna real de la orden del modelo
         prefix = "[Console]::OutputEncoding=[Text.Encoding]::UTF8;$OutputEncoding=[Text.Encoding]::UTF8;$ProgressPreference='SilentlyContinue'\n"
+        if wrap:
+            command = _ps_wrapped(command)
         if report_exit:                  # …y la terminal acaba con el mismo código con el que habría acabado sin esta línea
-            command += ("\n;$__jy=$?;$__jl=$LASTEXITCODE;Write-Output ('%s' + $__jl);"
-                        "if(-not $__jy){if($__jl -is [int]){exit $__jl}else{exit 1}}" % EXIT_MARK)
+            command += ("\n;%s$__jl=$LASTEXITCODE;Write-Output ('%s' + $__jl);"
+                        "if(-not $__jy){if($__jl -is [int]){exit $__jl}else{exit 1}}" % ("" if wrap else "$__jy=$?;", EXIT_MARK))
         enc = base64.b64encode((prefix + command).encode("utf-16-le")).decode()
         return ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc]
     sh = "/bin/zsh" if MAC and os.path.exists("/bin/zsh") else ("/bin/bash" if os.path.exists("/bin/bash") else "/bin/sh")

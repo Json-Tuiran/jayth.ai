@@ -106,7 +106,8 @@ def think_phrases(kind=None):
 
 
 def thought_for(seconds):
-    return tr("Pensó durante %s") % fmt_secs(seconds) if seconds >= 1 else tr("Pensó un momento")
+    """Siempre la misma fórmula (antes, «Pensó durante 1 s» junto a «Pensó un momento»)."""
+    return tr("Pensó durante %s") % (fmt_secs(seconds) if seconds >= 1 else tr("menos de 1 s"))
 
 
 # ---------------------------------------------------------------- piezas animadas

@@ -278,7 +278,7 @@ restarts (**Restart model**). The engine log is in **Settings › Model log**.
 
 ## Settings
 
-Open them from the profile menu (**Settings**). Changes are saved automatically. Pages and options (with their exact
+Open them from the profile menu (**Settings**). Changes are saved automatically. At the top, “Search settings” finds any option by its name or description. Pages and options (with their exact
 names):
 - **General:** “Interface language”, “Theme”, “Text size”, “Animations (message appearance, sidebar, notices)”,
   “Title bar built into the window” (Windows only).
@@ -295,6 +295,7 @@ names):
   downloaded”.
   - **Provider:** “Which engine does the agent use?” (local or external server), “External server URL (ends in
     /v1)”, “Model name on that server”, “API key (if the server requires it)” and **Test connection**. The key is stored encrypted on the computer, not in the settings file.
+  - **API model spending:** “Alert if a conversation exceeds (US$)”, “Alert if today's spending exceeds (US$)” and “When alerting, pause the task until you say whether to continue”.
 - **Generation:** “Think deeply by default (better answers, slower)”, “Sampling parameters” (recommended for the
   active model or custom), “Temperature”, “Maximum length of each response (tokens)”.
   - **Advanced sampling:** “Top-p”, “Top-k”, “Min-p”, “Repetition penalty”, “Seed” and **Reset to recommended

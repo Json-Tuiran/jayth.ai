@@ -483,10 +483,14 @@ class ExplorerPanel(QWidget):
         self.name.setStyleSheet("font-weight:600; padding-left:4px")
         head.addWidget(self.name, 1)
         self.tree = FileTree()
-        head.addWidget(tbtn("acc_nuevo", tr("Nuevo archivo"), lambda: self.tree.new_file(), size=14))
-        head.addWidget(tbtn("act_carpeta", tr("Nueva carpeta"), lambda: self.tree.new_folder(), size=14))
-        head.addWidget(tbtn("ui_chevron_arriba", tr("Contraer todas las carpetas"), self.tree.collapseAll, size=13))
+        # los botones aparecen al pasar el ratón por el explorador: así el nombre del proyecto no se corta
+        self._hover_btns = [tbtn("acc_nuevo", tr("Nuevo archivo"), lambda: self.tree.new_file(), size=14),
+                            tbtn("act_carpeta", tr("Nueva carpeta"), lambda: self.tree.new_folder(), size=14),
+                            tbtn("ui_chevron_arriba", tr("Contraer todas las carpetas"), self.tree.collapseAll, size=13)]
+        for b in self._hover_btns:
+            head.addWidget(b)
         more = tbtn("ui_menu_horizontal", tr("Más"), size=14)
+        self._hover_btns.append(more)
         more.setPopupMode(QToolButton.InstantPopup)
         m = QMenu(self)
         m.addAction(icon("act_carpeta_abierta"), tr("Mostrar en el Explorador") if osys.WIN else (tr("Mostrar en el Finder") if osys.MAC else tr("Abrir la carpeta")),
@@ -503,6 +507,32 @@ class ExplorerPanel(QWidget):
         v.addWidget(self.tree, 1)
         self.tree.open_file.connect(self.open_file.emit)
         self.finder.picked.connect(self._picked)
+        self._show_btns(False)
+
+    def _show_btns(self, on):
+        for b in self._hover_btns:
+            # sin cambiar el hueco que ocupan (el nombre no salta), solo se ven o no
+            b.setEnabled(True)
+            b.setVisible(True)
+            eff = b.graphicsEffect()
+            if eff is None:
+                from PySide6.QtWidgets import QGraphicsOpacityEffect
+                eff = QGraphicsOpacityEffect(b)
+                b.setGraphicsEffect(eff)
+            eff.setOpacity(1.0 if on else 0.0)
+
+    def enterEvent(self, e):
+        self._show_btns(True)
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        if not any(b.menu() is not None and b.menu().isVisible() for b in self._hover_btns):
+            self._show_btns(False)
+        super().leaveEvent(e)
+
+    def focusInEvent(self, e):                       # con el teclado también se ven
+        self._show_btns(True)
+        super().focusInEvent(e)
 
     def set_project(self, name, path):
         self.name.setText(name)

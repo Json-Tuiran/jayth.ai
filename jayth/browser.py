@@ -950,10 +950,10 @@ class BrowserPanel(QWidget):
                 info["title"], pos, (info.get("seen") or "(sin texto)")[:1800], "\n".join(_line(e) for e in near) or "(nada que pulsar)"))
         self._js(js + "; true", lambda _r: QTimer.singleShot(300, lambda: self._collect(fin)))
 
-    def _do_shot(self, job, width=0, full_page=False):
+    def _do_shot(self, job, width=0, full_page=False, from_px=0):
         """Captura la página. width: ancho en píxeles con el que se maqueta (el panel suele ser estrecho y las páginas
         muestran su versión de móvil; con 1280 se ve la de escritorio, reducida). full_page: la página entera, no solo lo
-        que se ve (hasta 8 pantallas)."""
+        que se ve (hasta 8 pantallas o 12 000 px; si no cabe, se dice hasta dónde llega y from_px sigue desde ahí)."""
         from PySide6.QtGui import QImage
         view = self.view
         z0 = view.zoomFactor()
@@ -961,6 +961,7 @@ class BrowserPanel(QWidget):
         want = max(320, min(2560, int(width or 0))) if width else 0
         zoom = max(0.25, min(5.0, vw / float(want))) if want else z0
         shots = []
+        meta = {}                                    # vh y alto total de la página (píxeles de CSS)
 
         def finish():
             if abs(view.zoomFactor() - z0) > 0.001:
@@ -979,6 +980,14 @@ class BrowserPanel(QWidget):
                     p.drawImage(0, y, im, 0, im.height() - use, im.width(), use)
                     y += use
                 p.end()
+            cut = ""
+            if len(shots) > 1 and meta.get("vh"):     # ¿llegó hasta el final? (8 pantallas o 12 000 px como mucho)
+                ratio = shots[0][1].height() / float(meta["vh"])           # píxeles de la imagen por píxel de la página
+                got = min(sum(s[2] for s in shots), 12000) / max(ratio, 0.01)
+                end = int(meta["from"] + got)
+                if end < meta["total"] - 4:
+                    cut = ("; recortada: llega hasta %d px de los %d de la página. Para el resto: full_page=true y from_px=%d"
+                           % (end, meta["total"], end))
             if img.width() > 1024:
                 img = img.scaledToWidth(1024, Qt.SmoothTransformation)
             ba = QByteArray()
@@ -988,10 +997,17 @@ class BrowserPanel(QWidget):
             buf.close()
             css_w = round(vw / (zoom or 1.0))
             note = "maquetada a %d px de ancho" % css_w
+            if want and abs(css_w - want) > 8:
+                note += " (se pidió %d: es lo más cerca que permite el zoom del panel)" % want
             if not want and css_w < 800:
                 note += " (panel estrecho: muchas páginas muestran aquí su versión de móvil; con width=1280 se ve la de escritorio)"
-            self._done(job, {"text": "Captura del navegador (%dx%d, %s%s): «%s»  %s" % (
-                img.width(), img.height(), note, ", página entera" if len(shots) > 1 else "", view.title(), view.url().toString()),
+            if img.width() < css_w - 8:                  # el panel (o el tope de 1024) es más estrecho que la maqueta
+                note += "; la imagen se entrega a %d px de ancho: la página se ve reducida" % img.width()
+            what = ""
+            if len(shots) > 1:
+                what = ", página entera" if not from_px else ", desde %d px" % from_px
+            self._done(job, {"text": "Captura del navegador (%dx%d, %s%s%s): «%s»  %s" % (
+                img.width(), img.height(), note, what, cut, view.title(), view.url().toString()),
                 "image": bytes(ba.data())})
 
         def grab_one(top, use):
@@ -1005,10 +1021,12 @@ class BrowserPanel(QWidget):
             except ValueError:
                 d = {}
             vh, total, y0 = int(d.get("vh") or 0), int(d.get("h") or 0), int(d.get("y") or 0)
-            if not full_page or vh <= 0 or total <= vh + 4:
+            start = min(max(0, int(from_px or 0)), max(0, total - vh))
+            meta.update(vh=vh, total=total, **{"from": start})
+            if not full_page or vh <= 0 or (total <= vh + 4 and not start):
                 grab_one(0, 0)
                 return finish()
-            tops = list(range(0, total, vh))[:8]
+            tops = list(range(start, total, vh))[:8]
 
             def step(k):
                 if k >= len(tops):

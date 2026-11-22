@@ -176,7 +176,11 @@ def _stream_once(base, key, payload, holder, on_delta, err):
         conn.request("POST", "/v1/messages", json.dumps(body).encode("utf-8"), heads)
         resp = conn.getresponse()
         if resp.status != 200:
-            raise err("HTTP %d: %s" % (resp.status, resp.read(2000).decode("utf-8", "replace")))
+            body = resp.read(4000).decode("utf-8", "replace")
+            try:
+                raise err("HTTP %d: %s" % (resp.status, body[:2000]), resp.status, body, resp.getheader("retry-after"))
+            except TypeError:                         # un tipo de error que no admite esos datos
+                raise err("HTTP %d: %s" % (resp.status, body[:2000]))
         rl = {k.lower(): v for k, v in resp.getheaders() if "ratelimit" in k.lower() or k.lower() == "retry-after"}
         blocks, content, reasoning = {}, [], []
         usage, out_tok, finish = {}, 0, None
@@ -247,7 +251,11 @@ def _stream_once(base, key, payload, holder, on_delta, err):
                 out_tok = int((ev.get("usage") or {}).get("output_tokens") or out_tok)
             elif t == "error":
                 e = ev.get("error") or {}
-                raise err("%s: %s" % (e.get("type", "error"), e.get("message", "")))
+                over = e.get("type") == "overloaded_error"         # saturado a mitad: se trata como un 529
+                try:
+                    raise err("%s: %s" % (e.get("type", "error"), e.get("message", "")), 529 if over else None, json.dumps(ev))
+                except TypeError:
+                    raise err("%s: %s" % (e.get("type", "error"), e.get("message", "")))
             elif t == "message_stop":
                 break
         raw = []

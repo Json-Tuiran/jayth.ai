@@ -235,6 +235,16 @@ class SettingsDialog(QDialog):
         t.setContentsMargins(8, 0, 0, 0)
         sv.addWidget(t)
         sv.addSpacing(10)
+        # buscar un ajuste: 13 páginas y unas 70 opciones; filtra por el nombre y la explicación de cada una
+        self.find = QLineEdit()
+        self.find.setObjectName("search")
+        self.find.setPlaceholderText(tr("Buscar ajuste"))
+        self.find.setClearButtonEnabled(True)
+        self.find.textChanged.connect(self._search)
+        self.find.returnPressed.connect(self._search_next)
+        sv.addWidget(self.find)
+        sv.addSpacing(6)
+        self._marked = []
         self.nav = QListWidget()
         self.nav.setObjectName("setNav")
         self.nav.setIconSize(QSize(17, 17))
@@ -294,9 +304,66 @@ class SettingsDialog(QDialog):
         need = max(QFontMetrics(bold).horizontalAdvance(self.nav.item(i).text()) for i in range(self.nav.count()))
         side.setFixedWidth(max(224, need + 17 + 8 + 20 + 12 + 24))      # icono, separación, relleno, holgura y márgenes
         self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.nav.currentRowChanged.connect(lambda _i: self._mark_current())
         keys = [self.nav.item(i).data(Qt.UserRole) for i in range(self.nav.count())]
         labels = [self.nav.item(i).text() for i in range(self.nav.count())]
         self.nav.setCurrentRow(keys.index(page) if page in keys else labels.index(page) if page in labels else 0)
+
+    # ---- buscar un ajuste
+    @staticmethod
+    def _norm(s):
+        import unicodedata
+        s = re.sub(r"<[^>]+>", " ", str(s or ""))
+        return "".join(c for c in unicodedata.normalize("NFD", s.lower()) if unicodedata.category(c) != "Mn")
+
+    def _matches(self, i, q):
+        """Etiquetas de la página i que contienen lo buscado (en su texto o en su explicación)."""
+        page = self.pages.widget(i)
+        rx = re.compile(r"(?<![a-z0-9])" + re.escape(q))       # desde el principio de una palabra («tema», no «sistema»)
+        return [l for l in page.findChildren(QLabel) if rx.search(self._norm(l.text())) or rx.search(self._norm(l.toolTip()))]
+
+    def _search(self, text):
+        q = self._norm(text).strip()
+        first = None
+        for i in range(self.nav.count()):
+            hit = not q or bool(self._matches(i, q)) or self._norm(self.nav.item(i).text()).startswith(q)
+            self.nav.item(i).setHidden(not hit)
+            if hit and first is None:
+                first = i
+        cur = self.nav.currentRow()
+        if q and first is not None and (cur < 0 or self.nav.item(cur).isHidden()):
+            self.nav.setCurrentRow(first)
+        self._mark_current()
+
+    def _search_next(self):
+        """Intro: la siguiente página con resultados."""
+        n = self.nav.count()
+        cur = self.nav.currentRow()
+        for k in range(1, n + 1):
+            i = (cur + k) % n
+            if not self.nav.item(i).isHidden():
+                self.nav.setCurrentRow(i)
+                return
+
+    def _mark_current(self):
+        """Resalta en la página abierta lo que encaja con la búsqueda y lleva hasta lo primero."""
+        for l, css in self._marked:
+            try:
+                l.setStyleSheet(css)
+            except RuntimeError:
+                pass
+        self._marked = []
+        q = self._norm(self.find.text()).strip() if hasattr(self, "find") else ""
+        i = self.pages.currentIndex()
+        if not q or i < 0:
+            return
+        hits = self._matches(i, q)
+        for l in hits:
+            self._marked.append((l, l.styleSheet()))
+            l.setStyleSheet(l.styleSheet() + "; background:%s; border-radius:4px" % C["acc_bg"])
+        sc = self.pages.widget(i)
+        if hits and isinstance(sc, QScrollArea):
+            QTimer.singleShot(0, lambda: sc.ensureWidgetVisible(hits[0], 40, 80))
 
     # ---- infraestructura
     def showEvent(self, e):
@@ -646,6 +713,12 @@ class SettingsDialog(QDialog):
         r.addWidget(b)
         r.addWidget(res, 1)
         v.addLayout(r)
+        self._section(v, tr("Gasto con modelos por API"))
+        self.field(v, "spend_alert_conv", tr("Avisar si una conversación supera (US$)"), "float", min=0.0, max=10000.0, step=0.5,
+                   help=tr("0 = nunca. Lo que lleva cada conversación se ve al pasar el ratón por el indicador de memoria."))
+        self.field(v, "spend_alert_day", tr("Avisar si el gasto del día supera (US$)"), "float", min=0.0, max=10000.0, step=1.0,
+                   help=tr("0 = nunca. Suma todas las conversaciones del día con modelos por API."))
+        self.field(v, "spend_alert_pause", tr("Al avisar, pausar la tarea hasta que digas si sigue"), "bool")
 
     def _test_ext(self, out):
         cfg = core.SET.snapshot()

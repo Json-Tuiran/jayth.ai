@@ -304,18 +304,38 @@ def effort_hint(base, model, effort):
 
 def prepare(base, payload):
     """Lo propio de cada servicio en los mensajes: DeepSeek y Kimi reciben de vuelta su razonamiento (lo exigen en los
-    pasos con herramientas); a los demás no se les envía nada interno."""
+    pasos con herramientas), y cualquier servicio recibe de vuelta los campos propios que adjuntó a sus respuestas y
+    llamadas (la «thought_signature» de Gemini, los «reasoning_details» de OpenRouter…), solo si son suyos: a otro
+    servicio, o al mismo con otro modelo, no se le envían (podría rechazarlos)."""
     model = payload.get("model")
     r = _RULES.get((base, model)) or {}
     echo = provider(base) in _ECHO_REASONING or r.get("echo")
-    if not echo:
-        return payload
-    msgs = []
+    norm = lambda u: (u or "").strip().rstrip("/").lower()
+    msgs, changed = [], False
     for m in payload.get("messages") or []:
-        if m.get("role") == "assistant" and m.get("_reasoning"):
-            m = dict(m, reasoning_content=m["_reasoning"])
+        if m.get("role") == "assistant":
+            if echo and m.get("_reasoning"):
+                m, changed = dict(m, reasoning_content=m["_reasoning"]), True
+            mine = m.get("_xbase") and norm(m["_xbase"]) == norm(base) and m.get("_xmodel") in (None, model)
+            if mine and isinstance(m.get("_x"), dict):
+                m, changed = dict(m, **{k: v for k, v in m["_x"].items() if k not in m}), True
+            if m.get("tool_calls") and any("_x" in c for c in m["tool_calls"]):
+                calls = []
+                for c in m["tool_calls"]:
+                    x = c.get("_x")
+                    c = {k: v for k, v in c.items() if k != "_x"}
+                    if mine and isinstance(x, dict):
+                        c.update({k: v for k, v in x.items() if k not in c})
+                    calls.append(c)
+                m, changed = dict(m, tool_calls=calls), True
+            if r.get("sig") and m.get("tool_calls") and any("extra_content" not in c for c in m["tool_calls"]):
+                # el servicio exige una firma en cada llamada y estas no la tienen (son de antes, o de otro modelo): el
+                # valor que Gemini documenta para historiales así («salta la comprobación»), solo donde falta
+                skip = {"google": {"thought_signature": "skip_thought_signature_validator"}}
+                m = dict(m, tool_calls=[c if "extra_content" in c else dict(c, extra_content=skip) for c in m["tool_calls"]])
+                changed = True
         msgs.append(m)
-    return dict(payload, messages=msgs)
+    return dict(payload, messages=msgs) if changed else payload
 
 
 def effort_support(base, model=""):
@@ -379,6 +399,9 @@ def learn(base, payload, error):
     r = _RULES.setdefault((base, payload.get("model")), {"drop": set(), "rename": False, "max_out": 0})
     if "reasoning_content" in low and not r.get("echo"):              # quiere que se le devuelva su razonamiento
         r["echo"] = True
+        return True
+    if "thought_signature" in low and not r.get("sig"):              # Gemini: llamadas de antes sin su firma (ver prepare)
+        r["sig"] = True
         return True
     if "max_tokens" in payload and "max_completion_tokens" in low:        # aquí el límite de salida se llama de otra forma
         r["rename"] = True

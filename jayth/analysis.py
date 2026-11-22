@@ -48,6 +48,7 @@ try:
     pd.set_option("display.max_rows", 60)
 except ImportError:
     pass
+sys.path.insert(0, os.getcwd())     # los módulos de la carpeta de trabajo se pueden importar (import bitacora)
 try:
     sys.argv = [sys.argv[1]]
     runpy.run_path(sys.argv[0], run_name="__main__")
