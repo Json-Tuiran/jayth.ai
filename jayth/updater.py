@@ -7,9 +7,9 @@ Tres formas de instalacion:
 - "git": una copia clonada del repositorio. Se actualiza con git pull.
 - "zip": instalada desde el codigo con install.ps1. Se vuelve a ejecutar el instalador.
 """
-import os, re, sys, json, time, shlex, platform, tempfile, subprocess, urllib.request
+import os, re, sys, json, time, shlex, shutil, platform, tempfile, subprocess, urllib.request
 from . import paths, osys, APP_NAME, __version__
-from .provision import pretty_name, get_json, download
+from .provision import pretty_name, get_json, download, Cancelled
 from .i18n import tr
 
 REPO = "Json-Tuiran/jayth.ai"
@@ -58,15 +58,26 @@ def asset_pattern():
     return r"^Jayth-[\d.]+-linux-%s\.AppImage$" % ("aarch64" if arm else "x86_64")
 
 
+def _asset(a):
+    dig = (a or {}).get("digest") or ""
+    return {"name": a["name"], "url": a["browser_download_url"], "size": a["size"],
+            "sha256": dig.split(":", 1)[1] if dig.startswith("sha256:") else ""} if a else None
+
+
+def patch_name(version):
+    """Nombre del paquete de cambios que lleva de la versión instalada a `version` (solo Windows por ahora)."""
+    return "Jayth-parche-%s-a-%s-%s.zip" % (__version__, version, PATCH_PLATFORM)
+
+
 def latest_release():
     rel = get_json("https://api.github.com/repos/%s/releases/latest" % REPO, timeout=12)
     asset = next((a for a in rel.get("assets", []) if re.match(asset_pattern(), a["name"])), None)
-    dig = (asset or {}).get("digest") or ""
-    return {"version": rel.get("tag_name", "").lstrip("v"), "date": (rel.get("published_at") or "")[:10],
+    version = rel.get("tag_name", "").lstrip("v")
+    small = next((a for a in rel.get("assets", []) if a["name"] == patch_name(version)), None)
+    return {"version": version, "date": (rel.get("published_at") or "")[:10],
             "message": (rel.get("name") or rel.get("tag_name") or "").strip(), "notes": rel.get("body") or "",
-            "url": rel.get("html_url"),
-            "asset": {"name": asset["name"], "url": asset["browser_download_url"], "size": asset["size"],
-                      "sha256": dig.split(":", 1)[1] if dig.startswith("sha256:") else ""} if asset else None}
+            "url": rel.get("html_url"), "asset": _asset(asset),
+            "patch": _asset(small)}           # solo lo que cambia desde la versión instalada (None si no se publicó)
 
 
 def check_app():
@@ -127,6 +138,8 @@ def ready():
     d = _read_ready()
     if not d or _vtuple(d.get("version")) <= _vtuple(__version__) or not os.path.isfile(d.get("path") or ""):
         return None
+    if d.get("kind") == "patch" and not os.path.isfile(os.path.join(d.get("dir") or "", os.path.basename(sys.executable))):
+        return None                           # la versión montada ya no está: se descargará de nuevo
     return d
 
 
@@ -144,9 +157,12 @@ def clean():
     """Borra los paquetes descargados y el estado (no el candado de una instalación en marcha)."""
     if not os.path.isdir(UPD_DIR):
         return
+    d = _read_ready()
+    if d and d.get("kind") == "patch" and (d.get("dir") or "").endswith(NEW_SUFFIX):
+        shutil.rmtree(d["dir"], ignore_errors=True)        # la versión montada junto a la instalada
     for f in os.listdir(UPD_DIR):
         p = os.path.join(UPD_DIR, f)
-        if p != LOCK and os.path.isfile(p):
+        if p not in (LOCK, NO_PATCH, RESULT) and f != "rescate.ps1" and os.path.isfile(p):     # (el estado de los paquetes de cambios se conserva)
             try:
                 os.remove(p)
             except OSError:
@@ -161,15 +177,258 @@ def download_update(info, progress=None, stop=None):
     old = _read_ready()
     if old and old.get("version") != info["version"]:     # había otra versión a medias: fuera
         clean()
-    dest = os.path.join(UPD_DIR, a["name"])
-    download(a["url"], dest, a["size"], a["sha256"], progress, stop)
-    d = {"version": info["version"], "path": dest, "date": info.get("date", ""), "message": info.get("message", ""),
-         "notes": info.get("notes", ""), "url": info.get("url", "")}
+    d = None
+    if info.get("patch") and patch_allowed(info["version"]):
+        try:                                   # primero, solo lo que cambia (unos MB en vez del instalador entero)
+            d = _prepare_patch(info, progress, stop)
+        except Cancelled:
+            raise
+        except Exception as e:                 # cualquier duda: el instalador completo de siempre
+            _note_patch("failed", info["version"], "%s: %s" % (type(e).__name__, e))
+            shutil.rmtree(paths.APP_DIR + NEW_SUFFIX, ignore_errors=True)
+            d = None
+    if d is None:
+        dest = os.path.join(UPD_DIR, a["name"])
+        download(a["url"], dest, a["size"], a["sha256"], progress, stop)
+        d = {"version": info["version"], "path": dest, "date": info.get("date", ""), "message": info.get("message", ""),
+             "notes": info.get("notes", ""), "url": info.get("url", "")}
     tmp = READY + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=1)
     os.replace(tmp, READY)
     return d
+
+
+# ventanita propia con los colores de Jayth mientras se actualiza (solo si después se reabre)
+_UPDATING_WINDOW = """
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+[System.Windows.Forms.Application]::EnableVisualStyles()
+$f = New-Object System.Windows.Forms.Form
+$f.FormBorderStyle = 'None'; $f.StartPosition = 'CenterScreen'; $f.Size = New-Object System.Drawing.Size(460, 132)
+$f.BackColor = [System.Drawing.Color]::FromArgb(20, 23, 22); $f.TopMost = $true; $f.ShowInTaskbar = $true; $f.Text = 'Jayth'
+$t = New-Object System.Windows.Forms.Label; $t.Text = %s; $t.ForeColor = [System.Drawing.Color]::FromArgb(235, 242, 240)
+$t.Font = New-Object System.Drawing.Font('Segoe UI', 12, [System.Drawing.FontStyle]::Bold); $t.AutoSize = $false
+$t.SetBounds(24, 20, 412, 28); $f.Controls.Add($t)
+$s = New-Object System.Windows.Forms.Label; $s.Text = %s; $s.ForeColor = [System.Drawing.Color]::FromArgb(151, 166, 158)
+$s.Font = New-Object System.Drawing.Font('Segoe UI', 9); $s.AutoSize = $false; $s.SetBounds(24, 50, 412, 36); $f.Controls.Add($s)
+$b = New-Object System.Windows.Forms.ProgressBar; $b.Style = 'Marquee'; $b.MarqueeAnimationSpeed = 25; $b.SetBounds(24, 96, 412, 8)
+$f.Controls.Add($b)
+$f.Show(); [System.Windows.Forms.Application]::DoEvents()
+"""
+
+
+# ---------------------------------------------------------------- actualización con solo los cambios (jayth/parches.py)
+PATCH_PLATFORM = "windows-x64"
+NEW_SUFFIX, OLD_SUFFIX, BAD_SUFFIX = ".nuevo", ".anterior", ".fallida"       # carpetas junto a la instalada
+RESULT = os.path.join(UPD_DIR, "parche_resultado.json")      # cómo acabó el último intercambio de carpetas
+NO_PATCH = os.path.join(UPD_DIR, "sin_parche.json")          # versiones para las que ya falló: instalador completo
+UNINSTALL_KEY = r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{8E5B2C61-4D7A-4F0E-9C3B-6A1D2F7E9B40}_is1"
+
+
+def patch_supported():
+    """¿Esta instalación puede actualizarse con un paquete de cambios? (Windows instalado; el portátil, macOS y Linux
+    siguen con el paquete completo.)"""
+    if not (osys.FROZEN and osys.WIN):
+        return False
+    app = paths.APP_DIR
+    if os.path.exists(os.path.join(app, "portable.txt")) or os.path.isdir(os.path.join(app, "userdata")):
+        return False
+    return os.access(os.path.dirname(app), os.W_OK)
+
+
+def _no_patch():
+    try:
+        with open(NO_PATCH, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _note_patch(state, version, why=""):
+    """Anota que el paquete de cambios de `version` no sirvió aquí: la próxima vez, el instalador completo."""
+    try:
+        os.makedirs(UPD_DIR, exist_ok=True)
+        d = _no_patch()
+        d[str(version)] = {"state": state, "why": str(why)[:300], "time": time.time()}
+        with open(NO_PATCH, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+    except OSError:
+        pass
+
+
+def patch_allowed(version):
+    return patch_supported() and str(version) not in _no_patch()
+
+
+def _prepare_patch(info, progress=None, stop=None):
+    """Descarga el paquete de cambios y monta la versión nueva, completa y comprobada, junto a la instalada."""
+    from . import parches
+    p = info["patch"]
+    if not p.get("sha256"):
+        raise parches.PatchError("el paquete no trae huella con la que comprobarlo")
+    dest = os.path.join(UPD_DIR, p["name"])
+    download(p["url"], dest, p["size"], p["sha256"], progress, stop)
+    new_dir = paths.APP_DIR + NEW_SUFFIX
+    parches.stage(paths.APP_DIR, dest, new_dir, __version__, progress, stop)
+    if not os.path.isfile(os.path.join(new_dir, os.path.basename(sys.executable))):
+        raise parches.PatchError("la versión montada no tiene el programa")
+    return {"version": info["version"], "path": dest, "dir": new_dir, "kind": "patch", "date": info.get("date", ""),
+            "message": info.get("message", ""), "notes": info.get("notes", ""), "url": info.get("url", "")}
+
+
+def patch_result():
+    """Cómo acabó el último intercambio de carpetas (una sola vez): None, o {state: ok|locked|failed|bad, version, why}.
+    Si no salió bien, deja anotado que esa versión se instale con el paquete completo. También recoge carpetas sobrantes."""
+    try:
+        with open(RESULT, encoding="utf-8-sig") as f:
+            r = json.load(f)
+    except (OSError, ValueError):
+        r = None
+    try:
+        os.remove(RESULT)
+    except OSError:
+        pass
+    if r and r.get("state") != "ok":
+        _note_patch(r.get("state") or "failed", r.get("version"), r.get("why") or "")
+        if os.path.isfile(READY):
+            try:
+                os.remove(READY)                    # lo preparado no llegó a instalarse: se descargará el completo
+            except OSError:
+                pass
+    if osys.FROZEN and osys.WIN:
+        keep = (_read_ready() or {}).get("dir")
+        for suffix in (OLD_SUFFIX, BAD_SUFFIX, NEW_SUFFIX):
+            d = paths.APP_DIR + suffix
+            if os.path.isdir(d) and d != keep:
+                shutil.rmtree(d, ignore_errors=True)
+    return r
+
+
+def verify_install(expected):
+    """«Jayth --verify-install X»: lo ejecuta el intercambio de carpetas sobre la versión recién colocada, antes de
+    borrar la anterior. Carga el programa entero sin abrir ventanas; código 0 solo si es la versión esperada y carga."""
+    try:
+        if expected and str(expected) != __version__:
+            return 3
+        import importlib
+        for m in ("PySide6.QtWidgets", "PySide6.QtNetwork", "jayth.core", "jayth.agent", "jayth.tools", "jayth.desktop"):
+            importlib.import_module(m)
+        from . import i18n
+        for f in (paths.ICON, os.path.join(paths.ASSETS, "i18n", "en.json")):
+            if not os.path.isfile(f):
+                return 4
+        return 0
+    except BaseException:
+        return 5
+
+
+def _swap_when_closed(d, reopen):
+    """Windows: al cerrarse Jayth, intercambia la carpeta instalada por la versión nueva ya montada y comprobada.
+    Dos cambios de nombre; la anterior se conserva hasta que la nueva demuestra que arranca; si no, vuelve la anterior."""
+    pid = os.getpid()
+    os.makedirs(UPD_DIR, exist_ok=True)
+    app, new = paths.APP_DIR, d["dir"]
+    exe = os.path.basename(sys.executable)
+    # última comprobación, justo antes de instalar: la carpeta montada sigue siendo exactamente la versión nueva
+    # (desde que se montó pudo pasar tiempo) y se anota qué programa hay instalado ahora, para no cambiar otro distinto
+    from . import parches
+    try:
+        diff = parches.verify_dir(new, parches.read_patch(d["path"])["archivos"])
+        stamp = parches.sha256(os.path.join(app, exe))
+    except Exception as e:
+        diff, stamp = "%s: %s" % (type(e).__name__, e), ""
+    if diff:
+        _note_patch("failed", d["version"], "al instalar: " + diff)
+        shutil.rmtree(new, ignore_errors=True)
+        try:
+            os.remove(READY)
+        except OSError:
+            pass
+        return False
+    title = tr("Actualizando %s a la versión %s…") % (APP_NAME, d["version"])
+    sub = tr("Se abrirá solo en unos segundos. Tus conversaciones, ajustes y modelos se conservan.")
+    rescue = os.path.join(UPD_DIR, "rescate.ps1")
+    with open(rescue, "w", encoding="utf-8-sig") as f:      # si el equipo se apaga justo entre los dos cambios de nombre
+        f.write("""$app = %(app)s; $old = %(old)s
+if (-not (Test-Path (Join-Path $app %(exe)s)) -and (Test-Path (Join-Path $old %(exe)s))) {
+  if (Test-Path $app) { Rename-Item -Force $app ((Split-Path $app -Leaf) + '.rota') }
+  [System.IO.Directory]::Move($old, $app)
+}
+""" % {"app": _ps(app), "old": _ps(app + OLD_SUFFIX), "exe": _ps(exe)})
+    win = _UPDATING_WINDOW % (_ps(title), _ps(sub)) if reopen else "$f = $null\n"
+    script = """$ErrorActionPreference = 'SilentlyContinue'
+Wait-Process -Id %(pid)d -Timeout 120
+New-Item -ItemType File -Force -Path %(lock)s | Out-Null
+%(win)s
+$app = %(app)s; $new = %(new)s; $old = %(old)s; $bad = %(bad)s; $exe = %(exe)s; $ver = %(ver)s; $res = %(res)s
+function Touch { if ($f) { [System.Windows.Forms.Application]::DoEvents() }; (Get-Item %(lock)s).LastWriteTime = Get-Date }
+function Result($state, $why) {
+  @{ state = $state; version = $ver; why = $why } | ConvertTo-Json | Set-Content -Encoding UTF8 -Path $res
+}
+function Move-Dir($from, $to, $tries) {
+  for ($i = 0; $i -lt $tries; $i++) {
+    try { [System.IO.Directory]::Move($from, $to); return $true } catch { Start-Sleep -Milliseconds 250; Touch }
+  }
+  return $false
+}
+$now = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $app $exe)).Hash
+if (-not (Test-Path (Join-Path $new $exe))) { Result 'failed' 'no esta la version nueva montada' }
+elseif ($now -ne %(stamp)s) { Result 'changed' 'la instalacion cambio mientras tanto (otro instalador)'; Remove-Item -Recurse -Force $new }
+else {
+  Remove-Item -Recurse -Force $old, $bad
+  $run = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce'
+  Set-ItemProperty -Path $run -Name 'JaythRescate' -Value ('powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + %(rescue)s + '"')
+  if (-not (Move-Dir $app $old 60)) {
+    Result 'locked' 'otro programa tiene abierta la carpeta de Jayth'
+    Remove-Item -Recurse -Force $new
+  } elseif (-not (Move-Dir $new $app 20)) {
+    [void](Move-Dir $old $app 40)
+    Result 'failed' 'no se pudo colocar la version nueva'
+    Remove-Item -Recurse -Force $new
+  } else {
+    # la version nueva tiene que arrancar antes de dar el cambio por bueno
+    $code = -1
+    try {
+      $psi = New-Object System.Diagnostics.ProcessStartInfo
+      $psi.FileName = (Join-Path $app $exe); $psi.Arguments = %(check)s; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+      $p = [System.Diagnostics.Process]::Start($psi)
+      $t0 = Get-Date
+      while (-not $p.WaitForExit(150)) { Touch; if (((Get-Date) - $t0).TotalSeconds -gt %(wait)d) { $p.Kill(); break } }
+      if ($p.HasExited) { $code = $p.ExitCode }
+    } catch { $code = -2 }
+    if ($code -ne 0) {
+      Start-Sleep -Milliseconds 400
+      if ((Move-Dir $app $bad 40) -and (Move-Dir $old $app 40)) { Remove-Item -Recurse -Force $bad }
+      Result 'bad' ('la version nueva no arranco (codigo ' + $code + ')')
+    } else {
+      Set-ItemProperty -Path %(reg)s -Name 'DisplayVersion' -Value $ver
+      Set-ItemProperty -Path %(reg)s -Name 'DisplayName' -Value (%(name)s + ' ' + $ver)
+      Remove-Item -Recurse -Force $old
+      Result 'ok' ''
+    }
+  }
+  if (Test-Path (Join-Path $app $exe)) { Remove-ItemProperty -Path $run -Name 'JaythRescate' }
+}
+if ($f) { $f.Close() }
+Remove-Item -Force %(lock)s
+$open = %(reopened)s
+if (Test-Path %(reopen)s) { Remove-Item -Force %(reopen)s; $open = $true }
+if ($open) { Start-Process -FilePath (Join-Path $app $exe) }
+Remove-Item -Force $MyInvocation.MyCommand.Path
+""" % {"pid": pid, "lock": _ps(LOCK), "win": win, "app": _ps(app), "new": _ps(new), "old": _ps(app + OLD_SUFFIX),
+       "bad": _ps(app + BAD_SUFFIX), "exe": _ps(exe), "ver": _ps(d["version"]), "res": _ps(RESULT), "rescue": _ps(rescue), "stamp": _ps(stamp.upper()),
+       "check": _ps(" ".join(CHECK_ARGS) + " " + d["version"]), "wait": CHECK_WAIT, "reg": _ps(UNINSTALL_KEY), "name": _ps(APP_NAME),
+       "reopen": _ps(REOPEN), "reopened": "$true" if reopen else "$false"}
+    ps1 = os.path.join(UPD_DIR, "intercambiar_%d.ps1" % pid)
+    with open(ps1, "w", encoding="utf-8-sig") as f:
+        f.write(script)
+    subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", ps1],
+                     creationflags=NO_WINDOW | 0x00000200, close_fds=True, cwd=UPD_DIR)
+    return ps1
+
+
+CHECK_ARGS = ["--verify-install"]        # (las pruebas lo cambian para simular una versión que no arranca)
+CHECK_WAIT = 120                         # segundos que se le dan a la versión nueva para responder
 
 
 def installing():
@@ -190,27 +449,15 @@ def install_when_closed(d, reopen):
     reopen=False: actualización al cerrar Jayth, en silencio; solo se reabre si alguien lo abre mientras tanto."""
     pid, pkg = os.getpid(), d["path"]
     os.makedirs(UPD_DIR, exist_ok=True)
+    if osys.WIN and d.get("kind") == "patch":
+        return _swap_when_closed(d, reopen)      # False: la versión montada ya no era válida y no se instala nada ahora
     if osys.WIN:
         app_exe = sys.executable
         title = tr("Actualizando %s a la versión %s…") % (APP_NAME, d["version"])
         sub = tr("Se abrirá solo en unos segundos. Tus conversaciones, ajustes y modelos se conservan.")
         args = ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"] + (["/RELAUNCH=1"] if reopen else [])
         # ventanita propia con los colores de Jayth en lugar del asistente del instalador (solo si se reabre)
-        win = """
-Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-[System.Windows.Forms.Application]::EnableVisualStyles()
-$f = New-Object System.Windows.Forms.Form
-$f.FormBorderStyle = 'None'; $f.StartPosition = 'CenterScreen'; $f.Size = New-Object System.Drawing.Size(460, 132)
-$f.BackColor = [System.Drawing.Color]::FromArgb(20, 23, 22); $f.TopMost = $true; $f.ShowInTaskbar = $true; $f.Text = 'Jayth'
-$t = New-Object System.Windows.Forms.Label; $t.Text = %s; $t.ForeColor = [System.Drawing.Color]::FromArgb(235, 242, 240)
-$t.Font = New-Object System.Drawing.Font('Segoe UI', 12, [System.Drawing.FontStyle]::Bold); $t.AutoSize = $false
-$t.SetBounds(24, 20, 412, 28); $f.Controls.Add($t)
-$s = New-Object System.Windows.Forms.Label; $s.Text = %s; $s.ForeColor = [System.Drawing.Color]::FromArgb(151, 166, 158)
-$s.Font = New-Object System.Drawing.Font('Segoe UI', 9); $s.AutoSize = $false; $s.SetBounds(24, 50, 412, 36); $f.Controls.Add($s)
-$b = New-Object System.Windows.Forms.ProgressBar; $b.Style = 'Marquee'; $b.MarqueeAnimationSpeed = 25; $b.SetBounds(24, 96, 412, 8)
-$f.Controls.Add($b)
-$f.Show(); [System.Windows.Forms.Application]::DoEvents()
-""" % (_ps(title), _ps(sub)) if reopen else "$f = $null\n"
+        win = _UPDATING_WINDOW % (_ps(title), _ps(sub)) if reopen else "$f = $null\n"
         script = """$ErrorActionPreference = 'SilentlyContinue'
 Wait-Process -Id %(pid)d -Timeout 120
 New-Item -ItemType File -Force -Path %(lock)s | Out-Null

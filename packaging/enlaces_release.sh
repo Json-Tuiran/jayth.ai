@@ -14,6 +14,7 @@ REPO="${GITHUB_REPOSITORY:?falta GITHUB_REPOSITORY}"
 ALIAS="$(mktemp -d)"
 for f in "$DIR"/*; do
   b="$(basename "$f")"
+  case "$b" in *.manifest.json|Jayth-parche-*) continue ;; esac   # las huellas y los paquetes de cambios son de una versión concreta
   n="${b/-$V/}"                        # Jayth-Setup-0.4.7-x64.exe -> Jayth-Setup-x64.exe
   if [ "$n" != "$b" ]; then cp "$f" "$ALIAS/$n"; fi
 done

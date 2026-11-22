@@ -1978,7 +1978,8 @@ def view_image(a, ctx):
       {"prompt": S("Descripción detallada de la imagen (funciona en cualquier idioma; en inglés suele ser más precisa)"),
        "path": S("Archivo .png donde guardarla (opcional; por defecto en la carpeta «imagenes» de la carpeta de trabajo)"),
        "aspect": S("square (cuadrada, por defecto), landscape (horizontal 16:9), portrait (vertical 9:16), wide (3:2) o tall (2:3)"),
-       "width": I("Ancho en píxeles (opcional; mejor usa aspect)"), "height": I("Alto en píxeles (opcional)"),
+       "width": I("Ancho (opcional y solo para una proporción especial: el tamaño y la calidad los elige el usuario en sus "
+                  "ajustes; normalmente basta con aspect)"), "height": I("Alto (opcional; ver width)"),
        "seed": I("Semilla para repetir una imagen con pequeños cambios en la descripción (opcional)"),
        "reference": S("Imagen existente que modificar o usar como referencia (opcional)")}, ["prompt"])
 def generate_image(a, ctx):

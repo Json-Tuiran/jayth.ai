@@ -502,7 +502,8 @@ class Reader(QTextBrowser):
 
 
 class ImageView(QWidget):
-    """Imagen ajustada a la ventana (o a su tamaño real), con zoom: botones, Ctrl + rueda; arriba, su tamaño."""
+    """Imagen ajustada a la ventana, con zoom: la rueda del ratón acerca y aleja hacia donde está el cursor, se arrastra
+    para moverla y doble clic alterna entre ajustada y tamaño real. Arriba, su tamaño y los botones."""
 
     def __init__(self):
         super().__init__()
@@ -519,8 +520,10 @@ class ImageView(QWidget):
         self.zoom_lbl = QLabel()
         self.zoom_lbl.setObjectName("faint")
         h.addWidget(self.zoom_lbl)
-        for text, tip, cb in (("−", tr("Alejar (Ctrl + rueda)"), lambda: self.zoom_by(1 / 1.25)), ("+", tr("Acercar (Ctrl + rueda)"), lambda: self.zoom_by(1.25)),
-                              (tr("Ajustar"), tr("Ajustar a la ventana"), self.fit), ("100 %", tr("Tamaño real"), lambda: self.set_zoom(1.0))):
+        self.b_real = None
+        for text, tip, cb in (("−", tr("Alejar (rueda del ratón)"), lambda: self.zoom_by(1 / 1.25)), ("+", tr("Acercar (rueda del ratón)"), lambda: self.zoom_by(1.25)),
+                              (tr("Ajustar"), tr("Ajustar a la ventana (doble clic en la imagen)"), self.fit),
+                              ("100 %", tr("Tamaño real: un píxel de la imagen por cada píxel de la pantalla"), lambda: self.set_zoom(1.0))):
             b = QToolButton()
             b.setText(text)
             b.setToolTip(tip)
@@ -528,6 +531,8 @@ class ImageView(QWidget):
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(cb)
             h.addWidget(b)
+            if text == "100 %":
+                self.b_real = b              # solo se ofrece cuando «ajustar» no es ya el tamaño real (imagen mayor que la ventana)
         v.addWidget(bar)
         self.area = QScrollArea()
         self.area.setFrameShape(QFrame.NoFrame)
@@ -596,15 +601,54 @@ class ImageView(QWidget):
         self.lbl.setPixmap(pm)
         self.lbl.resize(w, h)
         self.zoom_lbl.setText("%d %%" % round(self.zoom * 100))
+        fit = min(1.0, vw / self.src.width(), vh / self.src.height())
+        if self.b_real is not None:
+            self.b_real.setVisible(self.svg is not None or fit < 0.995 or abs(self.zoom - 1.0) > 0.005)
+        big = w > vw + 16 or h > vh + 16                 # no cabe: se puede arrastrar para moverla
+        self.area.viewport().setCursor(Qt.OpenHandCursor if big else Qt.ArrowCursor)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
         if self.fitting:
             self._render()
 
+    def _zoom_at(self, k, pos):
+        """Acerca o aleja dejando bajo el cursor el mismo punto de la imagen."""
+        hb, vb = self.area.horizontalScrollBar(), self.area.verticalScrollBar()
+        lp = self.lbl.mapFrom(self.area.viewport(), pos)
+        fx = lp.x() / max(1.0, self.lbl.width())
+        fy = lp.y() / max(1.0, self.lbl.height())
+        self.zoom_by(k)
+        hb.setValue(int(fx * self.lbl.width() - pos.x()))
+        vb.setValue(int(fy * self.lbl.height() - pos.y()))
+
     def eventFilter(self, obj, e):
-        if e.type() == e.Type.Wheel and e.modifiers() & Qt.ControlModifier:
-            self.zoom_by(1.15 if e.angleDelta().y() > 0 else 1 / 1.15)
+        t = e.type()
+        if t == e.Type.Wheel:
+            if e.angleDelta().y():
+                self._zoom_at(1.15 if e.angleDelta().y() > 0 else 1 / 1.15, e.position().toPoint())
+            return True                                  # la rueda es el zoom (para moverse, arrastrar o las barras)
+        if t == e.Type.MouseButtonDblClick and e.button() == Qt.LeftButton:
+            if self.fitting and self.zoom < 0.995:       # ajustada y reducida: a tamaño real; en otro caso, a ajustar
+                self.set_zoom(1.0)
+            else:
+                self.fit()
+            return True
+        if t == e.Type.MouseButtonPress and e.button() == Qt.LeftButton:
+            self._drag = (e.globalPosition().toPoint(), self.area.horizontalScrollBar().value(), self.area.verticalScrollBar().value())
+            if self.area.viewport().cursor().shape() == Qt.OpenHandCursor:
+                self.area.viewport().setCursor(Qt.ClosedHandCursor)
+            return True
+        if t == e.Type.MouseMove and getattr(self, "_drag", None) and e.buttons() & Qt.LeftButton:
+            p0, hx, vy = self._drag
+            d = e.globalPosition().toPoint() - p0
+            self.area.horizontalScrollBar().setValue(hx - d.x())
+            self.area.verticalScrollBar().setValue(vy - d.y())
+            return True
+        if t == e.Type.MouseButtonRelease and getattr(self, "_drag", None):
+            self._drag = None
+            if self.area.viewport().cursor().shape() == Qt.ClosedHandCursor:
+                self.area.viewport().setCursor(Qt.OpenHandCursor)
             return True
         return False
 

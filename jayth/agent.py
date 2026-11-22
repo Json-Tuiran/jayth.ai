@@ -521,10 +521,33 @@ def _tools_text(cfg):
             "imágenes, tareas programadas, conectores…) actívalas primero con use_tools; puedes pedir varios grupos a la vez.\n")
 
 
-def system_prompt(cfg):
-    """Instrucciones del sistema. Se calculan una vez por tarea para que la cache del modelo se reutilice entre pasos
-    (no dependen de qué grupos de herramientas estén activos)."""
-    p = WORKFLOW % {"os": osys.os_label(), "shell": osys.shell_name(), "date": datetime.date.today().isoformat(), "ws": cfg["workspace"],
+def volatile_parts(cfg):
+    """Lo que las instrucciones del sistema llevan y cambia solo, sin que el usuario toque los ajustes: la fecha, la lista
+    de archivos del proyecto y la memoria."""
+    mem = "" if (cfg.get("_temp") or not cfg.get("memory_enabled", True)) else H.memory_text()
+    return {"date": datetime.date.today().isoformat(), "repo": H.repo_map(cfg["workspace"]) if cfg.get("_project") else "", "mem": mem}
+
+
+def changes_note(now, seen):
+    """Texto para el mensaje nuevo con lo que cambió desde la última vez que se le contó al modelo ('' si nada)."""
+    seen = seen or {}
+    notes = []
+    if now.get("date") != seen.get("date"):
+        notes.append("Hoy es %s." % now.get("date"))
+    if now.get("repo") != seen.get("repo") and now.get("repo"):
+        notes.append("Estructura actual de la carpeta del proyecto:\n" + now["repo"])
+    if now.get("mem") != seen.get("mem"):
+        notes.append("Memoria actual (lo que el usuario te pidió recordar):\n" + (now.get("mem") or "(vacía)"))
+    return ("\n\n[Datos actualizados por Jayth desde el inicio de la conversación]\n" + "\n".join(notes)) if notes else ""
+
+
+def system_prompt(cfg, frozen=None):
+    """Instrucciones del sistema. Son lo primero que lee el motor: si cambia una letra, relee toda la conversación.
+    Por eso lo que cambia solo (fecha, archivos del proyecto, memoria) se fija al empezar la conversación (`frozen`, lo
+    que devolvió volatile_parts entonces) y sus cambios se le cuentan al modelo en el mensaje nuevo (changes_note).
+    No dependen de qué grupos de herramientas estén activos."""
+    parts = frozen if isinstance(frozen, dict) else volatile_parts(cfg)
+    p = WORKFLOW % {"os": osys.os_label(), "shell": osys.shell_name(), "date": parts.get("date") or datetime.date.today().isoformat(), "ws": cfg["workspace"],
                     "python": "python" if osys.WIN else "python3", "example": "D:\\Trabajo" if osys.WIN else "~/Trabajo",
                     "fence": "powershell" if osys.WIN else "bash", "tools": _tools_text(cfg)}
     lang = {"es": "español", "en": "inglés", "pt": "portugués", "fr": "francés", "de": "alemán", "it": "italiano", "ja": "japonés",
@@ -553,7 +576,7 @@ def system_prompt(cfg):
         p += "\n\n## Sobre el usuario\n" + cfg["about_me"]
     if cfg.get("response_style"):
         p += "\n\n## Cómo quiere que respondas\n" + cfg["response_style"]
-    mem = "" if (cfg.get("_temp") or not cfg.get("memory_enabled", True)) else H.memory_text()
+    mem = parts.get("mem") or ""
     if mem:
         p += "\n\n## Memoria (lo que el usuario te pidió recordar)\n" + mem
     try:
@@ -567,7 +590,7 @@ def system_prompt(cfg):
     if ctx:
         p += "\n\n## Instrucciones del proyecto\n" + ctx
     if cfg.get("_project"):
-        p += "\n\n## Estructura de la carpeta del proyecto\n" + H.repo_map(cfg["workspace"])
+        p += "\n\n## Estructura de la carpeta del proyecto\n" + (parts.get("repo") or "")
     if cfg.get("custom_instructions"):
         p += "\n\n## Instrucciones adicionales\n" + cfg["custom_instructions"]
     return p
@@ -961,7 +984,12 @@ class Run:
         self._read_ev, self._ptps = 0.0, 0.0           # avance de lectura: último aviso y velocidad medida (tok/s)
         self._cuts = 0                                 # respuestas cortadas por generar sin producir nada visible
         self._split = None                             # ¿texto y acción en mensajes separados? (se averigua una vez)
-        self.system = system_prompt(settings)          # fijo durante toda la tarea (cache de prompt)
+        # instrucciones fijas durante toda la CONVERSACIÓN (no solo la tarea): lo que cambia solo se fijó en su primer
+        # mensaje y los cambios van en el mensaje nuevo; así el motor reutiliza lo ya leído de un mensaje al siguiente
+        self._sys_now = volatile_parts(settings)
+        if not isinstance(self.s.get("_sys"), dict):
+            self.s["_sys"], self.s["_sys_seen"] = dict(self._sys_now), dict(self._sys_now)
+        self.system = system_prompt(settings, self.s["_sys"])
         self.groups = list(self.s.get("tool_groups") or [])     # grupos de herramientas ya activos en esta conversación
         self.tools = tool_schemas(settings, self.groups)
         self.sampling = self._sampling()
@@ -1201,6 +1229,9 @@ class Run:
         ask = ("Resume %s para poder continuarla sin perder nada importante. Incluye: objetivo, decisiones, datos y cifras "
                "obtenidos, archivos creados o modificados (con rutas), comandos importantes, lo que falta por hacer y las "
                "preferencias del usuario. Máximo %d palabras, en el idioma de la conversación.\n\n%s") % (what, words, transcript)
+        other = self.cfg.get("_slot_other")
+        if callable(other):                          # el motor va a leer otra cosa: lo suyo deja de ser la conversación
+            other()
         payload = {"model": "local", "stream": True, "max_tokens": out_tok * 2, "temperature": 0.2, "cache_prompt": False,
                    "messages": [{"role": "system", "content": "Resumes conversaciones de trabajo de forma fiel y compacta."},
                                 {"role": "user", "content": ask}]}
@@ -1244,6 +1275,8 @@ class Run:
                 return changed
             self.s["messages"] = [{"role": "user", "_auto": True, "content": "[Resumen de la conversación anterior]\n" + summary},
                                   {"role": "assistant", "content": "Entendido. Continúo con ese contexto."}] + msgs[last_user:]
+            self.s.pop("_sys", None)                 # el motor releerá todo de todas formas: las instrucciones se
+            self.s.pop("_sys_seen", None)            # ponen al día en el próximo mensaje
         else:
             # 2) una sola tarea muy larga: se resumen sus primeros pasos y se conservan los últimos tal cual
             starts = [i for i in range(last_user + 1, len(msgs)) if msgs[i]["role"] == "assistant"]
@@ -1529,6 +1562,10 @@ class Run:
             guides = [group_guide(g) for g in new if group_guide(g)]
             if new:                                     # sus pautas van con el mensaje (no cambian las instrucciones fijas)
                 body += "\n\n[Herramientas activadas para esta tarea: %s]%s" % (", ".join(new), ("\n" + "\n".join(guides)) if guides else "")
+        note = changes_note(self._sys_now, self.s.get("_sys_seen"))
+        if note:                                        # la fecha, los archivos del proyecto o la memoria cambiaron
+            body += note
+            self.s["_sys_seen"] = dict(self._sys_now)
         if (self.cfg.get("response_language") or "auto") == "auto":
             lang = guess_language(text)
             if lang and lang != "es":                   # en español ya están las instrucciones
@@ -1646,6 +1683,12 @@ class Run:
                 if not calls and "<tool_call>" in text_out:
                     calls, text_out = parse_text_tool_calls(text_out)
                 tm = res.get("timings") or {}
+                after = self.cfg.get("_after_llm")
+                if callable(after) and not external:     # el motor tiene leída la conversación hasta aquí
+                    try:
+                        after(int((res.get("usage") or {}).get("prompt_tokens") or 0) + int(tm.get("predicted_n") or 0))
+                    except Exception:
+                        pass
                 self.emit({"t": "stats", "prompt_n": tm.get("prompt_n"), "prompt_ms": tm.get("prompt_ms"), "gen_n": tm.get("predicted_n"),
                            "tps": tm.get("predicted_per_second"), "finish": res["finish"],
                            "ctx_used": (res.get("usage") or {}).get("prompt_tokens"), "ctx_max": int(self.cfg["n_ctx"])})

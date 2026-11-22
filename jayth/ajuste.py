@@ -34,7 +34,7 @@ def engine_caps(exe):
     if sig in _CAPS:
         return _CAPS[sig]
     saved = core.SET.snapshot().get("engine_caps") or {}
-    if saved.get("sig") == sig:
+    if saved.get("sig") == sig and "slots" in (saved.get("caps") or {}):     # (sin «slots»: guardado por una versión anterior)
         _CAPS[sig] = saved["caps"]
         return saved["caps"]
     try:
@@ -43,7 +43,8 @@ def engine_caps(exe):
     except Exception:
         out = ""
     m = re.search(r"--spec-type\s+([\w,.-]+)", out)
-    caps = {"spec": m.group(1).split(",") if m else [], "fit": "--fit" in out, "cram": "--cache-ram" in out}
+    caps = {"spec": m.group(1).split(",") if m else [], "fit": "--fit" in out, "cram": "--cache-ram" in out,
+            "slots": "--slot-save-path" in out}
     _CAPS[sig] = caps
     core.SET.update({"engine_caps": {"sig": sig, "caps": caps}})
     return caps

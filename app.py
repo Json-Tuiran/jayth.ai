@@ -35,6 +35,12 @@ def _updating():
 
 
 if __name__ == "__main__":
+    if "--verify-install" in sys.argv:
+        # lo ejecuta la actualización sobre la versión recién colocada, antes de borrar la anterior: carga el programa
+        # entero sin abrir ventanas y contesta con un código (0 = es la versión esperada y arranca)
+        from jayth import updater
+        i = sys.argv.index("--verify-install")
+        sys.exit(updater.verify_install(sys.argv[i + 1] if len(sys.argv) > i + 1 else ""))
     if "--selftest" not in sys.argv and _updating():
         sys.exit(0)
     from jayth.desktop import main

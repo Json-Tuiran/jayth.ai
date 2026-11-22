@@ -303,6 +303,12 @@ def pick_size(cfg, aspect="", width=0, height=0, m=None):
     """Ancho y alto en múltiplos de 64; sin medidas se usa la proporción con el lado base del equipo."""
     base = base_side(cfg, m)
     width, height = int(width or 0), int(height or 0)
+    chosen = str((cfg or {}).get("image_size") or "auto").isdigit()      # el usuario eligió el tamaño en Ajustes → Imágenes
+    if width and height and chosen:
+        # ese tamaño manda: de las medidas que pide el modelo solo se toma la proporción (antes un «512» del modelo
+        # anulaba el 768 o 1024 que el usuario había elegido)
+        ar = max(0.25, min(4.0, width / float(height)))
+        return _r64(base * ar ** 0.5), _r64(base / ar ** 0.5)
     if width and height:
         w, h = _r64(width), _r64(height)
         limit = max(base, 1024) ** 2 * 1.5                   # no más de ~1,5 veces los píxeles de una imagen grande
@@ -344,6 +350,7 @@ def parse_line(seg, st):
                 st["sample_start"] = time.time()
             st.update(phase="dibujando", step=step, steps=steps, spi=spi)
             st["eta"] = (_eta(m.group(5)) if m.group(5) else (steps - step) * spi) + 0.45 * spi   # + decodificar (~medio paso en CPU)
+            st["eta_at"] = time.time()
         elif st.get("phase") in (None, "preparando", "cargando"):
             st.update(phase="cargando", load=(step, steps))     # barra de carga de pesos: no son los pasos del dibujo
         return
@@ -364,8 +371,44 @@ def parse_line(seg, st):
         st["phase"] = "cargando"
 
 
-def describe(p):
-    """«Dibujando · paso 2 de 4 · quedan 1 min 20 s» (para la interfaz)."""
+def clock(s):
+    """Tiempo que se ve avanzar cada segundo: «45 s», «3 min 07 s», «1 h 02 min 09 s»."""
+    s = int(max(0, s))
+    if s < 60:
+        return "%d s" % s
+    m, s = divmod(s, 60)
+    if m < 60:
+        return "%d min %02d s" % (m, s)
+    h, m = divmod(m, 60)
+    return "%d h %02d min %02d s" % (h, m, s)
+
+
+def remaining(p, now=None):
+    """Segundos que quedan ahora mismo (cuenta atrás entre un aviso del motor y el siguiente), o None si no se sabe."""
+    if not p or not p.get("eta"):
+        return None
+    now = now or time.time()
+    return max(0.0, float(p["eta"]) - max(0.0, now - float(p.get("eta_at") or now)))
+
+
+def elapsed(p, now=None):
+    if not p:
+        return 0.0
+    return max(0.0, (now or time.time()) - float(p["t0"])) if p.get("t0") else float(p.get("elapsed") or 0)
+
+
+def fraction(p, now=None):
+    """Cuánto lleva hecho (0-1), contando el tiempo transcurrido dentro del paso en curso."""
+    left = remaining(p, now)
+    if left is None:
+        return 0.0
+    done = elapsed(p, now)
+    return max(0.0, min(0.99, done / max(1.0, done + left)))
+
+
+def describe(p, now=None):
+    """«Dibujando · paso 2 de 4 · quedan 1 min 20 s · llevas 3 min 05 s» (para la interfaz). Los tiempos se calculan en el
+    momento, así que avanzan cada segundo aunque el motor solo avise al acabar cada paso."""
     if not p:
         return ""
     txt = PHASES.get(p.get("phase") or "preparando", PHASES["preparando"])
@@ -373,11 +416,58 @@ def describe(p):
     if p.get("phase") == "dibujando" and p.get("steps"):
         # la barra de un paso sale al terminarlo: mientras tanto se trabaja en el siguiente
         parts.append(tr("paso %d de %d") % (min(p["steps"], (p.get("step") or 0) + 1), p["steps"]))
-        if p.get("eta"):
-            parts.append(tr("quedan %s") % P.fmt_duration(p["eta"]))
-    if p.get("elapsed", 0) >= 5:
-        parts.append(tr("llevas %s") % P.fmt_duration(p["elapsed"]))
+    left = remaining(p, now)
+    if left is not None and p.get("phase") in ("dibujando", "cargando", "entendiendo", "preparando"):
+        parts.append((tr("quedan ~%s") if p.get("guess") else tr("quedan %s")) % clock(left))
+    if elapsed(p, now) >= 3:
+        parts.append(tr("llevas %s") % clock(elapsed(p, now)))
     return " · ".join(parts)
+
+
+# lo que tardó la última imagen con cada modelo y tamaño: para decir cuánto queda desde el primer segundo (el motor no
+# avisa hasta acabar el primer paso, que en un equipo sin tarjeta gráfica son minutos)
+TIMES = os.path.join(paths.DATA, "imagen_tiempos.json")
+
+
+def _times():
+    try:
+        with open(TIMES, encoding="utf-8") as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _time_key(m, w, h, refs=()):
+    return "%s|%dx%d|%d" % (m["id"], w, h, 1 if refs else 0)
+
+
+def expected_seconds(m, w, h, refs=()):
+    """Lo que tardó la última vez una imagen igual; si no, se escala por píxeles desde otra del mismo modelo. None si
+    nunca se ha creado ninguna con ese modelo."""
+    d = _times()
+    v = d.get(_time_key(m, w, h, refs))
+    if v:
+        return float(v)
+    for k, val in d.items():
+        mid, size, _ = (k.split("|") + ["", ""])[:3]
+        if mid == m["id"] and "x" in size:
+            try:
+                ow, oh = (int(x) for x in size.split("x"))
+                return float(val) * (w * h) / float(ow * oh)
+            except ValueError:
+                continue
+    return None
+
+
+def _remember_time(m, w, h, refs, seconds):
+    try:
+        d = _times()
+        d[_time_key(m, w, h, refs)] = round(float(seconds), 1)
+        with open(TIMES, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------- generar
@@ -426,8 +516,9 @@ def generate(cfg, prompt, out_path, aspect="", width=0, height=0, seed=None, ref
         parts = ["-m", files["model"]]
     else:
         parts = ["--diffusion-model", files["diffusion"], "--llm", files["llm"], "--vae", files["vae"]]
+    # (sin «--preview»: las capas a medio hacer no se enseñan; el chat muestra una animación y, al final, la imagen)
     cmd = argv + parts + ["-p", prompt, "--cfg-scale", str(m["cfg"]), "--steps", str(m["steps"]), "-W", str(w), "-H", str(h),
-                          "--seed", str(seed), "-o", part, "--preview", "proj", "--preview-path", prev]
+                          "--seed", str(seed), "-o", part]
     if m.get("sampler"):
         cmd += ["--sampling-method", m["sampler"]]
     if "lora" in files:                             # el ajuste de pocos pasos va como LoRA, nombrado en la descripción
@@ -456,6 +547,9 @@ def generate(cfg, prompt, out_path, aspect="", width=0, height=0, seed=None, ref
         raise RuntimeError("Ya se está creando otra imagen; espera a que termine.")
     t0 = time.time()
     st = {"phase": "preparando", "log": [], "steps": int(m["steps"])}
+    guess = expected_seconds(m, w, h, refs)
+    if guess:                                        # hasta que el motor diga algo, lo que tardó la última vez
+        st.update(eta=guess, eta_at=t0, guess=True)
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                 cwd=exe_dir or None, env=env, **osys.popen_kwargs())
@@ -493,9 +587,12 @@ def generate(cfg, prompt, out_path, aspect="", width=0, height=0, seed=None, ref
             now = time.time()
             if progress and (now - last >= 0.5 or (st.get("phase"), st.get("step")) != last_step):
                 last, last_step = now, (st.get("phase"), st.get("step"))
-                info = {k: st.get(k) for k in ("phase", "step", "steps", "eta")}
+                if st.get("phase") == "dibujando" and st.get("spi"):
+                    st["guess"] = False              # ya hay tiempos reales del motor
+                info = {k: st.get(k) for k in ("phase", "step", "steps", "eta", "eta_at", "guess")}
                 info["elapsed"] = now - t0
-                info["preview"] = prev if os.path.isfile(prev) else None
+                info["t0"] = t0
+                info["preview"] = None
                 info["size"] = (w, h)
                 try:
                     progress(info)
@@ -512,6 +609,7 @@ def generate(cfg, prompt, out_path, aspect="", width=0, height=0, seed=None, ref
         if code != 0 or not os.path.isfile(part):
             raise RuntimeError(_friendly(st["log"]))
         os.replace(part, out_path)
+        _remember_time(m, w, h, refs, time.time() - t0)
     finally:
         _RUN_LOCK.release()
         try:

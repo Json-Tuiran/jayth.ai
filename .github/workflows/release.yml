@@ -112,6 +112,34 @@ jobs:
           Copy-Item dist-firmado\* dist\ -Force
           Get-AuthenticodeSignature dist\*.exe | Format-Table Status, SignerCertificate, Path -AutoSize
 
+      # ---- actualizaciones que solo descargan lo que cambia (jayth/parches.py; ver packaging/ACTUALIZACIONES.md):
+      #      la huella de cada archivo de esta versión («manifiesto») y un paquete de cambios desde cada una de las
+      #      últimas versiones que publicaron la suya. Con la firma de SignPath activa no se generan: los archivos
+      #      instalados (firmados) ya no serían los de dist\Jayth; las actualizaciones siguen con el instalador completo.
+      - name: Manifiesto y paquetes de cambios (Windows)
+        if: runner.os == 'Windows' && env.SIGNPATH_ON != 'true' && startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONIOENCODING: utf-8
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          python -m jayth.parches manifiesto dist/Jayth --version "$V" --plataforma windows-x64 -o "dist/Jayth-$V-windows-x64.manifest.json"
+          n=0
+          for T in $(gh release list --repo "$GITHUB_REPOSITORY" --limit 12 --exclude-drafts --exclude-pre-releases --json tagName -q '.[].tagName'); do
+            P="${T#v}"
+            if [ "$P" = "$V" ]; then continue; fi
+            rm -rf prev && mkdir prev
+            if gh release download "$T" --repo "$GITHUB_REPOSITORY" -p "Jayth-$P-windows-x64.manifest.json" -D prev 2>/dev/null; then
+              python -m jayth.parches parche dist/Jayth --nuevo "dist/Jayth-$V-windows-x64.manifest.json" \
+                --anterior "prev/Jayth-$P-windows-x64.manifest.json" -o "dist/Jayth-parche-$P-a-$V-windows-x64.zip" \
+                || echo "::warning title=Paquete de cambios::no se pudo crear desde la $P (esa versión usará el instalador completo)"
+              n=$((n+1))
+              if [ "$n" -ge 3 ]; then break; fi
+            fi
+          done
+          ls -lh dist | grep -i "manifest\|parche" || true
+
       - uses: actions/upload-artifact@v6
         with:
           name: jayth-${{ matrix.name }}
@@ -122,6 +150,7 @@ jobs:
             dist/*.dmg
             dist/*.AppImage
             dist/*.tar.gz
+            dist/*.manifest.json
 
   release:
     name: Publicar la Release

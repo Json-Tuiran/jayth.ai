@@ -44,6 +44,7 @@ DEFAULTS = {
     "tuning": {},                # último ajuste medido (ajuste.py): hilos, flash attention, velocidades y aceleración elegida
     "engine_caps": {},           # qué admite el llama-server instalado (se lee de su ayuda una vez por versión)
     "warmup": True,              # precalentar instrucciones y herramientas al encender el modelo
+    "slot_cache_mb": 6144,       # disco para recordar lo ya leído de las conversaciones entre sesiones (0 = no guardar)
     "autostart_llm": False,
     "idle_unload": 0,            # minutos sin uso para apagar el modelo (0 = nunca)
     # generacion
@@ -129,6 +130,12 @@ DEFAULTS = {
 RESTART_KEYS = {"threads", "threads_batch", "n_ctx", "gpu_layers", "batch_size", "flash_attn", "cache_type", "mmap", "mlock", "llm_port", "vision", "backend", "llama_exe",
                 "spec_type", "tuning"}
 LAST_USE = [time.time()]   # ultima actividad del agente (para apagar el modelo por inactividad)
+SLOT_DIR = os.path.join(paths.HOME, "cache", "slots")   # lo que el motor ya leyó de cada conversación
+SLOT_MIN_TOKENS = 1200     # por debajo, releer cuesta menos que un archivo
+SLOT_SAVE_EVERY = 1000     # tokens nuevos desde el último guardado para volver a guardar al acabar un turno
+SLOT_MAX_FILES = 8
+SLOT_MAX_BASES = 3         # precalentamientos guardados (uno por combinación de instrucciones y herramientas)
+SLOT_FREE_MIN = 3 << 30    # no se guarda si quedan menos de 3 GB libres en el disco
 
 
 # ---------------------------------------------------------------- ajustes
@@ -832,6 +839,7 @@ class Session:
                 self.leftover = [i["text"] for i in run.queued()]
                 self.run = None
                 self.save()
+            LLM_MGR.turn_ended(self.id)            # antes del título: ahora el motor tiene leída justo esta conversación
             self._auto_title(cfg)
         threading.Thread(target=go, daemon=True).start()
         return None
@@ -875,7 +883,10 @@ class Session:
         cfg["_sid"] = self.id
         cfg["_temp"] = self.temp
         cfg["n_ctx"] = effective_ctx(cfg)        # el agente mide la conversación con el contexto real (también en automático)
-        cfg["_before_llm"] = LLM_MGR.yield_warm  # un mensaje real no espera detrás del precalentamiento
+        sid, keep = self.id, not self.temp
+        cfg["_before_llm"] = lambda: LLM_MGR.before_request(sid, keep)     # cede el precalentamiento; recupera lo ya leído
+        cfg["_after_llm"] = lambda n: LLM_MGR.after_step(sid, n)
+        cfg["_slot_other"] = LLM_MGR.slot_other
         cfg["_model_title"] = model_title(active_model(cfg)) if cfg["llm_mode"] == "local" else (cfg.get("external_model") or "")
         return cfg
 
@@ -885,6 +896,7 @@ class Session:
         if not left or self.run is not None or self.temp:
             return
         self.data["title_auto"] = left - 1
+        LLM_MGR.slot_other()
         t = A.make_title(cfg, self.data["messages"])
         if t and self.data.get("title_auto") is not None:   # None: el usuario la renombro mientras tanto
             self.title = t
@@ -1088,6 +1100,7 @@ class Session:
         if self.run:
             self.run.request_stop()
         SESSIONS.pop(self.id, None)
+        LLM_MGR.slot_forget(self.id)
         for fp in (self.jpath, self.epath):
             try:
                 os.remove(fp)
@@ -1263,9 +1276,225 @@ class LLM:
                 cram = memory_plan(cfg, m).get("cache_mib")
                 if cram is not None:
                     cmd += ["--cache-ram", str(cram)]
+            if ajuste.engine_caps(cfg["llama_exe"]).get("slots") and int(cfg.get("slot_cache_mb") or 0) > 0:
+                os.makedirs(SLOT_DIR, exist_ok=True)
+                cmd += ["--slot-save-path", SLOT_DIR]
         except Exception:
             pass
         return cmd
+
+    # --- memoria de las conversaciones en disco
+    # El motor guarda lo que ya leyó (su «KV») solo en memoria: al cerrar Jayth, apagar el modelo o cambiar de
+    # conversación había que releerlo todo (20 minutos para una conversación larga en un equipo sin gráfica). Ahora
+    # se guarda en un archivo por conversación y se recupera en segundos. Medido con llama.cpp: guardar 0,3 s,
+    # recuperar 0,2 s, y continuar tras reiniciar el motor lee 20 tokens en vez de 1889.
+    slot_sid = ""            # conversación cuyo historial está ahora mismo leído en el motor
+    slot_keep = True         # ¿se guarda? (los chats temporales no)
+    slot_fresh = False       # el motor tiene esa conversación (no un título, un resumen o el precalentamiento)
+    slot_tokens = 0          # tokens que lleva leídos
+    slot_saved = 0           # los que tenía la última vez que se guardó
+    _slots_on = False        # el motor en marcha se lanzó con --slot-save-path
+    _slot_lock = threading.RLock()
+
+    def _slot_sig(self, cfg=None):
+        """Con qué modelo y contexto se hizo: lo guardado solo vale para ese mismo."""
+        cfg = cfg or SET.snapshot()
+        m = active_model(cfg) or {}
+        try:
+            st = os.stat(m.get("path") or "")
+            return "%s|%d|%d|%d" % (m.get("path"), st.st_size, int(st.st_mtime), effective_ctx(cfg, m))
+        except OSError:
+            return ""
+
+    def _slot_files(self, sid):
+        sid = re.sub(r"[^\w-]", "", str(sid))
+        return os.path.join(SLOT_DIR, sid + ".bin"), os.path.join(SLOT_DIR, sid + ".json")
+
+    def _slot_call(self, action, sid, timeout):
+        cfg = SET.snapshot()
+        c = http.client.HTTPConnection("127.0.0.1", int(cfg["llm_port"]), timeout=timeout)
+        try:
+            c.request("POST", "/slots/0?action=" + action, json.dumps({"filename": os.path.basename(self._slot_files(sid)[0])}).encode("utf-8"),
+                      {"Content-Type": "application/json"})
+            r = c.getresponse()
+            body = r.read()
+            return json.loads(body) if r.status == 200 else None
+        finally:
+            c.close()
+
+    def _base_save(self, name):
+        """Guarda lo leído en el precalentamiento (instrucciones y herramientas) con el nombre `name`."""
+        with self._slot_lock:
+            if not (self._slots_on and self.mine()):
+                return False
+            try:
+                import shutil
+                os.makedirs(SLOT_DIR, exist_ok=True)
+                if shutil.disk_usage(SLOT_DIR).free < SLOT_FREE_MIN:
+                    return False
+                binf, meta = self._slot_files(name)
+                r = self._slot_call("save", name, 300)
+                if not r or not os.path.isfile(binf) or int(r.get("n_saved") or 0) < SLOT_MIN_TOKENS:
+                    self.slot_forget(name)             # tan corto que releerlo es igual de rápido
+                    return False
+                with open(meta, "w", encoding="utf-8") as f:
+                    json.dump({"v": 1, "sig": self._slot_sig(), "tokens": int(r.get("n_saved") or 0), "saved": time.time()}, f)
+                self.slot_prune()
+                return True
+            except Exception:
+                return False
+
+    def _base_restore(self, name):
+        with self._slot_lock:
+            if not (self._slots_on and self.mine()):
+                return False
+            binf, meta = self._slot_files(name)
+            try:
+                with open(meta, encoding="utf-8") as f:
+                    d = json.load(f)
+            except (OSError, ValueError):
+                return False
+            if d.get("sig") != self._slot_sig() or not os.path.isfile(binf):
+                self.slot_forget(name)
+                return False
+            try:
+                r = self._slot_call("restore", name, 300)
+            except Exception:
+                r = None
+            if not r:
+                self.slot_forget(name)
+                return False
+            self.slot_sid, self.slot_fresh, self.slot_tokens, self.slot_saved = "", False, 0, 0
+            try:
+                os.utime(binf, None)
+            except OSError:
+                pass
+            return True
+
+    def slot_forget(self, sid):
+        for f in self._slot_files(sid):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        if self.slot_sid == sid:
+            self.slot_saved = 0
+
+    def slot_prune(self):
+        """Lo guardado no pasa del tope de disco: se borra lo más antiguo (y lo de conversaciones que ya no existen)."""
+        try:
+            cap = int(SET.snapshot().get("slot_cache_mb") or 0) << 20
+            items, bases = [], []
+            for f in os.listdir(SLOT_DIR):
+                p = os.path.join(SLOT_DIR, f)
+                if f.endswith(".bin"):
+                    if not os.path.isfile(p[:-4] + ".json") or (f[:-4] not in SESSIONS and not f.startswith("base_")):
+                        self.slot_forget(f[:-4])
+                    elif f.startswith("base_"):
+                        bases.append((os.path.getmtime(p), os.path.getsize(p), f[:-4]))
+                    else:
+                        items.append((os.path.getmtime(p), os.path.getsize(p), f[:-4]))
+                elif f.endswith(".json") and not os.path.isfile(p[:-5] + ".bin"):
+                    os.remove(p)
+            bases.sort(reverse=True)
+            for mt, size, name in bases[SLOT_MAX_BASES:]:           # de precalentamientos: solo los últimos
+                self.slot_forget(name)
+            cap = max(0, cap - sum(size for mt, size, name in bases[:SLOT_MAX_BASES]))
+            items.sort(reverse=True)
+            total = 0
+            for n, (mt, size, sid) in enumerate(items):
+                total += size
+                if n > 0 and (total > cap or n >= SLOT_MAX_FILES):       # la más reciente se conserva siempre
+                    self.slot_forget(sid)
+        except OSError:
+            pass
+
+    def slot_save(self, sid, force=False):
+        """Guarda en disco lo leído de la conversación `sid` si es la que el motor tiene y ha crecido lo bastante."""
+        with self._slot_lock:
+            if not (self._slots_on and self.mine() and sid and sid == self.slot_sid and self.slot_keep and self.slot_fresh):
+                return False
+            grew = self.slot_tokens - self.slot_saved
+            if self.slot_tokens < SLOT_MIN_TOKENS or grew < (1 if force else SLOT_SAVE_EVERY):
+                return False
+            try:
+                import shutil
+                os.makedirs(SLOT_DIR, exist_ok=True)
+                if shutil.disk_usage(SLOT_DIR).free < SLOT_FREE_MIN:
+                    return False
+                binf, meta = self._slot_files(sid)
+                r = self._slot_call("save", sid, 300)
+                if not r or not os.path.isfile(binf):
+                    return False
+                tmp = meta + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump({"v": 1, "sig": self._slot_sig(), "tokens": int(r.get("n_saved") or self.slot_tokens),
+                               "bytes": int(r.get("n_written") or 0), "saved": time.time()}, f)
+                os.replace(tmp, meta)
+                self.slot_saved = self.slot_tokens
+                self.slot_prune()
+                return True
+            except Exception:
+                return False
+
+    def slot_restore(self, sid):
+        """Recupera del disco lo que el motor ya había leído de `sid` (si se guardó con este mismo modelo y contexto)."""
+        with self._slot_lock:
+            if not (self._slots_on and self.mine() and sid):
+                return False
+            binf, meta = self._slot_files(sid)
+            try:
+                with open(meta, encoding="utf-8") as f:
+                    d = json.load(f)
+            except (OSError, ValueError):
+                return False
+            if d.get("sig") != self._slot_sig() or not os.path.isfile(binf):
+                self.slot_forget(sid)                  # de otro modelo o de otro tamaño de contexto: ya no sirve
+                return False
+            try:
+                r = self._slot_call("restore", sid, 300)
+            except Exception:
+                r = None
+            if not r:
+                self.slot_forget(sid)                  # archivo dañado o incompleto: se relee con normalidad
+                return False
+            self.slot_sid, self.slot_keep, self.slot_fresh = sid, True, True
+            self.slot_tokens = self.slot_saved = int(r.get("n_restored") or d.get("tokens") or 0)
+            try:
+                os.utime(binf, None)                   # recién usada: la última en borrarse si falta sitio
+            except OSError:
+                pass
+            return True
+
+    def before_request(self, sid, keep=True):
+        """Antes de cada petición del agente: cede el precalentamiento y, si el motor tenía leída otra conversación,
+        guarda aquella y recupera esta."""
+        self.yield_warm()
+        if not self._slots_on or sid == self.slot_sid:
+            self.slot_fresh = bool(sid) and sid == self.slot_sid and self.slot_fresh
+            return
+        with self._slot_lock:
+            if self.slot_sid:
+                self.slot_save(self.slot_sid, force=True)      # volver a ella después costará segundos, no minutos
+            self.slot_sid, self.slot_keep, self.slot_fresh, self.slot_tokens, self.slot_saved = sid, keep, False, 0, 0
+            if keep:
+                self.slot_restore(sid)
+
+    def after_step(self, sid, tokens):
+        """El motor acaba de contestar un paso de `sid`: tiene leída esa conversación hasta `tokens`."""
+        if sid == self.slot_sid:
+            self.slot_tokens, self.slot_fresh = int(tokens or 0), True
+
+    def slot_other(self):
+        """Va a pedirse otra cosa al motor (título, resumen): lo que tenga leído deja de ser la conversación."""
+        self.slot_fresh = False
+
+    def turn_ended(self, sid):
+        """Al acabar un turno: se guarda si ha crecido lo bastante (por si Jayth se cierra de golpe o se va la luz)."""
+        try:
+            self.slot_save(sid)
+        except Exception:
+            pass
 
     # --- precalentamiento: procesa una vez las instrucciones y herramientas fijas para que el primer mensaje sea rapido
     warm = ""          # "" | "warming" | "warm"
@@ -1280,12 +1509,24 @@ class LLM:
             return
         self.warm = "warming"
         try:
+            if session is not None and not session.temp and self.slot_restore(session.id):
+                self.warm = "warm"                 # ya tiene leídas instrucciones, herramientas y toda la conversación
+                return
+            self.slot_other()
             cfg = session._run_cfg() if session is not None else SET.snapshot()
             groups = list((session.data.get("tool_groups") or []) if session is not None else [])
             payload = {"model": "local", "stream": False, "max_tokens": 1, "cache_prompt": True, "temperature": 0,
-                       "messages": [{"role": "system", "content": A.system_prompt(cfg)}, {"role": "user", "content": "hola"}],
+                       "messages": [{"role": "system", "content": A.system_prompt(cfg, session.data.get("_sys") if session is not None else None)},
+                                    {"role": "user", "content": "hola"}],
                        "tools": A.tool_schemas(cfg, groups), "chat_template_kwargs": {"enable_thinking": effort_of(cfg) != "low",
                                                                                        "reasoning_effort": effort_of(cfg)}}
+            # las mismas instrucciones y herramientas ya se leyeron otra vez con este modelo: se recuperan del disco
+            import hashlib
+            base = "base_" + hashlib.sha1(json.dumps([payload["messages"], payload["tools"], payload["chat_template_kwargs"]],
+                                                     sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+            if self._base_restore(base):
+                self.warm = "warm"
+                return
             c = http.client.HTTPConnection("127.0.0.1", int(cfg["llm_port"]), timeout=10)
             c.connect()
             c.sock.settimeout(None)
@@ -1302,6 +1543,8 @@ class LLM:
                 except socket.timeout:
                     continue
             c.close()                            # si se cedió el paso, al cerrar el motor abandona la lectura
+            if not self._warm_yielded:
+                self._base_save(base)            # la próxima vez que se encienda el modelo no hará falta releerlo
             self.warm = "warm"
         except Exception:
             # falló o se le cedió el paso a un mensaje real (yield_warm): ese mensaje ya deja leído lo suyo
@@ -1353,12 +1596,19 @@ class LLM:
             env["LD_LIBRARY_PATH"] = bindir + os.pathsep + env.get("LD_LIBRARY_PATH", "")
         elif osys.MAC:
             env["DYLD_LIBRARY_PATH"] = bindir + os.pathsep + env.get("DYLD_LIBRARY_PATH", "")
-        self.proc = subprocess.Popen(self.command(cfg), stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        cmd = self.command(cfg)
+        self.proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                      cwd=bindir, env=env, **osys.popen_kwargs())
+        self._slots_on, self.slot_sid, self.slot_fresh, self.slot_tokens, self.slot_saved = "--slot-save-path" in cmd, "", False, 0, 0
         return None
 
     def stop(self):
         if self.proc is not None and self.proc.poll() is None:
+            try:                                   # lo leído de la conversación en curso queda en disco para la próxima vez
+                if self.slot_sid and not any(s.run for s in SESSIONS.values()):
+                    self.slot_save(self.slot_sid, force=True)
+            except Exception:
+                pass
             osys.kill_tree(self.proc.pid)
             try:
                 self.proc.wait(5)
@@ -1366,6 +1616,7 @@ class LLM:
                 pass
         self.proc = None
         self.warm = ""
+        self._slots_on, self.slot_sid, self.slot_fresh, self.slot_tokens, self.slot_saved = False, "", False, 0, 0
 
     def mine(self):
         return self.proc is not None and self.proc.poll() is None

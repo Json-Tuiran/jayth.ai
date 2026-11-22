@@ -13,7 +13,8 @@ import os, time
 from PySide6.QtCore import Qt, Signal, QDir, QRect, QRectF, QSize, QStringListModel, QTimer
 from PySide6.QtGui import QPainter, QColor, QPixmap, QFont, QPen, QPainterPath, QIcon, QPalette, QGuiApplication
 from PySide6.QtWidgets import (QTreeView, QFileSystemModel, QStyledItemDelegate, QAbstractItemView, QMenu, QInputDialog, QMessageBox,
-                               QLineEdit, QCompleter, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QToolButton, QStyle)
+                               QLineEdit, QCompleter, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QToolButton, QStyle,
+                               QStyleOptionViewItem)
 from . import osys
 from .theme import C, icon, pix
 from .i18n import tr
@@ -165,7 +166,9 @@ class _Delegate(QStyledItemDelegate):
             opt.palette.setColor(QPalette.Text, QColor(C["faint"]))
 
     def paint(self, p, opt, idx):
-        super().paint(p, opt, idx)
+        o = QStyleOptionViewItem(opt)                # el fondo de la selección ya lo pintó el árbol, de una pieza
+        o.state &= ~(QStyle.State_Selected | QStyle.State_MouseOver | QStyle.State_HasFocus)
+        super().paint(p, o, idx)
         if self.tree.is_changed(self.tree.model_.filePath(idx)):      # punto verde: lo cambió el agente hace poco
             p.save()
             p.setRenderHint(QPainter.Antialiasing)
@@ -207,10 +210,13 @@ class FileTree(QTreeView):
         self.customContextMenuRequested.connect(self._menu)
         self.setStyleSheet(
             "QTreeView#fileTree { background: %(side)s; border: none; outline: 0; }"
-            "QTreeView#fileTree::item { padding: 2px 4px; border-radius: 6px; margin: 0 4px 0 0; }"
-            "QTreeView#fileTree::item:selected { background: %(acc_bg)s; color: %(tx)s; }"
-            "QTreeView#fileTree::item:hover:!selected { background: %(hover)s; }"
-            "QTreeView#fileTree::branch { background: transparent; image: none; border-image: none; }" % C)
+            # el resaltado lo pinta drawRow de una pieza (la hoja de estilos lo partía en dos: la sangría y el nombre)
+            "QTreeView#fileTree::item { padding: 2px 4px; margin: 0 4px 0 0; border: none; background: transparent; }"
+            "QTreeView#fileTree::item:selected { background: transparent; color: %(tx)s; }"
+            "QTreeView#fileTree::item:hover { background: transparent; }"
+            "QTreeView#fileTree::branch { background: transparent; image: none; border-image: none; }"
+            "QTreeView#fileTree::branch:selected { background: transparent; }" % C)
+        self._hover = None
         self.root = ""
         self.changed = {}
         self._chev = {o: pix("ui_chevron_abajo" if o else "ui_chevron_derecha", C["faint"], 9) for o in (True, False)}
@@ -244,7 +250,43 @@ class FileTree(QTreeView):
             self.setCurrentIndex(idx)
             self.scrollTo(idx)
 
-    # ---- dibujo: guías de sangría y flechas propias
+    # ---- dibujo: resaltado de una pieza, guías de sangría y flechas propias
+    def drawRow(self, p, opt, idx):
+        """La fila entera la pinta el árbol: el fondo de selección (una sola franja redondeada, de lado a lado), las
+        guías y la flecha, y el contenido. El dibujo estándar partía el resaltado en dos trozos (la sangría, con el color
+        de acento del sistema, y el nombre)."""
+        sel = self.selectionModel().isSelected(idx)
+        if sel or idx == self._hover:
+            p.save()
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(C["acc_bg"] if sel else C["hover"]))
+            r = QRectF(opt.rect)
+            r.setLeft(4)
+            r.setRight(self.viewport().width() - 5)
+            p.drawRoundedRect(r.adjusted(0, 1, 0, -1), 6, 6)
+            p.restore()
+        item = self.visualRect(idx)
+        self.drawBranches(p, QRect(opt.rect.left(), opt.rect.top(), max(0, item.left() - opt.rect.left()), opt.rect.height()), idx)
+        o = QStyleOptionViewItem(opt)
+        o.rect = QRect(item.left(), opt.rect.top(), max(0, self.viewport().width() - item.left()), opt.rect.height())
+        o.state &= ~(QStyle.State_Selected | QStyle.State_MouseOver | QStyle.State_HasFocus)
+        self.itemDelegate().paint(p, o, idx)
+
+    def mouseMoveEvent(self, e):
+        idx = self.indexAt(e.position().toPoint())
+        idx = idx if idx.isValid() else None
+        if idx != self._hover:
+            self._hover = idx
+            self.viewport().update()
+        super().mouseMoveEvent(e)
+
+    def leaveEvent(self, e):
+        if self._hover is not None:
+            self._hover = None
+            self.viewport().update()
+        super().leaveEvent(e)
+
     def drawBranches(self, p, rect, idx):
         ind = self.indentation()
         depth, par = 0, idx.parent()

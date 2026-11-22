@@ -4,7 +4,7 @@
 - Chat: conversaciones para cualquier tarea.
 - Code: proyectos con arbol de archivos, editor, terminal y el agente trabajando dentro de la carpeta del proyecto."""
 import os, re, sys, json, uuid, time, shutil, threading, ctypes, datetime, subprocess
-from PySide6.QtCore import (Qt, QTimer, Signal, QObject, QSize, QPoint, QRect, QEvent, QPropertyAnimation, QEasingCurve,
+from PySide6.QtCore import (Qt, QTimer, Signal, QObject, QSize, QPoint, QRect, QRectF, QEvent, QPropertyAnimation, QEasingCurve,
                             QParallelAnimationGroup)
 from PySide6.QtGui import QPixmap, QImage, QKeySequence, QShortcut, QGuiApplication, QActionGroup, QCursor, QTransform, QFont, QIcon, QTextCursor
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
@@ -280,7 +280,7 @@ class ImageLabel(QLabel):
         self._scaled_w = -1
         self._rescale(max_w)
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip(tr("Clic para abrir a tamaño completo"))
+        self.setToolTip(tr("Clic para verla en grande"))
 
     def _rescale(self, avail):
         if self.src.isNull():
@@ -303,7 +303,7 @@ class ImageLabel(QLabel):
 
     def mousePressEvent(self, e):
         if os.path.isfile(self.path):
-            osys.open_path(self.path)
+            show_image(self, self.path)
 
 
 def note(text, error=False):
@@ -743,40 +743,22 @@ class StepRow(QWidget):
             self.layout().insertWidget(1, w)
 
     def live(self, info):
-        """Avance de una acción larga (crear una imagen): «Dibujando · paso 2 de 4 · quedan 1 min» y su vista previa."""
-        from . import imagegen as IG
+        """Avance de una acción larga (crear una imagen): un lienzo animado con la fase, el paso y los tiempos, que
+        avanzan cada segundo. No se enseñan las capas a medio hacer: la imagen aparece entera al terminar."""
         if info is getattr(self, "_last_info", None):   # sin novedades desde la última vez (llega cada medio segundo)
             return
         self._last_info = info
         if getattr(self, "live_w", None) is None:
             w = QWidget()
             lv = QVBoxLayout(w)
-            lv.setContentsMargins(30, 0, 6, 6)
+            lv.setContentsMargins(30, 2, 6, 8)
             lv.setSpacing(6)
-            self.live_txt = QLabel()
-            self.live_txt.setObjectName("faint")
-            lv.addWidget(self.live_txt)
-            self.live_img = QLabel()
-            self.live_img.setObjectName("thumb")
-            self.live_img.hide()
-            lv.addWidget(self.live_img, 0, Qt.AlignLeft)
+            self.live_canvas = GenCanvas()
+            lv.addWidget(self.live_canvas, 0, Qt.AlignLeft)
             self.layout().insertWidget(1, w)
-            self.live_w, self._prev_sig = w, None
-        self.live_txt.setText(IG.describe(info))
-        p = info.get("preview")
-        try:
-            sig = (os.path.getmtime(p), os.path.getsize(p)) if p else None
-        except OSError:
-            sig = None
-        if sig and sig != self._prev_sig:
-            pm = QPixmap(p)
-            if not pm.isNull():                          # a medio escribir: se queda la anterior
-                self._prev_sig = sig
-                w, h = info.get("size") or (pm.width(), pm.height())
-                k = min(260.0 / max(1, w), 200.0 / max(1, h))
-                self.live_img.setPixmap(rounded(pm.scaled(max(1, int(w * k)), max(1, int(h * k)), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)))
-                self.live_img.setToolTip(tr("Vista previa: la imagen se va formando en cada paso"))
-                self.live_img.show()
+            self.live_w = w
+            fade_in(w, 300)
+        self.live_canvas.set_info(info)
 
     def result(self, ok, text, image):
         if getattr(self, "live_w", None) is not None:
@@ -933,8 +915,325 @@ class DocCard(QFrame):
         self.setToolTip(path)
 
 
+# ---------------------------------------------------------------- imágenes del chat: visor superpuesto
+GENERATED = {}       # copia interna de una imagen creada -> el archivo real (para «mostrar en la carpeta»)
+
+
+class Lightbox(QWidget):
+    """Una imagen del chat en grande, sobre toda la ventana (como en los programas de chat actuales): fondo oscurecido,
+    flechas a los lados si hay varias, contador y un botón de cerrar. Esc o un clic fuera la cierran; ← → cambian."""
+
+    def __init__(self, win, images, start=0):
+        super().__init__(win)
+        self.images = list(images)
+        self.i = max(0, min(start, len(self.images) - 1))
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.ArrowCursor)
+        self._src, self._scaled, self._hot, self._alpha, self._zones = QPixmap(), None, "", 0.0, {}
+        self._win = win
+        win.installEventFilter(self)
+        self.setGeometry(win.rect())
+        self._load()
+        self.show()
+        self.raise_()
+        self.setFocus()
+        self._t0 = time.time()
+        self._fade = QTimer(self, interval=16, timeout=self._step)
+        if animations_on():
+            self._fade.start()
+        else:
+            self._alpha = 1.0
+
+    def _step(self):
+        self._alpha = min(1.0, (time.time() - self._t0) / 0.16)
+        if self._alpha >= 1.0:
+            self._fade.stop()
+        self.update()
+
+    def _load(self):
+        self._src = QPixmap(self.images[self.i]) if self.images else QPixmap()
+        self._scaled = None
+        self.update()
+
+    def real_path(self):
+        p = self.images[self.i] if self.images else ""
+        return GENERATED.get(p, p)
+
+    def go(self, d):
+        if len(self.images) > 1:
+            self.i = (self.i + d) % len(self.images)
+            self._load()
+
+    def eventFilter(self, obj, e):
+        if obj is self._win and e.type() == QEvent.Resize:
+            self.setGeometry(self._win.rect())
+            self._scaled = None
+        return False
+
+    def _image_rect(self):
+        if self._src.isNull():
+            return QRect()
+        top = self._top()
+        mw, mh = max(80, self.width() - 150), max(80, self.height() - top - 110)
+        k = min(mw / self._src.width(), mh / self._src.height(), 1.0 if min(self._src.width(), self._src.height()) >= 400 else 2.0)
+        w, h = max(1, int(self._src.width() * k)), max(1, int(self._src.height() * k))
+        return QRect((self.width() - w) // 2, top + 30 + (self.height() - top - 110 - h) // 2, w, h)
+
+    def _top(self):
+        """Alto de la barra de título propia de la ventana: ahí los clics son del sistema (mover la ventana), así que
+        el botón de cerrar va por debajo."""
+        return 46 if getattr(self._win, "frameless", False) else 0
+
+    def paintEvent(self, e):
+        from PySide6.QtGui import QPainter, QColor, QPen, QPainterPath
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        p.fillRect(self.rect(), QColor(8, 10, 10, int(222 * self._alpha)))
+        p.setOpacity(self._alpha)
+        r = self._image_rect()
+        self._zones = {}
+        if not r.isNull():
+            dpr = self.devicePixelRatioF() or 1.0
+            if self._scaled is None or self._scaled[0] != (r.width(), r.height()):
+                pm = self._src.scaled(int(r.width() * dpr), int(r.height() * dpr), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                pm.setDevicePixelRatio(dpr)
+                self._scaled = ((r.width(), r.height()), pm)
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(r), 8, 8)
+            p.save()
+            p.setClipPath(path)
+            p.drawPixmap(r.topLeft(), self._scaled[1])
+            p.restore()
+            self._zones["image"] = r
+        else:
+            p.setPen(QColor(230, 235, 233))
+            p.drawText(self.rect(), Qt.AlignCenter, tr("No se pudo leer la imagen."))
+
+        def round_btn(key, cx, cy, glyph):
+            rr = QRect(int(cx - 20), int(cy - 20), 40, 40)
+            self._zones[key] = rr
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(255, 255, 255, 60 if self._hot == key else 30))
+            p.drawEllipse(rr)
+            pen = QPen(QColor(240, 244, 242), 2)
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            p.setPen(pen)
+            if glyph == "x":
+                p.drawLine(int(cx - 6), int(cy - 6), int(cx + 6), int(cy + 6))
+                p.drawLine(int(cx + 6), int(cy - 6), int(cx - 6), int(cy + 6))
+            else:
+                s = 1 if glyph == ">" else -1
+                p.drawLine(int(cx - 3 * s), int(cy - 7), int(cx + 4 * s), int(cy))
+                p.drawLine(int(cx + 4 * s), int(cy), int(cx - 3 * s), int(cy + 7))
+        round_btn("close", self.width() - 38, self._top() + 34, "x")
+        if len(self.images) > 1:
+            mid = self._top() + (self.height() - self._top()) / 2 - 10
+            round_btn("prev", 38, mid, "<")
+            round_btn("next", self.width() - 38, mid, ">")
+        # pie: nombre, contador y dos acciones discretas
+        f = self.font()
+        f.setPointSizeF(9.5)
+        p.setFont(f)
+        fm = p.fontMetrics()
+        name = os.path.basename(self.real_path())
+        cap = name + ("   %d / %d" % (self.i + 1, len(self.images)) if len(self.images) > 1 else "")
+        y = self.height() - 44
+        p.setPen(QColor(236, 240, 238))
+        p.drawText(QRect(0, y, self.width(), 20), Qt.AlignCenter, fm.elidedText(cap, Qt.ElideMiddle, self.width() - 200))
+        links = [("open", tr("Abrir con su programa")), ("folder", tr("Mostrar en la carpeta"))]
+        total = sum(fm.horizontalAdvance(t) for k, t in links) + 28
+        x = (self.width() - total) // 2
+        for k, t in links:
+            w = fm.horizontalAdvance(t)
+            rr = QRect(x - 4, y + 20, w + 8, 20)
+            self._zones[k] = rr
+            p.setPen(QColor(255, 255, 255) if self._hot == k else QColor(170, 182, 176))
+            p.drawText(rr, Qt.AlignCenter, t)
+            x += w + 28
+        p.end()
+
+    def _at(self, pos):
+        for k in ("close", "prev", "next", "open", "folder", "image"):
+            r = self._zones.get(k)
+            if r is not None and r.contains(pos):
+                return k
+        return ""
+
+    def mouseMoveEvent(self, e):
+        hot = self._at(e.position().toPoint())
+        hot = "" if hot == "image" else hot
+        if hot != self._hot:
+            self._hot = hot
+            self.setCursor(Qt.PointingHandCursor if hot else Qt.ArrowCursor)
+            self.update()
+
+    def mousePressEvent(self, e):
+        k = self._at(e.position().toPoint())
+        if k == "prev":
+            self.go(-1)
+        elif k == "next":
+            self.go(1)
+        elif k == "open":
+            osys.open_path(self.real_path())
+        elif k == "folder":
+            reveal(self.real_path())
+        elif k != "image":                       # el botón de cerrar o cualquier punto fuera de la imagen
+            self.close()
+        e.accept()
+
+    def wheelEvent(self, e):
+        if e.angleDelta().y():
+            self.go(-1 if e.angleDelta().y() > 0 else 1)
+        e.accept()
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key_Escape, Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            self.close()
+        elif e.key() in (Qt.Key_Left, Qt.Key_Up, Qt.Key_PageUp):
+            self.go(-1)
+        elif e.key() in (Qt.Key_Right, Qt.Key_Down, Qt.Key_PageDown):
+            self.go(1)
+        else:
+            e.accept()
+
+    def closeEvent(self, e):
+        try:
+            self._win.removeEventFilter(self)
+        except RuntimeError:
+            pass
+        super().closeEvent(e)
+
+
+def show_image(widget, path):
+    """Abre `path` en el visor superpuesto. Si la imagen está en una conversación, las flechas recorren todas las de
+    esa conversación, en su orden."""
+    if not path or not os.path.isfile(path):
+        return None
+    win = widget.window()
+    group = [path]
+    panel = widget
+    while panel is not None and not (hasattr(panel, "cl") and hasattr(panel, "sid")):
+        panel = panel.parentWidget()
+    if panel is not None:
+        found = []
+        for x in panel.col.findChildren(QLabel):
+            q = getattr(x, "path", None)
+            if q and isinstance(x, (Preview, ImageLabel)) and os.path.isfile(q):
+                try:
+                    y = x.mapTo(panel.col, QPoint(0, 0)).y()
+                except RuntimeError:
+                    continue
+                found.append((y, q))
+        found.sort(key=lambda t: t[0])
+        seen, real = [], set()
+        for y, q in found:                         # la misma imagen puede verse dos veces (tarjeta y resumen final)
+            key = os.path.normcase(GENERATED.get(q, q))
+            if key not in real or q == path:
+                if key in real:                    # se queda la que se pulsó
+                    seen = [s for s in seen if os.path.normcase(GENERATED.get(s, s)) != key]
+                real.add(key)
+                seen.append(q)
+        if path in seen:
+            group = seen
+    old = win.findChild(Lightbox)
+    if old is not None:
+        old.close()
+    return Lightbox(win, group, group.index(path))
+
+
+class GenCanvas(QWidget):
+    """Mientras se crea una imagen: un lienzo con su proporción y una animación suave (luces que se mueven y una barra
+    de avance), en vez de las capas a medio hacer del generador. Los tiempos avanzan cada segundo."""
+
+    def __init__(self):
+        super().__init__()
+        self.info = None
+        self.setFixedSize(280, 280)
+        self._t0 = time.time()
+        self._timer = QTimer(self, interval=40 if animations_on() else 500, timeout=self.update)
+        self._timer.start()
+
+    def set_info(self, info):
+        self.info = info
+        w, h = (info.get("size") or (1, 1))
+        k = min(300.0 / max(1, w), 230.0 / max(1, h))
+        size = QSize(max(120, int(w * k)), max(90, int(h * k)))
+        if size != self.size():
+            self.setFixedSize(size)
+        self.update()
+
+    def paintEvent(self, e):
+        import math
+        from PySide6.QtGui import QPainter, QColor, QPainterPath, QLinearGradient, QRadialGradient
+        from . import imagegen as IG
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        path = QPainterPath()
+        path.addRoundedRect(r, 10, 10)
+        p.setClipPath(path)
+        p.fillPath(path, QColor(C["code"]))
+        t = time.time() - self._t0
+        acc = QColor(C["acc"])
+        for n, (sx, sy, ph, rad, al) in enumerate(((0.9, 0.7, 0.0, 0.75, 70), (0.6, 1.1, 2.1, 0.6, 52), (1.3, 0.5, 4.0, 0.5, 40))):
+            cx = r.width() * (0.5 + 0.34 * math.sin(t * 0.45 * sx + ph))
+            cy = r.height() * (0.5 + 0.34 * math.cos(t * 0.38 * sy + ph * 1.3))
+            g = QRadialGradient(cx, cy, max(r.width(), r.height()) * rad)
+            c = QColor(acc) if n != 1 else QColor(C.get("warn", C["acc"]))
+            c.setAlpha(al)
+            g.setColorAt(0.0, c)
+            c2 = QColor(c)
+            c2.setAlpha(0)
+            g.setColorAt(1.0, c2)
+            p.fillRect(r, g)
+        # un brillo que recorre el lienzo en diagonal
+        x = ((t * 0.28) % 1.6 - 0.3) * r.width()
+        sh = QLinearGradient(x - 70, 0, x + 70, 0)
+        sh.setColorAt(0.0, QColor(255, 255, 255, 0))
+        sh.setColorAt(0.5, QColor(255, 255, 255, 22))
+        sh.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.fillRect(r, sh)
+        info = self.info or {}
+        f = self.font()
+        f.setPointSizeF(10)
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QColor(C["tx"]))
+        phase = IG.PHASES.get(info.get("phase") or "preparando", IG.PHASES["preparando"])
+        if info.get("phase") == "dibujando" and info.get("steps"):
+            phase += " · " + tr("paso %d de %d") % (min(info["steps"], (info.get("step") or 0) + 1), info["steps"])
+        p.drawText(r.adjusted(10, 0, -10, -18), Qt.AlignCenter | Qt.TextWordWrap, phase)
+        f.setBold(False)
+        f.setPointSizeF(9)
+        p.setFont(f)
+        p.setPen(QColor(C["mut"]))
+        left = IG.remaining(info)
+        line = tr("llevas %s") % IG.clock(IG.elapsed(info)) + (
+            (" · " + (tr("quedan ~%s") if info.get("guess") else tr("quedan %s")) % IG.clock(left)) if left is not None else "")
+        p.drawText(r.adjusted(10, 26, -10, 0), Qt.AlignCenter, line)
+        # barra de avance (cuando se sabe cuánto queda)
+        frac = IG.fraction(info)
+        bar = QRectF(14, r.height() - 14, r.width() - 28, 4)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(255, 255, 255, 28))
+        p.drawRoundedRect(bar, 2, 2)
+        if frac > 0:
+            p.setBrush(acc)
+            p.drawRoundedRect(QRectF(bar.x(), bar.y(), max(4.0, bar.width() * frac), bar.height()), 2, 2)
+        p.setClipping(False)
+        p.setPen(QColor(C["line"]))
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(path)
+        p.end()
+
+
 class ImageCard(QFrame):
-    """Imagen creada por el agente: en grande, con su nombre y botones para abrirla o verla en su carpeta."""
+    """Imagen creada por el agente: a la vista, con su nombre y medidas debajo. Un clic la abre en grande sobre la
+    ventana (ahí están «Abrir con su programa» y «Mostrar en la carpeta»)."""
 
     def __init__(self, path):
         super().__init__()
@@ -943,28 +1242,17 @@ class ImageCard(QFrame):
         v = QVBoxLayout(self)
         v.setContentsMargins(8, 8, 8, 8)
         v.setSpacing(8)
-        v.addWidget(Preview(path, 480, 360), 0, Qt.AlignLeft)
-        h = QHBoxLayout()
-        h.setSpacing(10)
-        info = QVBoxLayout()
-        info.setSpacing(1)
-        name = ElidedLabel(os.path.basename(path))
-        name.setStyleSheet("font-weight:600")
-        info.addWidget(name)
+        v.addWidget(Preview(path, 380, 300), 0, Qt.AlignLeft)
         pm = QImage(path)
         try:
             size = T._human(os.path.getsize(path))
         except OSError:
             size = ""
-        sub = ElidedLabel(" · ".join(x for x in (tr("Imagen PNG"), "%d × %d" % (pm.width(), pm.height()) if not pm.isNull() else "", size) if x))
+        sub = ElidedLabel(" · ".join(x for x in (os.path.basename(path), "%d × %d" % (pm.width(), pm.height()) if not pm.isNull() else "", size) if x))
         sub.setObjectName("faint")
-        info.addWidget(sub)
-        h.addLayout(info, 1)
-        h.addWidget(btn(tr("Abrir"), "primary", lambda: os.path.isfile(self.path) and osys.open_path(self.path)))
-        h.addWidget(tbtn("act_carpeta_abierta", tr("Mostrar en la carpeta"), lambda: reveal(self.path), size=15))
-        v.addLayout(h)
+        v.addWidget(sub)
         self.setToolTip(path)
-        self.setMaximumWidth(500)
+        self.setMaximumWidth(400)
 
 
 class CanvasCard(QFrame):
@@ -1035,7 +1323,7 @@ class Preview(QLabel):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton and os.path.isfile(self.path):
-            osys.open_path(self.path)
+            show_image(self, self.path)
 
 
 def reveal(path):
@@ -1130,11 +1418,33 @@ class StepsBox(QFrame):
         self.ev_.addWidget(CanvasCard(item, on_open))
         self.extras.show()
 
-    def add_image(self, path):
+    def add_image(self, path, row=None, copy=None, live=False):
         if path and os.path.isfile(path):
-            self.ev_.addWidget(ImageCard(path), 0, Qt.AlignLeft)
-            self.images = getattr(self, "images", []) + [path]      # ya se ve aquí: no se repite al final de la respuesta
+            card = ImageCard(path)
+            self.ev_.addWidget(card, 0, Qt.AlignLeft)
+            self.images = getattr(self, "images", []) + [path]
+            self.cards = getattr(self, "cards", []) + [(card, row, copy)]
             self.extras.show()
+            if live:
+                fade_in(card, 700)                 # aparece entera, de una vez (no por capas)
+
+    def fold_images(self, shown):
+        """Al acabar el turno: las imágenes creadas que ya se ven bajo la respuesta final se pliegan dentro de su
+        acción («Creó la imagen …» se despliega con un clic), como el resto de acciones."""
+        left = []
+        for card, row, copy in getattr(self, "cards", []):
+            try:
+                if row is not None and copy in shown and card.parent() is not None:
+                    self.ev_.removeWidget(card)
+                    row.dl.addWidget(card)
+                    row._chev()
+                    continue
+            except RuntimeError:
+                continue
+            left.append((card, row, copy))
+        self.cards = left
+        if self.ev_.count() == 0:
+            self.extras.hide()
 
     def add_widget(self, w):
         self.ev_.addWidget(w)
@@ -1231,7 +1541,7 @@ def divider(text, icon_name=None, color=None):
 
 
 def worked_line(seconds):
-    """«Trabajó durante 3 min 12 s» entre lo que hizo el agente y su respuesta."""
+    """«Trabajó durante 3 min 12 s»: la línea que cierra un turno con acciones, debajo de la respuesta final."""
     return divider(tr("Trabajó durante %s") % CV.fmt_secs(seconds))
 
 
@@ -2417,7 +2727,7 @@ class ChatPanel(QWidget):
         if not s:
             return
         if self.ev_i > len(s.events):          # la conversacion se recorto (regenerar): reconstruir
-            return self.open_session(self.sid)
+            return self.reload_quiet()
         with s.cond:
             new = s.events[self.ev_i:self.ev_i + 400]
         for ev in new:
@@ -2653,9 +2963,10 @@ class ChatPanel(QWidget):
                     r.needs_setup()
                     r.setup_box = r.box.add_widget(ImageInstallBox(ev["image_setup"], on_continue=self._images_ready, intro=True))
                 if ev["ok"] and ev.get("generated") and r.box is not None:
-                    r.box.add_image(ev["generated"])
-                    if ev.get("image"):                          # su copia en el chat tampoco se repite al final
-                        r.box.images.append(os.path.join(paths.IMG_DIR, ev["image"]))
+                    copy = os.path.join(paths.IMG_DIR, ev["image"]) if ev.get("image") else None
+                    if copy:
+                        GENERATED[copy] = ev["generated"]        # la copia del chat remite al archivo real
+                    r.box.add_image(ev["generated"], r, copy, live=ev["ts"] > time.time() - 5)
                 if ev["ok"] and r.box is not None:
                     for n in (ev.get("images") or [])[1:]:           # el resto de gráficos de un análisis
                         r.box.add_preview(os.path.join(paths.IMG_DIR, n))
@@ -2717,6 +3028,11 @@ class ChatPanel(QWidget):
                 imgs = [p for p in imgs if p not in (getattr(near, "images", None) or [])]
                 if imgs:
                     home.add_gallery(imgs[-4:])
+                    for bx in getattr(self, "boxes", []):    # lo creado ya se ve bajo la respuesta: su tarjeta se pliega
+                        try:
+                            bx.fold_images(set(imgs[-4:]))
+                        except RuntimeError:
+                            pass
             self.turn_blocks = []
             self.turn_images = []
             for b in self.blocks:
@@ -2770,13 +3086,6 @@ class ChatPanel(QWidget):
         self._turn_card = None
         if not rows:
             return
-        t0 = getattr(self, "turn_t0", None)
-        if t0 and ev["ts"] - t0 >= 1:
-            wl = worked_line(ev["ts"] - t0)
-            if anchor is not None:
-                self.cl.insertWidget(self.cl.indexOf(anchor), wl)
-            else:
-                self.add(wl)
         files = self._turn_changes(rows)
         if files:
             card = ChangesCard(files, self._open_changed, self._undo_files)
@@ -2786,6 +3095,9 @@ class ChatPanel(QWidget):
                 anchor.add_extra(card)
             else:
                 self.add(card)
+        t0 = getattr(self, "turn_t0", None)
+        if t0 and ev["ts"] - t0 >= 1:                # cierra el turno: va debajo de todo, también de la respuesta final
+            self._worked = self.add(worked_line(ev["ts"] - t0))
 
     def _abs(self, p):
         p = str(p or "")
@@ -2999,13 +3311,40 @@ class ChatPanel(QWidget):
         self.sync()
         self.changed.emit()
 
+    def reload_quiet(self):
+        """Vuelve a montar la conversación tras recortarla (regenerar, reenviar, volver a un mensaje) sin que se note:
+        no se pinta nada hasta que está entera, sin animaciones de entrada, y queda mostrando el final. Antes se veía
+        vaciarse y rellenarse a tirones."""
+        self.scroll.setUpdatesEnabled(False)
+        try:
+            self.open_session(self.sid)
+            s = self.session()
+            guard = 0
+            while s is not None and self.ev_i < len(s.events) and guard < 500:
+                guard += 1
+                before = self.ev_i
+                self.pump()
+                if self.ev_i == before:
+                    break
+            self.stick = True
+        finally:
+            def done():
+                try:
+                    sb = self.scroll.verticalScrollBar()
+                    sb.setValue(sb.maximum())
+                    self.scroll.setUpdatesEnabled(True)
+                    self.scroll.viewport().update()
+                except RuntimeError:
+                    pass
+            QTimer.singleShot(40, done)             # un instante para que todo tome su tamaño antes de pintarlo
+
     def regenerate(self):
         s = self.session()
         if s:
             err = s.regenerate()
             if err:
                 QMessageBox.information(self, APP_NAME, err)
-            self.open_session(self.sid)
+            self.reload_quiet()
 
     # ---- tus mensajes: editar y reenviar, reintentar, volver a un punto, conversación nueva desde aquí
     def can_rewind(self):
@@ -3063,7 +3402,7 @@ class ChatPanel(QWidget):
             err, files = s.resend(i, text, undo)
         except ValueError as e:
             return QMessageBox.information(self, APP_NAME, str(e))
-        self.open_session(self.sid)
+        self.reload_quiet()
         self._restored(files)
         if err:
             return QMessageBox.information(self, APP_NAME, err)
@@ -3090,7 +3429,7 @@ class ChatPanel(QWidget):
             old, files = s.rewind(i, undo)
         except ValueError as e:
             return QMessageBox.information(self, APP_NAME, str(e))
-        self.open_session(self.sid)
+        self.reload_quiet()
         self._restored(files)
         self.input.setPlainText(old["text"])
         self.pending_imgs = [n for n in old["images"] if os.path.isfile(os.path.join(paths.IMG_DIR, n))]
@@ -4836,6 +5175,14 @@ class Main(QMainWindow):
         """Al abrir: aviso de que se acaba de actualizar, o una versión que ya estaba descargada de antes."""
         if not updater.can_update_in_background():
             return
+        try:                                         # ¿cómo acabó la última actualización «solo con los cambios»?
+            last = updater.patch_result()
+        except Exception:
+            last = None
+        if last and last.get("state") != "ok":
+            # no se aplicó (la versión anterior sigue intacta): esta vez se descargará el paquete completo
+            self.toast(tr("La actualización rápida no se pudo aplicar; %s sigue como estaba y descargará la versión completa.") % APP_NAME,
+                       ms=12000, icon_name="est_aviso", color=C["warn"])
         done = updater.just_updated()
         if done:
             from PySide6.QtGui import QDesktopServices
@@ -5549,6 +5896,7 @@ class Main(QMainWindow):
         if busy and QMessageBox.question(self, tr("Salir"), tr("El agente está trabajando. ¿Detenerlo y salir?")) != QMessageBox.StandardButton.Yes:
             return e.ignore()
         self.code.term.stop()
+        self.hide()                                  # guardar lo leído puede tardar unos segundos: sin ventana a la vista
         core.shutdown()
         self.tray.hide()
         e.accept()
@@ -5562,8 +5910,8 @@ class Main(QMainWindow):
             if upd and (reopen or core.SET.snapshot().get("auto_install_updates", True)):
                 # la versión descargada se instala ahora que Jayth se cierra: en silencio al salir, o con una ventanita
                 # «Actualizando…» y volviendo a abrirlo si se pidió reiniciar
-                updater.install_when_closed(upd, reopen=reopen)
-                reopen = False
+                if updater.install_when_closed(upd, reopen=reopen) is not False:
+                    reopen = False                   # (False: no había nada válido que instalar; si se pidió reiniciar, se reabre tal cual)
         except Exception:
             pass
         if reopen:                                   # reinicio sin actualización (p. ej. cambio de idioma)
@@ -5785,6 +6133,12 @@ def selftest(app):
         from PySide6.QtNetwork import QLocalServer
         return _instance_name().startswith("jayth-") and QLocalServer is not None or "sin canal"
     ok("single_instance", instance_channel)
+
+    def update_parts():                       # actualizaciones con solo los cambios: el módulo va en el paquete y la
+        from . import parches                 # comprobación que usa el intercambio de carpetas contesta bien
+        code = updater.verify_install(__version__)
+        return (code == 0 and updater.verify_install("0.0.0") == 3 and callable(parches.stage)) or "verify_install = %s" % code
+    ok("update_parts", update_parts)
 
     def voice_parts():                        # las piezas de Qt para la voz deben venir en el paquete
         import importlib
