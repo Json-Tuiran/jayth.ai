@@ -19,7 +19,19 @@ from .theme import C, icon
 from .widgets import TextView, ElidedLabel
 from .i18n import tr
 
-KIND_LABEL = {"html": tr("Página web"), "markdown": tr("Documento"), "svg": tr("Dibujo"), "code": tr("Código")}
+KIND_LABEL = {"html": tr("Página web"), "markdown": tr("Documento"), "svg": tr("Dibujo"), "code": tr("Código"), "file": tr("Archivo")}
+
+
+def can_show(path):
+    """¿El lienzo sabe mostrar este archivo del disco? (documentos, imágenes, tablas y cualquier texto)"""
+    from .codeview import TEXT_EXT, IMG_EXT
+    from .docview import DOCS
+    return os.path.isfile(path) and os.path.splitext(path)[1].lower() in (DOCS | IMG_EXT | TEXT_EXT)
+
+
+def file_item(path):
+    from .tools import canvas_file_item
+    return canvas_file_item(path)
 _WEB = [None]          # None = sin probar, False = no disponible, o la clase QWebEngineView
 
 
@@ -231,8 +243,8 @@ class CanvasBridge(QObject):
                 QTimer.singleShot(700, grab)
             web.loadFinished.connect(loaded)
             QTimer.singleShot(6000, grab)            # por si la página nunca dice que terminó
-        else:
-            QTimer.singleShot(650, grab)             # texto: lo que tarda el panel en abrirse y colocarse
+        else:                                        # texto: lo que tarda el panel en abrirse y colocarse
+            QTimer.singleShot(1800 if job["item"].get("kind") == "file" else 650, grab)
 
 
 class CanvasPanel(QWidget):
@@ -253,6 +265,11 @@ class CanvasPanel(QWidget):
         self.editing, self._base, self._drafts, self._hl = False, "", {}, []
         self._md_view = None
         self.stage, self.console_log, self.console_by_path, self.expanded = None, [], {}, False
+        self._filetab = None
+        from PySide6.QtCore import QFileSystemWatcher
+        self._watch = QFileSystemWatcher(self)        # un archivo del disco: se vuelve a mostrar si cambia
+        self._watch.fileChanged.connect(lambda p: self._file_timer.start())
+        self._file_timer = QTimer(self, singleShot=True, interval=500, timeout=self._file_changed)
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
@@ -499,6 +516,13 @@ class CanvasPanel(QWidget):
         if self.editing:                     # llega otro contenido (o el agente cambió este) mientras el usuario edita
             self._stash_draft()
         self.item = dict(item)
+        if self._watch.files():
+            self._watch.removePaths(self._watch.files())
+        if item.get("kind") == "file":
+            self.paths, self.idx, self.user_versions = [item["path"]], 0, []
+            self._watch.addPath(item["path"])
+            self._render()
+            return
         self.paths = versions_of(item)
         want = os.path.normcase(item["path"])
         self.idx = next((i for i, p in enumerate(self.paths) if os.path.normcase(p) == want), len(self.paths) - 1)
@@ -548,6 +572,9 @@ class CanvasPanel(QWidget):
             w = lay.takeAt(0).widget()
             if w is self.stage:
                 w.setParent(None)
+            elif w is self._filetab:
+                self._filetab = None
+                w.deleteLater()
             elif w is not None:
                 w.deleteLater()
 
@@ -612,6 +639,10 @@ class CanvasPanel(QWidget):
             lay.addWidget(box)
 
     def _render(self):
+        if self.item.get("kind") == "file":
+            return self._render_file()
+        self.b_edit.setVisible(True)
+        self.title.setToolTip("")
         kind, text = self.item["kind"], self.text()
         n = len(self.paths)
         self.title.setText(self.item["title"])
@@ -636,6 +667,55 @@ class CanvasPanel(QWidget):
         self.b_view.setChecked(False)
         self.b_view.blockSignals(False)
         self._show_page(self.PREVIEW)
+
+    def _render_file(self):
+        """Un archivo del disco con el mismo visor que el editor: Word, Excel, PowerPoint y PDF en modo lectura,
+        imágenes con zoom, tablas CSV, Markdown y HTML con vista previa, código con colores."""
+        from .codeview import FileTab
+        from .docview import DOC_KIND
+        path = self.item["path"]
+        ext = os.path.splitext(path)[1].lower()
+        self.title.setText(os.path.basename(path))
+        self.title.setToolTip(path)
+        self.sub.setText(DOC_KIND.get(ext) or KIND_LABEL["file"])
+        for w in (self.b_prev, self.b_next, self.ver, self.b_items, self.b_edit, self.b_view):
+            w.setVisible(False)
+        self._clear(self.pv)
+        self.console_log = []
+        if not os.path.isfile(path):
+            msg = QLabel(tr("«%s» ya no existe.") % os.path.basename(path))
+            msg.setObjectName("muted")
+            msg.setAlignment(Qt.AlignCenter)
+            self.pv.addWidget(msg)
+        else:
+            self._filetab = FileTab(path, self.preview_host)
+            if hasattr(self._filetab, "open_file"):        # un enlace del documento a otro archivo: también aquí
+                self._filetab.open_file.connect(lambda p: os.path.isfile(p) and self._open_item(file_item(p)))
+            self.pv.addWidget(self._filetab)
+        self._show_page(self.PREVIEW)
+
+    def _download(self, p):
+        try:
+            from .desktop import download_copy
+        except Exception:
+            return self.save_as()
+        download_copy(self, p)
+
+    def _file_changed(self):
+        """El archivo cambió en el disco (el agente lo volvió a crear, o se guardó desde su programa)."""
+        if not self.item or self.item.get("kind") != "file":
+            return
+        p = self.item["path"]
+        if os.path.isfile(p) and p not in self._watch.files():
+            self._watch.addPath(p)                    # muchos programas lo reemplazan: hay que volver a vigilarlo
+        ft = self._filetab
+        if ft is not None and os.path.isfile(p) and not getattr(ft, "dirty", False):
+            try:
+                ft.reload()
+                return
+            except Exception:
+                pass
+        self._render_file()
 
     def _count_items(self):
         try:
@@ -678,6 +758,13 @@ class CanvasPanel(QWidget):
     def _fill_more(self):
         m = self.more_menu
         m.clear()
+        if self.item and self.item.get("kind") == "file":
+            p = self.item["path"]
+            m.addAction(icon("acc_abrir_externo", C["mut"], 15), tr("Abrir con su programa"), lambda: osys.open_path(p))
+            m.addAction(icon("act_carpeta_abierta", C["mut"], 15), tr("Mostrar en la carpeta"), lambda: osys.reveal(p))
+            m.addAction(icon("acc_copiar", C["mut"], 15), tr("Copiar la ruta"), lambda: QGuiApplication.clipboard().setText(p))
+            m.addAction(icon("acc_descargar", C["mut"], 15), tr("Descargar una copia…"), lambda: self._download(p))
+            return
         a = m.addAction(icon("ui_dividir_h", C["mut"], 15), tr("Ver cambios respecto a la versión anterior"), self.show_diff)
         a.setEnabled(self.idx > 0 and not self.editing)
         m.addSeparator()
@@ -829,6 +916,16 @@ class CanvasPanel(QWidget):
             s = self.web.selectedText()
         elif page == self.PREVIEW and self._md_view is not None:
             s = self._md_view.textCursor().selectedText()
+        elif page == self.PREVIEW and self._filetab is not None:
+            s = ""
+            for w in (getattr(self._filetab, "editor", None), getattr(self._filetab, "preview", None)):
+                if w is not None and w.isVisible():
+                    if hasattr(w, "textCursor"):
+                        s = w.textCursor().selectedText()
+                    elif hasattr(w, "selectedText"):
+                        s = w.selectedText()
+                    if s:
+                        break
         else:
             s = ""
         return s.replace(" ", "\n").replace(" ", "\n").strip()
@@ -836,6 +933,12 @@ class CanvasPanel(QWidget):
     def ask_text(self):
         sel = self.selection()
         t = self.item["title"] if self.item else ""
+        if self.item and self.item.get("kind") == "file":     # el agente necesita la ruta para encontrarlo
+            if not sel:
+                return tr("Sobre «%s» (%s): ") % (t, self.item["path"])
+            if len(sel) > 600:
+                sel = sel[:600].rstrip() + "…"
+            return tr("En «%s» (%s), cambia esta parte:\n«%s»\n\n") % (t, self.item["path"], sel)
         if not sel:
             return tr("En el lienzo «%s»: ") % t
         if len(sel) > 600:

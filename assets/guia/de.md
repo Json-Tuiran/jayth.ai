@@ -200,6 +200,14 @@ einem Bereich neben dem Chat («Im Canvas ansehen»), mit Vorschau und Code. Jed
 - **Exportieren als** (unter «⋯»): ein Dokument als PDF, Word, HTML oder PNG-Bild; eine Webseite als PDF oder Bild;
   eine Zeichnung als PNG, PDF oder HTML; Code als PDF oder HTML. **Im Projekt speichern** kopiert die angezeigte
   Version mit dem Namen des Inhalts in den Arbeitsordner (ohne eine Datei zu ersetzen).
+- **Dokumente im Canvas:** Wenn der Agent eine Word-, Excel-, PowerPoint- oder PDF-Datei erstellt, hat ihre Karte im
+  Chat **Ansehen**, das sie schreibgeschützt im Canvas öffnet (ebenso Bilder, CSV-Tabellen und geänderte Dateien, die du
+  in der Änderungskarte anklickst). Ändert sich die Datei, zeigt der Canvas die neue Fassung. Unter «⋯»: Mit
+  Standard-App öffnen, Im Ordner anzeigen und Pfad kopieren; für Korrekturen gibt **Um eine Änderung bitten**
+  dem Agenten Namen und Pfad.
+- **Kopie herunterladen…** speichert eine Kopie der Datei, wo du willst (beginnend in Downloads): auf der
+  Dokumentkarte, bei jeder Datei der Änderungskarte, in der Bildansicht und unter «⋯» im Canvas. Im Chat bekommen auch
+  die Markdown-, CSV-, HTML-, SVG- und Textdateien, die der Agent erstellt, ihre eigene Karte.
 - Der Pfeil neben dem Titel listet alles auf, was in der Unterhaltung gezeigt wurde, und die Canvas-Schaltfläche in
   der oberen Leiste (sie erscheint, wenn die Unterhaltung etwas im Canvas hat) öffnet und schließt ihn.
 - Der Agent ändert einen Teil, ohne alles neu zu senden (edit_canvas), und liest die aktuelle Version, auch deine

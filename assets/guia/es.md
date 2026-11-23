@@ -181,6 +181,13 @@ panel junto al chat («Ver en el lienzo»), con vista previa y código. Cada cam
 - **Exportar como** (en «⋯»): un documento a PDF, Word, HTML o imagen PNG; una página web a PDF o imagen; un dibujo a
   PNG, PDF o HTML; código a PDF o HTML. **Guardar en el proyecto** copia la versión que ves en la carpeta de trabajo
   con el nombre del contenido (sin sustituir ningún archivo).
+- **Documentos en el lienzo:** cuando el agente crea un Word, Excel, PowerPoint o PDF, su tarjeta en el chat tiene
+  **Ver**, que lo abre en el lienzo en modo lectura (también las imágenes, tablas CSV y archivos cambiados que pulsas
+  en la tarjeta de cambios). Si el archivo cambia, el lienzo muestra lo nuevo. En «⋯»: Abrir con su programa, Mostrar
+  en la carpeta y Copiar la ruta; para corregirlo, **Pedir un cambio** le da al agente el nombre y la ruta.
+- **Descargar una copia…** guarda una copia del archivo donde elijas (empieza en Descargas): está en la tarjeta del
+  documento, en cada archivo de la tarjeta de cambios, en el visor de imágenes y en «⋯» del lienzo. En el chat, los
+  Markdown, CSV, HTML, SVG y textos que crea el agente también tienen su tarjeta.
 - La flecha junto al título lista todo lo mostrado en la conversación, y el botón del lienzo de la barra superior
   (aparece cuando la conversación tiene algo en el lienzo) lo abre y lo cierra.
 - El agente cambia una parte sin reenviarlo todo (edit_canvas) y lee la versión actual, también la tuya (read_canvas).

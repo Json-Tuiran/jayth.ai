@@ -843,7 +843,19 @@ class StepRow(QWidget):
             m = re.search(r"documento \w+ (.+?\.(?:docx|xlsx|pptx|pdf)) \(", text or "", re.I)
             if m:
                 self.doc_card = self.box.add_doc(m.group(1))
+        if ok and self.ev["name"] == "write_file" and self.box is not None and self._in_chat():
+            m = re.search(r"Escrito (.+?) \(\d+ bytes\)", text or "")
+            if m and os.path.splitext(m.group(1))[1].lower() in TEXT_DOCS:
+                self.doc_card = self.box.add_doc(m.group(1))
         self._chev()
+
+    def _in_chat(self):
+        """¿Esta acción está en la conversación del modo chat? (en el panel del agente de Code, un Markdown o un HTML es
+        un archivo más del proyecto y una tarjeta por cada uno estorbaría)"""
+        w = self.parent()
+        while w is not None and not isinstance(w, ChatPanel):
+            w = w.parent()
+        return w is not None and not w.compact
 
     def needs_setup(self):
         """La acción no pudo hacerse porque falta instalar algo (el generador de imágenes): aviso, no error."""
@@ -931,7 +943,36 @@ def summarize_steps(rows):
 
 
 DOC_KIND = {".docx": ("W", "2B579A", tr("Documento de Word")), ".xlsx": ("X", "217346", tr("Hoja de Excel")),
-            ".pptx": ("P", "C43E1C", tr("Presentación de PowerPoint")), ".pdf": ("PDF", "B3261E", tr("Documento PDF"))}
+            ".pptx": ("P", "C43E1C", tr("Presentación de PowerPoint")), ".pdf": ("PDF", "B3261E", tr("Documento PDF")),
+            ".md": ("MD", "4A5568", tr("Documento Markdown")), ".csv": ("CSV", "217346", tr("Tabla CSV")),
+            ".html": ("HTML", "D35F2B", tr("Página web")), ".htm": ("HTML", "D35F2B", tr("Página web")),
+            ".svg": ("SVG", "7C5CC4", tr("Dibujo SVG")), ".txt": ("TXT", "607068", tr("Texto"))}
+# documentos que el agente escribe como texto (write_file) y que en el chat merecen su tarjeta, como los de Office
+TEXT_DOCS = (".md", ".csv", ".html", ".htm", ".svg", ".txt")
+
+
+def download_copy(widget, path):
+    """«Descargar una copia…»: guarda una copia del archivo donde se elija (empezando en Descargas)."""
+    main = widget.window() if widget is not None else None
+    if not os.path.isfile(path):
+        if hasattr(main, "toast"):
+            main.toast(tr("«%s» ya no existe.") % os.path.basename(path), icon_name="est_info")
+        return None
+    from PySide6.QtCore import QStandardPaths
+    d = QStandardPaths.writableLocation(QStandardPaths.DownloadLocation) or os.path.expanduser("~")
+    dst, _ = QFileDialog.getSaveFileName(widget, tr("Descargar una copia"), os.path.join(d, os.path.basename(path)))
+    if not dst or os.path.normcase(os.path.abspath(dst)) == os.path.normcase(os.path.abspath(path)):
+        return None
+    try:
+        shutil.copy2(path, dst)
+    except OSError as e:
+        if hasattr(main, "toast"):
+            main.toast(tr("No se pudo guardar la copia: %s") % e, icon_name="est_error", color=C["bad"])
+        return None
+    if hasattr(main, "toast"):
+        main.toast(tr("Copia guardada: %s") % os.path.basename(dst), action=tr("Mostrar"), on_action=lambda: reveal(dst),
+                   icon_name="ui_check", color=C["ok"])
+    return dst
 
 
 class DocCard(QFrame):
@@ -948,7 +989,8 @@ class DocCard(QFrame):
         badge = QLabel(tag)
         badge.setAlignment(Qt.AlignCenter)
         badge.setFixedSize(38, 46)
-        badge.setStyleSheet("background:#%s; color:white; border-radius:6px; font-weight:700; font-size:%s" % (col, "10pt" if len(tag) > 1 else "15pt"))
+        badge.setStyleSheet("background:#%s; color:white; border-radius:6px; font-weight:700; font-size:%s" % (
+            col, "15pt" if len(tag) == 1 else "10pt" if len(tag) < 4 else "8pt"))
         h.addWidget(badge)
         info = QVBoxLayout()
         info.setSpacing(1)
@@ -963,9 +1005,19 @@ class DocCard(QFrame):
         sub.setObjectName("faint")
         info.addWidget(sub)
         h.addLayout(info, 1)
-        h.addWidget(btn(tr("Abrir"), "primary", lambda: os.path.isfile(self.path) and osys.open_path(self.path)))
+        h.addWidget(btn(tr("Ver"), "primary", self._view))
+        h.addWidget(tbtn("acc_descargar", tr("Descargar una copia…"), lambda: download_copy(self, self.path), size=15))
+        h.addWidget(tbtn("acc_abrir_externo", tr("Abrir con su programa"), lambda: os.path.isfile(self.path) and osys.open_path(self.path), size=15))
         h.addWidget(tbtn("act_carpeta_abierta", tr("Mostrar en la carpeta"), lambda: reveal(self.path), size=15))
         self.setToolTip(path)
+
+    def _view(self):
+        """Verlo en el lienzo, junto a la conversación (si no se puede, con su programa)."""
+        main = self.window()
+        if hasattr(main, "open_file_in_canvas"):
+            main.open_file_in_canvas(self.path)
+        elif os.path.isfile(self.path):
+            osys.open_path(self.path)
 
 
 # ---------------------------------------------------------------- imágenes del chat: visor superpuesto
@@ -1097,7 +1149,7 @@ class Lightbox(QWidget):
         y = self.height() - 44
         p.setPen(QColor(236, 240, 238))
         p.drawText(QRect(0, y, self.width(), 20), Qt.AlignCenter, fm.elidedText(cap, Qt.ElideMiddle, self.width() - 200))
-        links = [("open", tr("Abrir con su programa")), ("folder", tr("Mostrar en la carpeta"))]
+        links = [("open", tr("Abrir con su programa")), ("folder", tr("Mostrar en la carpeta")), ("save", tr("Descargar una copia"))]
         total = sum(fm.horizontalAdvance(t) for k, t in links) + 28
         x = (self.width() - total) // 2
         for k, t in links:
@@ -1110,7 +1162,7 @@ class Lightbox(QWidget):
         p.end()
 
     def _at(self, pos):
-        for k in ("close", "prev", "next", "open", "folder", "image"):
+        for k in ("close", "prev", "next", "open", "folder", "save", "image"):
             r = self._zones.get(k)
             if r is not None and r.contains(pos):
                 return k
@@ -1134,6 +1186,8 @@ class Lightbox(QWidget):
             osys.open_path(self.real_path())
         elif k == "folder":
             reveal(self.real_path())
+        elif k == "save":
+            download_copy(self, self.real_path())
         elif k != "image":                       # el botón de cerrar o cualquier punto fuera de la imagen
             self.close()
         e.accept()
@@ -1720,6 +1774,10 @@ class ChangesCard(QFrame):
                 l.setStyleSheet("color:%s; font-size:9pt" % col)
                 rh.addWidget(l)
                 l.setVisible(bool(txt))                # (después de colocarla: si no, sale un instante como ventanita)
+            dl = tbtn("acc_descargar", tr("Descargar una copia…"), lambda _=False, f=f: download_copy(self, f["path"]), size=13)
+            rh.addWidget(dl)
+            dl.setVisible(os.path.isfile(f["path"]))  # (después de colocarlo: si no, sale un instante como ventanita)
+            row._dl = dl
             b = tbtn("acc_refrescar", tr("Devolver este archivo a como estaba"), lambda _=False, f=f: self.on_undo([f]), size=13)
             rh.addWidget(b)
             row.clicked.connect(lambda f=f: on_open(f["path"]))
@@ -1752,6 +1810,8 @@ class ChangesCard(QFrame):
         left = 0
         for f, row, name, note_l, b in self.rows:
             b.setVisible(f["can_undo"] and not f["undone"])
+            if getattr(row, "_dl", None) is not None:   # deshecho un archivo nuevo, ya no hay nada que descargar
+                row._dl.setVisible(os.path.isfile(f["path"]))
             left += bool(f["can_undo"] and not f["undone"])
             if f["undone"]:
                 name.setStyleSheet("color:%s; text-decoration: line-through" % C["faint"])
@@ -3625,8 +3685,11 @@ class ChatPanel(QWidget):
 
     def _open_changed(self, path):
         if os.path.isfile(path):
+            from .canvas import can_show
             if self.can_edit(path):
                 self.open_in_editor(path)
+            elif can_show(path):                     # Word, PDF, imágenes… (o cualquier texto, en el modo chat)
+                self.main.open_file_in_canvas(path)
             else:
                 osys.open_path(path)
         elif os.path.isdir(path):
@@ -5422,6 +5485,15 @@ class Main(QMainWindow):
         self.set_canvas(True)
         self._sync_canvas_btn()
 
+    def open_file_in_canvas(self, path):
+        """Un archivo del disco en el lienzo, con el visor del editor; si el lienzo no sabe mostrarlo, con su programa."""
+        from .canvas import can_show, file_item
+        if not os.path.isfile(path):
+            return self.toast(tr("«%s» ya no existe.") % os.path.basename(path), icon_name="est_info")
+        if not can_show(path):
+            return osys.open_path(path)
+        self.open_canvas(file_item(path))
+
     def _canvas_expand(self, on):
         """El lienzo a toda la ventana: se oculta la conversación (vuelve con Esc, al cerrar o al pedir un cambio)."""
         if on:
@@ -5449,7 +5521,8 @@ class Main(QMainWindow):
         sid = getattr(self.current_panel(), "sid", None)
         items = T.canvas_items(sid) if sid else []
         cur = self.canvas.item
-        if cur and os.path.isfile(cur.get("path", "")) and (not items or os.path.dirname(cur["path"]) == os.path.dirname(items[0]["path"])):
+        if cur and os.path.isfile(cur.get("path", "")) and (cur.get("kind") == "file" or not items or
+                                                             os.path.dirname(cur["path"]) == os.path.dirname(items[0]["path"])):
             self.set_canvas(True)
         elif items:
             self.open_canvas(items[0])

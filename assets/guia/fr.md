@@ -208,6 +208,14 @@ nouvelle version (v1 sur n).
 - **Exporter en** (dans « ⋯ ») : un document en PDF, Word, HTML ou image PNG ; une page web en PDF ou image ; un
   dessin en PNG, PDF ou HTML ; du code en PDF ou HTML. **Enregistrer dans le projet** copie la version affichée dans le
   dossier de travail avec le nom du contenu (sans remplacer aucun fichier).
+- **Documents sur le canevas :** quand l'agent crée un Word, Excel, PowerPoint ou PDF, sa carte dans le chat a
+  **Voir**, qui l'ouvre sur le canevas en lecture seule (ainsi que les images, tableaux CSV et fichiers modifiés que
+  vous cliquez dans la carte des modifications). Si le fichier change, le canevas affiche la nouvelle version. Dans
+  « ⋯ » : Ouvrir avec son application, Afficher dans le dossier et Copier le chemin ; pour le corriger, **Demander une
+  modification** donne à l'agent le nom et le chemin.
+- **Télécharger une copie…** enregistre une copie du fichier où vous voulez (en commençant par Téléchargements) :
+  sur la carte du document, sur chaque fichier de la carte des modifications, dans la visionneuse d'images et dans
+  « ⋯ » du canevas. Dans le chat, les fichiers Markdown, CSV, HTML, SVG et texte créés par l'agent ont aussi leur carte.
 - La flèche à côté du titre liste tout ce qui a été affiché dans la conversation, et le bouton du canevas de la barre
   supérieure (il apparaît quand la conversation a quelque chose sur le canevas) l'ouvre et le ferme.
 - L'agent change une partie sans tout renvoyer (edit_canvas) et lit la version actuelle, la vôtre aussi (read_canvas).

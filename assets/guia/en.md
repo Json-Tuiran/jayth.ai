@@ -184,6 +184,13 @@ next to the chat («View on the canvas»), with preview and code. Each change is
 - **Export as** (in «⋯»): a document to PDF, Word, HTML or PNG image; a web page to PDF or image; a drawing to PNG,
   PDF or HTML; code to PDF or HTML. **Save to the project** copies the version you see to the working folder with the
   content's name (without replacing any file).
+- **Documents on the canvas:** when the agent creates a Word, Excel, PowerPoint or PDF file, its card in the chat has
+  **View**, which opens it on the canvas in read-only mode (also images, CSV tables and changed files you click in the
+  changes card). If the file changes, the canvas shows the new version. In «⋯»: Open with its app, Show in folder
+  and Copy the path; to fix something, **Ask for a change** gives the agent the name and the path.
+- **Download a copy…** saves a copy of the file wherever you choose (starting in Downloads): it is on the document
+  card, on each file of the changes card, in the image viewer and in the canvas «⋯». In the chat, the Markdown, CSV,
+  HTML, SVG and text files the agent creates get their own card too.
 - The arrow next to the title lists everything shown in the conversation, and the canvas button in the top bar (it
   appears when the conversation has something on the canvas) opens and closes it.
 - The agent changes a part without resending everything (edit_canvas) and reads the current version, yours too

@@ -189,6 +189,13 @@ pannello accanto alla chat («Vedi nel canvas»), con anteprima e codice. Ogni m
 - **Esporta come** (in «⋯»): un documento in PDF, Word, HTML o immagine PNG; una pagina web in PDF o immagine; un
   disegno in PNG, PDF o HTML; il codice in PDF o HTML. **Salva nel progetto** copia la versione che vedi nella cartella
   di lavoro con il nome del contenuto (senza sostituire alcun file).
+- **Documenti nel canvas:** quando l'agente crea un Word, Excel, PowerPoint o PDF, la sua scheda nella chat ha
+  **Mostra**, che lo apre nel canvas in sola lettura (anche immagini, tabelle CSV e file modificati che clicchi nella
+  scheda delle modifiche). Se il file cambia, il canvas mostra la nuova versione. In «⋯»: Apri con la sua app,
+  Mostra nella cartella e Copia il percorso; per correggerlo, **Chiedi una modifica** passa all'agente nome e percorso.
+- **Scarica una copia…** salva una copia del file dove vuoi (partendo da Download): è sulla scheda del documento,
+  su ogni file della scheda delle modifiche, nel visualizzatore di immagini e in «⋯» del canvas. Nella chat, anche i
+  file Markdown, CSV, HTML, SVG e di testo creati dall'agente hanno la loro scheda.
 - La freccia accanto al titolo elenca tutto ciò che è stato mostrato nella conversazione, e il pulsante del canvas
   nella barra superiore (compare quando la conversazione ha qualcosa nel canvas) lo apre e lo chiude.
 - L'agente cambia una parte senza reinviare tutto (edit_canvas) e legge la versione attuale, anche la tua

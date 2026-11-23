@@ -186,6 +186,13 @@ painel ao lado do chat («Ver na tela»), com prévia e código. Cada alteraçã
 - **Exportar como** (em «⋯»): um documento para PDF, Word, HTML ou imagem PNG; uma página web para PDF ou imagem; um
   desenho para PNG, PDF ou HTML; código para PDF ou HTML. **Salvar no projeto** copia a versão que você vê para a pasta
   de trabalho com o nome do conteúdo (sem substituir nenhum arquivo).
+- **Documentos na tela:** quando o agente cria um Word, Excel, PowerPoint ou PDF, o cartão no chat tem **Ver**, que o
+  abre na tela em modo leitura (também imagens, tabelas CSV e arquivos alterados que você clica no cartão de
+  alterações). Se o arquivo mudar, a tela mostra o novo. Em «⋯»: Abrir com o app padrão, Mostrar na pasta e Copiar o
+  caminho; para corrigi-lo, **Pedir uma alteração** passa ao agente o nome e o caminho.
+- **Baixar uma cópia…** salva uma cópia do arquivo onde você escolher (começa em Downloads): está no cartão do
+  documento, em cada arquivo do cartão de alterações, no visualizador de imagens e em «⋯» da tela. No chat, os
+  Markdown, CSV, HTML, SVG e textos que o agente cria também têm seu cartão.
 - A seta ao lado do título lista tudo o que foi mostrado na conversa, e o botão da tela na barra superior (aparece
   quando a conversa tem algo na tela) a abre e fecha.
 - O agente altera uma parte sem reenviar tudo (edit_canvas) e lê a versão atual, também a sua (read_canvas).

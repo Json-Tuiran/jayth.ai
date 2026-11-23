@@ -2767,6 +2767,14 @@ CANVAS_EXT = {"html": ".html", "markdown": ".md", "svg": ".svg", "code": ".txt"}
 CODE_EXT = {"python": ".py", "javascript": ".js", "typescript": ".ts", "json": ".json", "css": ".css", "sql": ".sql", "bash": ".sh",
             "powershell": ".ps1", "c": ".c", "cpp": ".cpp", "java": ".java", "go": ".go", "rust": ".rs", "html": ".html"}
 _KIND_OF_EXT = {".html": "html", ".htm": "html", ".md": "markdown", ".svg": "svg"}
+# archivos que el lienzo muestra tal cual con su visor (no se copian como texto): documentos, imágenes y tablas
+CANVAS_FILE_EXT = {".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".csv"}
+
+
+def canvas_file_item(path):
+    """Un archivo del disco para verlo en el lienzo (solo lectura para documentos; no se guarda en el índice)."""
+    p = os.path.abspath(path)
+    return {"title": os.path.basename(p), "kind": "file", "path": p, "version": 1, "slug": "", "language": "", "user": []}
 
 
 # ---- contenidos del lienzo: cada conversación tiene su carpeta (data/canvas/<conversación>) con las versiones de cada
@@ -2900,9 +2908,16 @@ def _canvas_result(item, ctx, text):
       "dibujos o diagramas (kind=svg) y programas completos (kind=code). Para cambiar lo que ya está, usa edit_canvas.",
       {"title": S("Título corto del contenido"), "kind": S("html, markdown, svg o code"), "content": S("Contenido completo"),
        "language": S("Lenguaje, solo para kind=code (python, javascript…)"),
-       "path": S("O un archivo ya hecho que mostrar (en vez de copiar su contenido en content)")}, ["title"])
+       "path": S("O un archivo ya hecho que mostrar (también Word, Excel, PowerPoint, PDF o imágenes)")}, ["title"])
 def show_canvas(a, ctx):
     content = str(a.get("content") or "")
+    if a.get("path") and not content.strip() and os.path.splitext(str(a["path"]))[1].lower() in CANVAS_FILE_EXT:
+        p = ctx.path(str(a["path"]))
+        if not os.path.isfile(p):
+            raise missing(p, ctx)
+        item = canvas_file_item(p)
+        return _canvas_result(item, ctx, "Mostrado en el lienzo: el archivo «%s», tal cual (solo lectura). El usuario ya lo ve; "
+                                         "no repitas su contenido en tu respuesta." % item["title"])
     if a.get("path") and not content.strip():       # un archivo que ya existe: se lee aquí (el modelo no tiene que copiarlo)
         p = ctx.path(str(a["path"]))
         if not os.path.isfile(p):
