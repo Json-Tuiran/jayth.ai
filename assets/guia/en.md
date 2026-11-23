@@ -167,8 +167,27 @@ their width back.
 
 ## Canvas
 
-For web pages, long documents, SVG diagrams or programs the user wants to see: the agent shows them in a panel next
-to the chat (“View on canvas”), with preview and code, versions (v1 of n) and the option to save them.
+For web pages, long documents, SVG diagrams or programs the user wants to see: the agent shows them in a panel
+next to the chat («View on the canvas»), with preview and code. Each change is a new version (v1 of n).
+
+- **Edit** (the pencil): you change the content yourself, with syntax colors and the preview below while you type.
+  **Save version** (Ctrl+S) saves it as a new version marked as yours; **Discard** leaves it as it was. The agent learns
+  about your change in your next message and starts from your version.
+- **Ask for a change** (the speech bubble): select part of the canvas and press the button; the chat is ready with that
+  fragment so you can write what to change.
+- **See changes** (in «⋯»): what changed from the previous version, added in green and removed in red. «⋯» also has
+  Copy, Save as… and Open in the browser.
+- **Web pages:** above the page you choose the width (Responsive, Phone, Tablet or Desktop), the zoom and Reload.
+  **Console** shows the errors and messages from its JavaScript; when there are errors, **Ask to fix it** brings them to
+  the chat. The agent also receives them when it shows or changes the page.
+- **Expand** (next to the X): the canvas takes the whole window; Esc puts it back next to the chat.
+- **Export as** (in «⋯»): a document to PDF, Word, HTML or PNG image; a web page to PDF or image; a drawing to PNG,
+  PDF or HTML; code to PDF or HTML. **Save to the project** copies the version you see to the working folder with the
+  content's name (without replacing any file).
+- The arrow next to the title lists everything shown in the conversation, and the canvas button in the top bar (it
+  appears when the conversation has something on the canvas) opens and closes it.
+- The agent changes a part without resending everything (edit_canvas) and reads the current version, yours too
+  (read_canvas).
 
 ## Images
 

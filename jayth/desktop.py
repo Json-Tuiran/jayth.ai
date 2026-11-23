@@ -412,6 +412,8 @@ STEP = {  # herramienta: (infinitivo, pasado, objeto)
     "create_document": (tr("crear el documento"), tr("Creó el documento"), lambda a: _b(a.get("path"))),
     "run_python": (tr("analizar con Python"), tr("Analizó con Python"), lambda a: ""),
     "show_canvas": (tr("mostrar en el lienzo"), tr("Mostró en el lienzo"), lambda a: tr("«%s»") % _q(a.get("title"), 50)),
+    "edit_canvas": (tr("cambiar el lienzo"), tr("Cambió el lienzo"), lambda a: tr("«%s»") % _q(a.get("title") or tr("lo último"), 50)),
+    "read_canvas": (tr("leer el lienzo"), tr("Leyó el lienzo"), lambda a: tr("«%s»") % _q(a.get("title") or tr("lo último"), 50)),
     "search_knowledge": (tr("buscar en tu conocimiento"), tr("Buscó en tu conocimiento"), lambda a: tr("«%s»") % _q(a.get("query"), 50)),
     "edit_file": (tr("editar"), tr("Editó"), lambda a: _b(a.get("path"))),
     "list_dir": (tr("listar"), tr("Listó"), lambda a: _b(a.get("path")) or tr("la carpeta de trabajo")),
@@ -482,7 +484,7 @@ WINDOW_ACT = {"maximize": (tr("maximizar la ventana"), tr("Maximizó la ventana"
 # mientras se ejecuta: «Escribiendo calculadora.py…», «Ejecutando python app.py…»
 GERUND = {
     "read_file": tr("Leyendo"), "write_file": tr("Escribiendo"), "create_document": tr("Creando el documento"), "run_python": tr("Analizando con Python"),
-    "show_canvas": tr("Preparando el lienzo"), "edit_file": tr("Editando"), "list_dir": tr("Explorando"), "search_files": tr("Buscando"),
+    "show_canvas": tr("Preparando el lienzo"), "edit_canvas": tr("Cambiando el lienzo"), "read_canvas": tr("Leyendo el lienzo"), "edit_file": tr("Editando"), "list_dir": tr("Explorando"), "search_files": tr("Buscando"),
     "run_command": tr("Ejecutando"), "open_target": tr("Abriendo"), "wait": tr("Esperando"), "web_fetch": tr("Leyendo"), "web_search": tr("Buscando en la web"),
     "download_file": tr("Descargando"), "screenshot": tr("Capturando la pantalla"), "click": tr("Haciendo clic"), "move_mouse": tr("Moviendo el ratón"),
     "scroll": tr("Desplazando"), "type_text": tr("Escribiendo"), "press_keys": tr("Pulsando"), "list_windows": tr("Revisando las ventanas"),
@@ -827,7 +829,7 @@ class StepRow(QWidget):
         denied = self.phase == "denied"           # «No se permitió…» ya lo dice; el texto para el modelo sobra
         if text and not denied:
             self.add_detail(lambda: mono(text, max_h=300))
-        if image and self.ev["name"] != "show_canvas":     # (la captura del lienzo es para el modelo: el usuario ya tiene el lienzo)
+        if image and self.ev["name"] not in ("show_canvas", "edit_canvas"):     # (la captura del lienzo es para el modelo: el usuario ya tiene el lienzo)
             # la imagen queda a la vista bajo las acciones (también con el resumen plegado)
             p = os.path.join(paths.IMG_DIR, image)
             if self.box is not None:
@@ -884,7 +886,7 @@ GROUP = {
     "browser_open": (tr("abrió una página"), tr("abrió %d páginas")), "browser_read": (tr("leyó la página"), tr("leyó %d veces la página")),
     "browser_click": (tr("pulsó en la página"), tr("pulsó %d veces en la página")), "browser_type": (tr("escribió en la página"), tr("rellenó %d campos")),
     "browser_nav": (tr("navegó por la página"), tr("navegó %d veces")), "browser_screenshot": (tr("capturó la página"), tr("capturó %d veces la página")),
-    "run_python": (tr("analizó los datos con Python"), tr("hizo %d análisis con Python")), "show_canvas": (tr("mostró algo en el lienzo"), tr("actualizó el lienzo %d veces")),
+    "run_python": (tr("analizó los datos con Python"), tr("hizo %d análisis con Python")), "show_canvas": (tr("mostró algo en el lienzo"), tr("actualizó el lienzo %d veces")), "edit_canvas": (tr("cambió el lienzo"), tr("cambió el lienzo %d veces")), "read_canvas": (tr("leyó el lienzo"), tr("leyó el lienzo %d veces")),
     "generate_image": (tr("creó una imagen"), tr("creó %d imágenes")),
     "search_knowledge": (tr("buscó en tu conocimiento"), tr("hizo %d búsquedas en tu conocimiento")),
 }
@@ -5007,6 +5009,7 @@ class Main(QMainWindow):
         self.body_split.addWidget(self.pages)
         self.canvas = CanvasPanel(self)
         self.canvas.closed.connect(lambda: self.set_canvas(False))
+        self.canvas.expand_changed.connect(self._canvas_expand)
         self.canvas.hide()
         self.body_split.addWidget(self.canvas)
         self.body_split.setStretchFactor(0, 1)
@@ -5228,6 +5231,9 @@ class Main(QMainWindow):
         h.addWidget(self.b_temp)
         self.b_web = tbtn("herr_espacio_mundo", tr("Navegador de Jayth: navega tú o pide al agente que use una web por ti"), lambda: self.set_browser(None))
         h.addWidget(self.b_web)
+        self.b_canvas = tbtn("uij_panel", tr("Lienzo de esta conversación"), lambda: self.toggle_canvas())
+        self.b_canvas.hide()                          # solo si la conversación ya mostró algo en el lienzo
+        h.addWidget(self.b_canvas)
         self.b_layout = tbtn("act_layout_ui", tr("Distribución de paneles"))
         self.b_layout.setPopupMode(QToolButton.InstantPopup)
         self.layout_menu = QMenu(self)
@@ -5414,6 +5420,40 @@ class Main(QMainWindow):
             return self.toast(tr("Ese contenido del lienzo ya no existe."), icon_name="est_aviso", color=C["warn"])
         self.canvas.load(item)
         self.set_canvas(True)
+        self._sync_canvas_btn()
+
+    def _canvas_expand(self, on):
+        """El lienzo a toda la ventana: se oculta la conversación (vuelve con Esc, al cerrar o al pedir un cambio)."""
+        if on:
+            self.set_canvas(True)
+        self.pages.setVisible(not on)
+
+    def _sync_canvas_btn(self):
+        """El botón del lienzo aparece cuando la conversación actual tiene algo en él, y se resalta si está abierto."""
+        b = getattr(self, "b_canvas", None)
+        if b is None:
+            return
+        try:
+            sid = getattr(self.current_panel(), "sid", None)
+            items = T.canvas_items(sid) if sid else []
+        except Exception:
+            items = []
+        on = hasattr(self, "canvas") and not self.canvas.isHidden()
+        b.setVisible(bool(items) or on)
+        b.setIcon(icon("uij_panel", C["acc"] if on else C["mut"], 18))
+
+    def toggle_canvas(self):
+        """Abre el lienzo con lo último de esta conversación (o lo que ya mostraba), o lo cierra."""
+        if not self.canvas.isHidden():
+            return self.set_canvas(False)
+        sid = getattr(self.current_panel(), "sid", None)
+        items = T.canvas_items(sid) if sid else []
+        cur = self.canvas.item
+        if cur and os.path.isfile(cur.get("path", "")) and (not items or os.path.dirname(cur["path"]) == os.path.dirname(items[0]["path"])):
+            self.set_canvas(True)
+        elif items:
+            self.open_canvas(items[0])
+        self._sync_canvas_btn()
 
     # ---- navegador integrado (comparte el sitio del lienzo: se ve uno u otro)
     def browser_panel(self):
@@ -5449,6 +5489,8 @@ class Main(QMainWindow):
         self.b_web.setIcon(icon("herr_espacio_mundo", C["acc"] if on else C["mut"], 18))
 
     def set_canvas(self, on):
+        if not on and getattr(self.canvas, "expanded", False):
+            self.canvas.toggle_expand()          # el chat vuelve antes de cerrar el lienzo ampliado
         if on and self.browser is not None and not self.browser.isHidden():
             self.set_browser(False)
         if on == (not self.canvas.isHidden()):
@@ -5460,6 +5502,7 @@ class Main(QMainWindow):
             if size < total * 0.35:              # nunca se abre como una tira estrecha
                 size = int(total * 0.52)
         panels.set_visible(self.body_split, self.canvas, on, animated=animations_on() and self.isVisible(), size=size)
+        self._sync_canvas_btn()
 
     def _tray(self):
         self.tray = QSystemTrayIcon(make_icon(), self)
@@ -6465,6 +6508,7 @@ class Main(QMainWindow):
         self.b_temp.setVisible(self.mode == "chat")
         self.b_temp.setChecked(temp_on)
         self.b_folder.setToolTip(tr("Carpeta de trabajo: %s") % panel.workspace())
+        self._sync_canvas_btn()
         in_code = self.mode == "code" and self.code.project is not None
         for b, w, ico in ((self.b_tree, self.code.left, "pan_explorador"), (self.b_term, self.code.term, "pan_consola"),
                           (self.b_agent, self.code.chat, "mat_comentario")):

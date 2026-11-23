@@ -1191,6 +1191,79 @@ def _pdf_write(path, pdf, title):
     os.replace(path + ".tmp", path)
 
 
+def _html_inline(text):
+    out = []
+    for t, f in inline(text):
+        t = x(t)
+        if f.get("code"):
+            t = "<code>%s</code>" % t
+        if f.get("b"):
+            t = "<strong>%s</strong>" % t
+        if f.get("i"):
+            t = "<em>%s</em>" % t
+        if f.get("link"):
+            t = '<a href="%s">%s</a>' % (x(f["link"]), t)
+        out.append(t)
+    return "".join(out)
+
+
+HTML_CSS = ("body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;max-width:820px;margin:40px auto;padding:0 24px;"
+            "line-height:1.6;color:#1b1f1d;background:#fff}h1,h2,h3{line-height:1.25}code,pre{font-family:Consolas,Menlo,monospace}"
+            "code{background:#f1f3f2;padding:1px 4px;border-radius:4px}pre{background:#f4f6f5;padding:12px 14px;border-radius:8px;"
+            "overflow:auto}pre code{background:none;padding:0}table{border-collapse:collapse;margin:12px 0}th,td{border:1px solid #d6dcd9;"
+            "padding:6px 10px}th{background:#eef2f0}blockquote{margin:0;padding:4px 16px;border-left:4px solid #cfd8d3;color:#4a5550}"
+            "img{max-width:100%}hr{border:0;border-top:1px solid #d6dcd9}.salto{page-break-after:always}")
+
+
+def md_html(md, title=""):
+    """Markdown -> documento HTML completo, con un estilo sobrio para leer o imprimir."""
+    body = []
+    for b in parse(md):
+        k = b[0]
+        if k == "h":
+            body.append("<h%d>%s</h%d>" % (b[1], _html_inline(b[2]), b[1]))
+        elif k == "p":
+            body.append("<p>%s</p>" % _html_inline(b[1]))
+        elif k == "code":
+            body.append("<pre><code>%s</code></pre>" % x(b[1]))
+        elif k == "hr":
+            body.append("<hr>")
+        elif k == "pagebreak":
+            body.append('<div class="salto"></div>')
+        elif k == "quote":
+            body.append("<blockquote>%s</blockquote>" % _html_inline(b[1]))
+        elif k == "img":
+            body.append('<p><img src="%s" alt="%s"></p>' % (x(b[1]), x(b[2])))
+        elif k == "table":
+            head, rows, aligns = b[1], b[2], b[3]
+            al = lambda j: ' style="text-align:%s"' % aligns[j] if j < len(aligns) and aligns[j] != "left" else ""
+            t = ["<table><thead><tr>%s</tr></thead><tbody>" % "".join("<th%s>%s</th>" % (al(j), _html_inline(c)) for j, c in enumerate(head))]
+            t += ["<tr>%s</tr>" % "".join("<td%s>%s</td>" % (al(j), _html_inline(c)) for j, c in enumerate(r)) for r in rows]
+            body.append("".join(t) + "</tbody></table>")
+        elif k in ("ul", "ol"):
+            out, stack = [], []                       # listas anidadas por nivel
+            for lvl, txt, kind in b[1]:
+                while len(stack) > lvl + 1:
+                    out.append("</li></%s>" % stack.pop())
+                if len(stack) == lvl + 1:
+                    out.append("</li>")
+                while len(stack) < lvl + 1:
+                    stack.append(kind)
+                    out.append("<%s>" % kind)
+                out.append("<li>%s" % _html_inline(txt))
+            while stack:
+                out.append("</li></%s>" % stack.pop())
+            body.append("".join(out))
+    return ('<!doctype html>\n<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            "<title>%s</title><style>%s</style></head>\n<body>\n%s\n</body></html>\n" % (x(title or "Documento"), HTML_CSS, "\n".join(body)))
+
+
+def write_html(path, md, title=""):
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(md_html(md, title))
+    return {"path": path}
+
+
 WRITERS = {".docx": write_docx, ".xlsx": write_xlsx, ".pptx": write_pptx, ".pdf": write_pdf}
 
 

@@ -183,9 +183,27 @@ Browsers werden die anderen Bereiche schmaler, beim Schließen erhalten sie ihre
 
 ## Canvas
 
-Für Webseiten, lange Dokumente, SVG-Diagramme oder Programme, die der Nutzer sehen möchte: Der Agent zeigt sie in einem
-Bereich neben dem Chat („Im Canvas ansehen“), mit Vorschau und Code, Versionen (v1 von n) und der Möglichkeit, sie zu
-speichern.
+Für Webseiten, lange Dokumente, SVG-Diagramme oder Programme, die der Nutzer sehen will: Der Agent zeigt sie in
+einem Bereich neben dem Chat («Im Canvas ansehen»), mit Vorschau und Code. Jede Änderung ist eine neue Version (v1 von n).
+
+- **Bearbeiten** (der Stift): Du änderst den Inhalt selbst, mit Syntaxfarben und der Vorschau darunter, während du
+  schreibst. **Version speichern** (Strg+S) speichert ihn als neue, als deine markierte Version; **Verwerfen** lässt
+  alles, wie es war. Der Agent erfährt von deiner Änderung mit deiner nächsten Nachricht und geht von deiner Version aus.
+- **Um eine Änderung bitten** (die Sprechblase): Markiere einen Teil des Canvas und klicke auf die Schaltfläche; der
+  Chat ist mit diesem Ausschnitt vorbereitet, damit du schreibst, was geändert werden soll.
+- **Änderungen ansehen** (unter «⋯»): was sich gegenüber der vorherigen Version geändert hat, Hinzugefügtes grün,
+  Entferntes rot. Unter «⋯» gibt es auch Kopieren, Speichern unter… und Im Browser öffnen.
+- **Webseiten:** Über der Seite wählst du die Breite (Flexibel, Handy, Tablet oder Desktop), den Zoom und Neu laden.
+  **Konsole** zeigt die Fehler und Meldungen ihres JavaScripts; bei Fehlern bringt **Beheben lassen** sie in den Chat.
+  Der Agent erhält sie auch, wenn er die Seite zeigt oder ändert.
+- **Vergrößern** (neben dem X): Der Canvas füllt das ganze Fenster; mit Esc kommt er wieder neben den Chat.
+- **Exportieren als** (unter «⋯»): ein Dokument als PDF, Word, HTML oder PNG-Bild; eine Webseite als PDF oder Bild;
+  eine Zeichnung als PNG, PDF oder HTML; Code als PDF oder HTML. **Im Projekt speichern** kopiert die angezeigte
+  Version mit dem Namen des Inhalts in den Arbeitsordner (ohne eine Datei zu ersetzen).
+- Der Pfeil neben dem Titel listet alles auf, was in der Unterhaltung gezeigt wurde, und die Canvas-Schaltfläche in
+  der oberen Leiste (sie erscheint, wenn die Unterhaltung etwas im Canvas hat) öffnet und schließt ihn.
+- Der Agent ändert einen Teil, ohne alles neu zu senden (edit_canvas), und liest die aktuelle Version, auch deine
+  (read_canvas).
 
 ## Bilder
 

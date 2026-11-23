@@ -170,7 +170,25 @@ fechá-lo, recuperam a largura.
 ## Tela (canvas)
 
 Para páginas web, documentos longos, diagramas SVG ou programas que o usuário queira ver: o agente os mostra em um
-painel ao lado do chat (“Ver na tela”), com visualização e código, versões (v1 de n) e opção de salvá-los.
+painel ao lado do chat («Ver na tela»), com prévia e código. Cada alteração é uma nova versão (v1 de n).
+
+- **Editar** (o lápis): você altera o conteúdo, com cores de sintaxe e a prévia embaixo enquanto escreve. **Salvar
+  versão** (Ctrl+S) salva como uma nova versão marcada como sua; **Descartar** deixa como estava. O agente fica sabendo
+  da sua alteração na sua próxima mensagem e parte da sua versão.
+- **Pedir uma alteração** (o balão): selecione uma parte da tela e clique no botão; o chat fica pronto com esse trecho
+  para você escrever o que mudar.
+- **Ver alterações** (em «⋯»): o que mudou em relação à versão anterior, em verde o acrescentado e em vermelho o
+  removido. Em «⋯» também estão Copiar, Salvar como… e Abrir no navegador.
+- **Páginas web:** acima da página você escolhe a largura (Adaptável, Celular, Tablet ou Computador), o zoom e
+  Recarregar. **Console** mostra os erros e mensagens do JavaScript; se houver erros, **Pedir que corrija** os leva ao
+  chat. O agente também os recebe quando mostra ou altera a página.
+- **Ampliar** (ao lado do X): a tela ocupa a janela inteira; volta para junto do chat com Esc.
+- **Exportar como** (em «⋯»): um documento para PDF, Word, HTML ou imagem PNG; uma página web para PDF ou imagem; um
+  desenho para PNG, PDF ou HTML; código para PDF ou HTML. **Salvar no projeto** copia a versão que você vê para a pasta
+  de trabalho com o nome do conteúdo (sem substituir nenhum arquivo).
+- A seta ao lado do título lista tudo o que foi mostrado na conversa, e o botão da tela na barra superior (aparece
+  quando a conversa tem algo na tela) a abre e fecha.
+- O agente altera uma parte sem reenviar tudo (edit_canvas) e lê a versão atual, também a sua (read_canvas).
 
 ## Imagens
 

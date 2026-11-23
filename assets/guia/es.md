@@ -165,7 +165,25 @@ su ancho.
 ## Lienzo
 
 Para páginas web, documentos largos, diagramas SVG o programas que el usuario quiera ver: el agente los muestra en un
-panel junto al chat («Ver en el lienzo»), con vista previa y código, versiones (v1 de n) y opción de guardarlos.
+panel junto al chat («Ver en el lienzo»), con vista previa y código. Cada cambio es una versión nueva (v1 de n).
+
+- **Editar** (el lápiz): cambias el contenido tú mismo, con colores de sintaxis y la vista previa debajo mientras
+  escribes. **Guardar versión** (Ctrl+S) lo guarda como una versión nueva marcada como tuya; **Descartar** lo deja como
+  estaba. El agente se entera de tu cambio en tu siguiente mensaje y parte de tu versión.
+- **Pedir un cambio** (el bocadillo): selecciona una parte del lienzo y pulsa el botón; el chat queda listo con ese
+  fragmento para que escribas qué cambiar.
+- **Ver cambios** (en «⋯»): qué cambió respecto a la versión anterior, en verde lo añadido y en rojo lo quitado. En
+  «⋯» también están Copiar, Guardar como… y Abrir en el navegador.
+- **Páginas web:** encima de la página eliges el ancho (Adaptable, Móvil, Tableta o Escritorio), el zoom y
+  Recargar. **Consola** muestra los errores y mensajes de su JavaScript; con errores, **Pedir que lo arregle** los lleva
+  al chat. El agente también los recibe cuando muestra o cambia la página.
+- **Ampliar** (junto a la X): el lienzo ocupa toda la ventana; vuelve junto al chat con Esc.
+- **Exportar como** (en «⋯»): un documento a PDF, Word, HTML o imagen PNG; una página web a PDF o imagen; un dibujo a
+  PNG, PDF o HTML; código a PDF o HTML. **Guardar en el proyecto** copia la versión que ves en la carpeta de trabajo
+  con el nombre del contenido (sin sustituir ningún archivo).
+- La flecha junto al título lista todo lo mostrado en la conversación, y el botón del lienzo de la barra superior
+  (aparece cuando la conversación tiene algo en el lienzo) lo abre y lo cierra.
+- El agente cambia una parte sin reenviarlo todo (edit_canvas) y lee la versión actual, también la tuya (read_canvas).
 
 ## Imágenes
 

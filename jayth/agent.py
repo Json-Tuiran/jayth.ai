@@ -60,7 +60,7 @@ CORE = ["read_file", "write_file", "edit_file", "multi_edit", "replace_in_files"
 # ---- ayudantes (subagentes): otra copia del modelo, con la memoria en blanco, que hace una subtarea de lectura y devuelve
 # solo su informe. Sirve para que una búsqueda o una lectura larga no llene la conversación del agente principal.
 SUB_OFF = {"delegate", "ask_user", "update_plan", "remember", "forget", "schedule_task", "cancel_task", "list_tasks", "connect_service",
-           "generate_image", "show_canvas", "use_skill", "open_target"}
+           "generate_image", "show_canvas", "edit_canvas", "use_skill", "open_target"}
 SUB_BRIEF = ("\n\n## Eres un ayudante\nTrabajas para el agente principal de Jayth, que te encargó una subtarea y responde de lo que "
              "hagas: solo recibirá tu último mensaje. %s No puedes preguntar al usuario ni pedirle permisos: si algo queda fuera de lo "
              "que se te permite, no busques otra forma de hacerlo; dilo en tu informe. Haz la subtarea completa y termina con un informe "
@@ -101,8 +101,8 @@ GROUPS = {   # grupo: (para qué sirve, herramientas, cómo usarlas: se le da al
                  "list_windows", "focus_window", "window_action", "clipboard"],
                 "- Usar cualquier programa: ábrelo (open_target o run_command) y elige cómo manejarlo. ui_elements lista los botones, menús y campos de una ventana con su número y click_element los pulsa sin adivinar coordenadas (lo más fiable, y sirve aunque no veas imágenes). Con screenshot ves la pantalla o una ventana; zoom amplía una zona para leer texto pequeño; click, drag y scroll usan píxeles de la última captura. Además: type_text, press_keys (atajos), window_action (maximizar, mover, cerrar…) y clipboard para pasar datos entre programas."),
     "documentos": ("Word, Excel, PowerPoint y PDF, ver imágenes del disco y el lienzo junto al chat",
-                   ["read_document", "create_document", "view_image", "show_canvas"],
-                   "- Documentos Word, Excel, PowerPoint y PDF: read_document para leerlos y create_document para crearlos (escribes el contenido en Markdown). Imágenes del disco: view_image.\n- Páginas web, documentos largos, diagramas SVG o programas completos que el usuario quiera VER: show_canvas (lienzo junto al chat). No pegues ese contenido en tu respuesta."),
+                   ["read_document", "create_document", "view_image", "show_canvas", "edit_canvas", "read_canvas"],
+                   "- Documentos Word, Excel, PowerPoint y PDF: read_document para leerlos y create_document para crearlos (escribes el contenido en Markdown). Imágenes del disco: view_image.\n- Páginas web, documentos largos, diagramas SVG o programas completos que el usuario quiera VER: show_canvas (lienzo junto al chat). No pegues ese contenido en tu respuesta. Para cambiarlo después: edit_canvas con el fragmento exacto; read_canvas lee su última versión."),
     "procesos": ("Python para datos y gráficos, procesos en segundo plano y esperas", ["run_python", "command_output", "list_commands", "stop_command", "wait"],
                  "- Datos (CSV, Excel), cálculos y gráficos: run_python con pandas y matplotlib; los gráficos se muestran solos al usuario. Procesos lanzados con background=true: command_output y stop_command."),
     "imagenes": ("crear imágenes nuevas en este equipo", ["generate_image"], ""),
@@ -2296,6 +2296,20 @@ class Run:
         repair_history(self.s["messages"])
 
     # ---- bucle principal
+    def _canvas_edits(self):
+        """Versiones del lienzo guardadas por el usuario de las que el modelo aún no sabe: «título» (versión N)."""
+        try:
+            items = T.canvas_items(self.sid)
+        except Exception:
+            return []
+        seen, out = self.s.setdefault("_canvas_seen", {}), []
+        for it in items:
+            mine = [v for v in it.get("user") or [] if v > int(seen.get(it["slug"], 0) or 0)]
+            if mine:
+                seen[it["slug"]] = max(mine)
+                out.append("«%s» (versión %d)" % (it["title"], max(mine)))
+        return out
+
     def run(self, text, image_names=(), attachments="", marker=None):
         msgs = self.s["messages"]
         self._repair()                                  # antes del mensaje nuevo: si Jayth se cerró a mitad, aquí falta algo
@@ -2307,6 +2321,14 @@ class Run:
             guides = [group_guide(g) for g in new if group_guide(g)]
             if new:                                     # sus pautas van con el mensaje (no cambian las instrucciones fijas)
                 body += "\n\n[Herramientas activadas para esta tarea: %s]%s" % (", ".join(new), ("\n" + "\n".join(guides)) if guides else "")
+        edits = self._canvas_edits()
+        if edits:                                       # el usuario cambió a mano algo del lienzo desde el último mensaje
+            if on_demand(self.cfg) and "documentos" in {g for g, d in available_groups(self.cfg)}:
+                new = self._activate(["documentos"])
+                if new and group_guide("documentos"):
+                    body += "\n\n[Herramientas activadas para esta tarea: documentos]\n" + group_guide("documentos")
+            body += ("\n\n[Aviso de Jayth: el usuario editó a mano en el lienzo %s. Si vas a cambiarlo, parte de esa versión "
+                     "(read_canvas la lee).]" % ", ".join(edits))
         note = changes_note(self._sys_now, self.s.get("_sys_seen"))
         if note:                                        # la fecha, los archivos del proyecto o la memoria cambiaron
             body += note

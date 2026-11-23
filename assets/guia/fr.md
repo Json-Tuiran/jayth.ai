@@ -189,9 +189,28 @@ largeur.
 
 ## Canevas
 
-Pour les pages web, les documents longs, les diagrammes SVG ou les programmes que l'utilisateur veut voir : l'agent les
-affiche dans un panneau à côté du chat (« Voir sur le canevas »), avec aperçu et code, versions (v1 sur n) et la
-possibilité de les enregistrer.
+Pour les pages web, les longs documents, les diagrammes SVG ou les programmes que l'utilisateur veut voir : l'agent
+les affiche dans un panneau à côté du chat (« Voir sur le canevas »), avec aperçu et code. Chaque modification est une
+nouvelle version (v1 sur n).
+
+- **Modifier** (le crayon) : vous changez le contenu vous-même, avec la coloration syntaxique et l'aperçu en dessous
+  pendant que vous écrivez. **Enregistrer la version** (Ctrl+S) l'enregistre comme nouvelle version marquée comme la
+  vôtre ; **Annuler** le laisse tel quel. L'agent apprend votre modification dans votre prochain message et part de
+  votre version.
+- **Demander une modification** (la bulle) : sélectionnez une partie du canevas et cliquez sur le bouton ; le chat est
+  prêt avec ce fragment pour que vous écriviez quoi changer.
+- **Voir les modifications** (dans « ⋯ ») : ce qui a changé par rapport à la version précédente, en vert l'ajouté et
+  en rouge le supprimé. « ⋯ » contient aussi Copier, Enregistrer sous… et Ouvrir dans le navigateur.
+- **Pages web :** au-dessus de la page, vous choisissez la largeur (Adaptatif, Mobile, Tablette ou Ordinateur), le
+  zoom et Recharger. **Console** affiche les erreurs et messages de son JavaScript ; en cas d'erreurs, **Demander de
+  corriger** les apporte dans le chat. L'agent les reçoit aussi quand il affiche ou modifie la page.
+- **Agrandir** (à côté du X) : le canevas occupe toute la fenêtre ; Échap le remet à côté du chat.
+- **Exporter en** (dans « ⋯ ») : un document en PDF, Word, HTML ou image PNG ; une page web en PDF ou image ; un
+  dessin en PNG, PDF ou HTML ; du code en PDF ou HTML. **Enregistrer dans le projet** copie la version affichée dans le
+  dossier de travail avec le nom du contenu (sans remplacer aucun fichier).
+- La flèche à côté du titre liste tout ce qui a été affiché dans la conversation, et le bouton du canevas de la barre
+  supérieure (il apparaît quand la conversation a quelque chose sur le canevas) l'ouvre et le ferme.
+- L'agent change une partie sans tout renvoyer (edit_canvas) et lit la version actuelle, la vôtre aussi (read_canvas).
 
 ## Images
 

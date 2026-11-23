@@ -42,7 +42,7 @@ TOOL_LABELS = {
     "list_windows": tr("Ver ventanas abiertas"), "focus_window": tr("Activar una ventana"), "command_output": tr("Ver salida de procesos"), "list_commands": tr("Ver procesos en segundo plano"),
     "list_memory": tr("Ver lo que recuerda"),
     "stop_command": tr("Detener procesos"), "read_document": tr("Leer documentos"), "view_image": tr("Ver imágenes"), "update_plan": tr("Plan de tareas"),
-    "run_python": tr("Analizar datos con Python"), "show_canvas": tr("Mostrar en el lienzo"), "ask_user": tr("Preguntarte"), "remember": tr("Recordar preferencias"), "forget": tr("Olvidar un recuerdo"), "use_skill": tr("Usar una habilidad"), "schedule_task": tr("Programar tareas"), "list_tasks": tr("Ver tareas programadas"),
+    "run_python": tr("Analizar datos con Python"), "show_canvas": tr("Mostrar en el lienzo"), "edit_canvas": tr("Cambiar el lienzo"), "read_canvas": tr("Leer el lienzo"), "ask_user": tr("Preguntarte"), "remember": tr("Recordar preferencias"), "forget": tr("Olvidar un recuerdo"), "use_skill": tr("Usar una habilidad"), "schedule_task": tr("Programar tareas"), "list_tasks": tr("Ver tareas programadas"),
     "cancel_task": tr("Quitar tareas programadas"), "create_document": tr("Crear documentos (Word, Excel, PowerPoint, PDF)"),
     "ui_elements": tr("Leer la interfaz de un programa"), "click_element": tr("Pulsar un elemento de un programa"), "drag": tr("Arrastrar con el ratón"),
     "window_action": tr("Manejar ventanas"), "clipboard": tr("Usar el portapapeles"), "jayth_guide": tr("Consultar la guía de Jayth"),
@@ -2764,18 +2764,144 @@ def update_plan(a, ctx):
 
 
 CANVAS_EXT = {"html": ".html", "markdown": ".md", "svg": ".svg", "code": ".txt"}
+CODE_EXT = {"python": ".py", "javascript": ".js", "typescript": ".ts", "json": ".json", "css": ".css", "sql": ".sql", "bash": ".sh",
+            "powershell": ".ps1", "c": ".c", "cpp": ".cpp", "java": ".java", "go": ".go", "rust": ".rs", "html": ".html"}
+_KIND_OF_EXT = {".html": "html", ".htm": "html", ".md": "markdown", ".svg": "svg"}
+
+
+# ---- contenidos del lienzo: cada conversación tiene su carpeta (data/canvas/<conversación>) con las versiones de cada
+#      contenido (titulo_v1.html, titulo_v2.html…) y un índice con su título, su tipo y qué versiones hizo el usuario
+def canvas_dir(sid):
+    from . import paths
+    return os.path.join(paths.DATA, "canvas", str(sid or "sin_sesion"))
+
+
+def canvas_slug(title):
+    return re.sub(r"[^\w-]+", "_", str(title or "").lower()).strip("_")[:40] or "lienzo"
+
+
+def _canvas_index(d):
+    try:
+        with open(os.path.join(d, "indice.json"), encoding="utf-8") as f:
+            j = json.load(f)
+        return j if isinstance(j, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _canvas_index_save(d, idx):
+    try:
+        tmp = os.path.join(d, "indice.json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(idx, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, os.path.join(d, "indice.json"))
+    except OSError:
+        pass
+
+
+def canvas_items(sid=None, d=None):
+    """Lo que hay en el lienzo de una conversación, de lo más reciente a lo más antiguo: [{title, kind, path (última
+    versión), version, versions, slug, language, user (versiones hechas por el usuario)}]."""
+    d = d or canvas_dir(sid)
+    if not os.path.isdir(d):
+        return []
+    idx = _canvas_index(d)
+    groups = {}
+    for f in os.listdir(d):
+        m = re.match(r"^(.+)_v(\d+)(\.\w+)$", f)
+        if m:
+            groups.setdefault(m.group(1), []).append((int(m.group(2)), os.path.join(d, f), m.group(3).lower()))
+    out = []
+    for slug, vs in groups.items():
+        vs.sort()
+        n, path, ext = vs[-1]
+        meta = idx.get(slug) or {}
+        kind = meta.get("kind") or _KIND_OF_EXT.get(ext, "code")
+        out.append({"title": meta.get("title") or slug.replace("_", " ").capitalize(), "kind": kind, "path": path, "version": n,
+                    "versions": len(vs), "slug": slug, "language": meta.get("language") or "", "user": list(meta.get("user") or []),
+                    "t": os.path.getmtime(path)})
+    out.sort(key=lambda x: -x["t"])
+    return out
+
+
+def canvas_find(sid, title=None, d=None):
+    """El contenido del lienzo con ese título (o el más reciente si no se dice); None si no hay."""
+    items = canvas_items(sid, d)
+    if not items:
+        return None
+    if not str(title or "").strip():
+        return items[0]
+    want, slug = str(title).strip().lower(), canvas_slug(title)
+    for it in items:
+        if it["title"].lower() == want or it["slug"] == slug:
+            return it
+    near = [it for it in items if want in it["title"].lower() or it["title"].lower() in want]
+    return near[0] if len(near) == 1 else None
+
+
+def canvas_save(sid, title, kind, content, language="", by_user=False, d=None):
+    """Guarda una versión nueva de un contenido del lienzo y devuelve su item."""
+    d = d or canvas_dir(sid)
+    os.makedirs(d, exist_ok=True)
+    slug = canvas_slug(title)
+    idx = _canvas_index(d)
+    meta = idx.get(slug) or {}
+    old = [m.group(1) for m in (re.match(r"^%s_v\d+(\.\w+)$" % re.escape(slug), f) for f in os.listdir(d)) if m]
+    if meta.get("ext") or old:                   # las versiones de un contenido comparten extensión (también las antiguas)
+        ext = meta.get("ext") or old[0]
+    else:
+        ext = CANVAS_EXT.get(kind, ".txt") if kind != "code" else CODE_EXT.get(str(language or "").lower(), ".txt")
+    ver = 1
+    while os.path.exists(os.path.join(d, "%s_v%d%s" % (slug, ver, ext))):
+        ver += 1
+    p = os.path.join(d, "%s_v%d%s" % (slug, ver, ext))
+    _write_text(p, content)
+    meta.update({"title": title, "kind": kind, "language": language or meta.get("language") or "", "ext": ext})
+    if by_user:
+        meta["user"] = sorted(set(meta.get("user") or []) | {ver})
+    idx[slug] = meta
+    _canvas_index_save(d, idx)
+    return {"title": title, "kind": kind, "path": p, "version": ver, "slug": slug, "language": meta["language"],
+            "user": list(meta.get("user") or [])}
+
+
+def _canvas_read(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace", newline="") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+_CANVAS_WHAT = {"html": "página web", "markdown": "documento", "svg": "dibujo", "code": "código"}
+
+
+def _canvas_result(item, ctx, text):
+    """Resultado común de show_canvas y edit_canvas: el chat lo muestra y el modelo recibe una captura de cómo quedó."""
+    res = {"text": text, "ui": {"canvas": item}}
+    if CANVAS is not None and item["kind"] != "code":    # cómo se ve de verdad, para que el modelo lo compruebe
+        try:
+            cap = CANVAS.capture(item, ctx.stop) if hasattr(CANVAS, "capture") else {"image": CANVAS.shot(item, ctx.stop)}
+        except Exception:
+            cap = {}
+        shot = cap.get("image")
+        if cap.get("console"):                           # errores de su JavaScript: el modelo no los vería en la captura
+            from .canvas import console_note
+            res["text"] += console_note(cap["console"])
+        if shot:
+            res["image"] = shot
+            res["text"] += " Te llega una captura de cómo se ve: compruébala y, si algo no quedó bien, corrígelo con edit_canvas."
+    return res
 
 
 @tool("show_canvas", "agent",
       "Muestra contenido en el lienzo, un panel grande junto a la conversación, en vez de pegarlo en el chat. Úsalo para "
       "páginas o aplicaciones web completas (kind=html, con su CSS y JavaScript dentro), documentos largos (kind=markdown), "
-      "dibujos o diagramas (kind=svg) y programas completos (kind=code). Para corregirlo, llama de nuevo con el mismo "
-      "title y el contenido entero: se guarda como una versión nueva.",
+      "dibujos o diagramas (kind=svg) y programas completos (kind=code). Para cambiar lo que ya está, usa edit_canvas.",
       {"title": S("Título corto del contenido"), "kind": S("html, markdown, svg o code"), "content": S("Contenido completo"),
        "language": S("Lenguaje, solo para kind=code (python, javascript…)"),
        "path": S("O un archivo ya hecho que mostrar (en vez de copiar su contenido en content)")}, ["title"])
 def show_canvas(a, ctx):
-    from . import paths
     content = str(a.get("content") or "")
     if a.get("path") and not content.strip():       # un archivo que ya existe: se lee aquí (el modelo no tiene que copiarlo)
         p = ctx.path(str(a["path"]))
@@ -2802,31 +2928,62 @@ def show_canvas(a, ctx):
     m = re.match(r"^```[\w-]*\n(.*)\n```\s*$", content.strip(), re.S)      # los modelos a veces envuelven todo en ```
     if m:
         content = m.group(1)
-    d = os.path.join(paths.DATA, "canvas", str((ctx.extras or {}).get("sid") or "sin_sesion"))
-    os.makedirs(d, exist_ok=True)
-    slug = re.sub(r"[^\w-]+", "_", title.lower()).strip("_")[:40] or "lienzo"
     lang = str(a.get("language") or "").lower().strip()
-    ext = CANVAS_EXT[kind] if kind != "code" else {"python": ".py", "javascript": ".js", "typescript": ".ts", "json": ".json", "css": ".css",
-                                                   "sql": ".sql", "bash": ".sh", "powershell": ".ps1", "c": ".c", "cpp": ".cpp",
-                                                   "java": ".java", "go": ".go", "rust": ".rs"}.get(lang, ".txt")
-    ver = 1
-    while os.path.exists(os.path.join(d, "%s_v%d%s" % (slug, ver, ext))):
-        ver += 1
-    p = os.path.join(d, "%s_v%d%s" % (slug, ver, ext))
-    _write_text(p, content)
-    what = {"html": "página web", "markdown": "documento", "svg": "dibujo", "code": "código"}[kind]
-    item = {"title": title, "kind": kind, "path": p, "version": ver, "slug": slug, "language": lang}
-    res = {"text": "Mostrado en el lienzo: «%s» (%s, versión %d). El usuario ya lo ve; no repitas el contenido en tu respuesta." % (title, what, ver),
-           "ui": {"canvas": item}}
-    if CANVAS is not None and kind != "code":        # cómo se ve de verdad, para que el modelo lo compruebe (antes lo mostraba a ciegas)
-        try:
-            shot = CANVAS.shot(item, ctx.stop)
-        except Exception:
-            shot = None
-        if shot:
-            res["image"] = shot
-            res["text"] += " Te llega una captura de cómo se ve: compruébala y, si algo no quedó bien, corrígelo con una versión nueva."
-    return res
+    item = canvas_save((ctx.extras or {}).get("sid"), title, kind, content, lang)
+    return _canvas_result(item, ctx, "Mostrado en el lienzo: «%s» (%s, versión %d). El usuario ya lo ve; no repitas el contenido "
+                                     "en tu respuesta." % (title, _CANVAS_WHAT[kind], item["version"]))
+
+
+def _canvas_missing(sid, title):
+    items = canvas_items(sid)
+    if not items:
+        return ToolError("El lienzo de esta conversación está vacío: muestra algo primero con show_canvas.")
+    return ToolError("No hay nada en el lienzo titulado «%s». Hay: %s." % (title, "; ".join("«%s»" % it["title"] for it in items[:12])))
+
+
+@tool("edit_canvas", "agent",
+      "Cambia una parte de un contenido del lienzo sin reenviarlo entero: 'old' es el fragmento exacto de su última versión "
+      "(read_canvas la muestra) y 'new' su reemplazo.",
+      {"title": S("Título (por defecto, el último)"), "old": S("Texto exacto a reemplazar"),
+       "new": S("Texto nuevo"), "replace_all": B("Reemplazar todas las apariciones")}, ["old", "new"])
+def edit_canvas(a, ctx):
+    sid = (ctx.extras or {}).get("sid")
+    it = canvas_find(sid, a.get("title"))
+    if it is None:
+        raise _canvas_missing(sid, a.get("title"))
+    old = _canvas_read(it["path"])
+    try:
+        text, n = _apply_edit(old, str(a["old"]), str(a["new"]), bool(a.get("replace_all")))
+    except ToolError as e:
+        msg = str(e).replace("Vuelve a leer el archivo (read_file)", "Vuelve a leerlo (read_canvas)").replace("en el archivo", "en el lienzo")
+        raise ToolError("%s (en el lienzo «%s», versión %d)" % (msg, it["title"], it["version"]))
+    if text == old:
+        raise ToolError(NO_CHANGE)
+    item = canvas_save(sid, it["title"], it["kind"], text, it.get("language"))
+    return _canvas_result(item, ctx, "Cambiado en el lienzo: «%s» (%d reemplazo%s, ahora versión %d). El usuario ya lo ve." % (
+        it["title"], n, "s" if n > 1 else "", item["version"]))
+
+
+@tool("read_canvas", "read",
+      "Lee la última versión de un contenido del lienzo (también si la editó el usuario) y lista lo mostrado en la conversación.",
+      {"title": S("Título (por defecto, el último)")})
+def read_canvas(a, ctx):
+    sid = (ctx.extras or {}).get("sid")
+    it = canvas_find(sid, a.get("title"))
+    if it is None:
+        raise _canvas_missing(sid, a.get("title"))
+    who = " — la editó el usuario" if it["version"] in it.get("user", []) else ""
+    others = [x for x in canvas_items(sid) if x["slug"] != it["slug"]]
+    tail = ("\n\n[También en el lienzo: %s]" % "; ".join("«%s» (%s, v%d)" % (x["title"], _CANVAS_WHAT.get(x["kind"], x["kind"]),
+                                                                              x["version"]) for x in others[:12])) if others else ""
+    head = "«%s» (%s, versión %d de %d%s):\n" % (it["title"], _CANVAS_WHAT.get(it["kind"], it["kind"]), it["version"],
+                                                  it.get("versions", it["version"]), who)
+    if CANVAS is not None and hasattr(CANVAS, "console_for") and it["kind"] in ("html", "svg"):
+        from .canvas import console_note
+        note = console_note(CANVAS.console_for(it["path"]))
+        if note:
+            tail = "\n\n[Consola de la página, la última vez que se mostró:%s]" % note + tail
+    return clip(head + _canvas_read(it["path"]) + tail, ctx.max_out)
 
 
 @tool("schedule_task", "agent",

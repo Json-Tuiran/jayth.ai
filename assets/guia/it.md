@@ -173,8 +173,26 @@ pannelli si restringono e alla chiusura recuperano la loro larghezza.
 ## Canvas
 
 Per pagine web, documenti lunghi, diagrammi SVG o programmi che l'utente vuole vedere: l'agente li mostra in un
-pannello accanto alla chat («Visualizza nel canvas»), con anteprima e codice, versioni (v1 di n) e la possibilità di
-salvarli.
+pannello accanto alla chat («Vedi nel canvas»), con anteprima e codice. Ogni modifica è una nuova versione (v1 di n).
+
+- **Modifica** (la matita): cambi tu il contenuto, con i colori della sintassi e l'anteprima sotto mentre scrivi.
+  **Salva versione** (Ctrl+S) lo salva come nuova versione segnata come tua; **Scarta** lo lascia com'era. L'agente
+  viene a sapere della tua modifica al tuo prossimo messaggio e parte dalla tua versione.
+- **Chiedi una modifica** (il fumetto): seleziona una parte del canvas e premi il pulsante; la chat è pronta con quel
+  frammento perché tu scriva cosa cambiare.
+- **Vedi le modifiche** (in «⋯»): cosa è cambiato rispetto alla versione precedente, in verde l'aggiunto e in rosso
+  il rimosso. In «⋯» ci sono anche Copia, Salva con nome… e Apri nel browser.
+- **Pagine web:** sopra la pagina scegli la larghezza (Adattabile, Cellulare, Tablet o Desktop), lo zoom e Ricarica.
+  **Console** mostra gli errori e i messaggi del suo JavaScript; se ci sono errori, **Chiedi di correggerlo** li porta
+  nella chat. L'agente li riceve anche quando mostra o modifica la pagina.
+- **Ingrandisci** (accanto alla X): il canvas occupa tutta la finestra; con Esc torna accanto alla chat.
+- **Esporta come** (in «⋯»): un documento in PDF, Word, HTML o immagine PNG; una pagina web in PDF o immagine; un
+  disegno in PNG, PDF o HTML; il codice in PDF o HTML. **Salva nel progetto** copia la versione che vedi nella cartella
+  di lavoro con il nome del contenuto (senza sostituire alcun file).
+- La freccia accanto al titolo elenca tutto ciò che è stato mostrato nella conversazione, e il pulsante del canvas
+  nella barra superiore (compare quando la conversazione ha qualcosa nel canvas) lo apre e lo chiude.
+- L'agente cambia una parte senza reinviare tutto (edit_canvas) e legge la versione attuale, anche la tua
+  (read_canvas).
 
 ## Immagini
 
