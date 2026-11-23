@@ -11,7 +11,7 @@
 """
 import os, re, glob, time, shutil, difflib, threading
 from PySide6.QtCore import Qt, QUrl, Signal, QObject, QTimer, QBuffer, QByteArray, QIODevice
-from PySide6.QtGui import QGuiApplication, QFont, QTransform, QShortcut, QKeySequence
+from PySide6.QtGui import QGuiApplication, QFont, QTransform, QShortcut, QKeySequence, QIcon
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QStackedWidget, QPlainTextEdit, QScrollArea, QFileDialog,
                                QFrame, QPushButton, QToolButton, QMenu, QSplitter, QTextBrowser)
 from . import osys
@@ -648,7 +648,9 @@ class CanvasPanel(QWidget):
         self.title.setText(self.item["title"])
         self.sub.setText(KIND_LABEL.get(kind, kind) + (" · %s" % self.item["language"] if self.item.get("language") else ""))
         mine = self._vnum() in self.user_versions
-        self.ver.setText((tr("v%d de %d · tuya") if mine else tr("v%d de %d")) % (self.idx + 1, n))
+        self._ver_full = (tr("v%d de %d · tuya") if mine else tr("v%d de %d")) % (self.idx + 1, n)
+        self._ver_short = "v%d/%d" % (self.idx + 1, n)
+        self.ver.setText(self._ver_full)
         self.ver.setToolTip(tr("Esta versión la guardaste tú") if mine else "")
         for w in (self.b_prev, self.b_next, self.ver):
             w.setVisible(n > 1)
@@ -832,11 +834,19 @@ class CanvasPanel(QWidget):
         self.live_host.setVisible(live and self.b_live.isChecked())
         if live and self.b_live.isChecked():
             self._render_live()
-            self.edit_split.setSizes([1, 1])
         self.edit_bar.show()
         self.edit_line.show()
         self._show_page(self.EDIT)
         self.editor.setFocus()
+        self._compact()
+        QTimer.singleShot(0, self._half_split)
+
+    def _half_split(self):
+        """Texto arriba y vista previa abajo, a partes iguales (con setSizes([1, 1]) antes de colocarse, el texto se
+        lo quedaba todo y la vista previa no se veía)."""
+        h = self.edit_split.height()
+        if self.editing and self.live_host.isVisible() and h > 80:
+            self.edit_split.setSizes([h // 2, h - h // 2])
 
     def dirty(self):
         return self.editing and self.editor.toPlainText() != self._base
@@ -851,7 +861,7 @@ class CanvasPanel(QWidget):
         self.live_host.setVisible(on)
         if on:
             self._render_live()
-            self.edit_split.setSizes([1, 1])
+            QTimer.singleShot(0, self._half_split)
         self._sync_webbar()
 
     def _render_live(self):
@@ -1161,6 +1171,32 @@ class CanvasPanel(QWidget):
         return bool(self.item and self.item["kind"] in ("html", "svg") and web_view_class() and
                     (page == self.PREVIEW or (page == self.EDIT and self.editing and self.live_host.isVisible())))
 
+    NARROW = 560
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._compact()
+
+    def _compact(self):
+        """Con el lienzo estrecho, la cabecera y las barras dejan los textos largos (cortados a la mitad no se
+        entendían: «Cal…», «Ada…ble», «uardar versió»): iconos y textos cortos; lo demás sigue en la explicación."""
+        if not hasattr(self, "b_console"):
+            return
+        narrow = self.width() < self.NARROW
+        self.b_view.setText("" if narrow else tr("Código"))
+        self.b_view.setIcon(icon("pan_editor_codigo", C["mut"], 15) if narrow else QIcon())
+        if hasattr(self, "_ver_full"):
+            self.ver.setText(self._ver_short if narrow else self._ver_full)
+            self.ver.setToolTip(self._ver_full)
+        self.edit_lbl.setVisible(not narrow)
+        self.b_save.setText(tr("Guardar") if narrow else tr("Guardar versión"))
+        self.b_live.setText(tr("Vista") if narrow else tr("Vista previa"))
+        for w in (self.b_zoom_out, self.b_zoom, self.b_zoom_in):
+            w.setVisible(not narrow)
+        if hasattr(self, "_console_full"):
+            self.b_console.setText(self._console_short if narrow else self._console_full)
+            self.b_console.setToolTip(self._console_full)
+
     def _sync_webbar(self):
         on = self.web_shown() if hasattr(self, "stack") else False
         self.webbar.setVisible(on)
@@ -1171,6 +1207,7 @@ class CanvasPanel(QWidget):
         label, W, H = DEVICES[self.device]
         self.b_device.setText(label)
         self.b_zoom.setText("%d %%" % round(self.zoom * 100))
+        self._compact()
         self.b_zoom_out.setEnabled(self.zoom > ZOOMS[0] + 1e-6)
         self.b_zoom_in.setEnabled(self.zoom < ZOOMS[-1] - 1e-6)
 
@@ -1214,7 +1251,9 @@ class CanvasPanel(QWidget):
             txt += "  ·  " + (tr("%d errores") % errs if errs > 1 else tr("1 error"))
         elif warns:
             txt += "  ·  " + (tr("%d avisos") % warns if warns > 1 else tr("1 aviso"))
+        self._console_full, self._console_short = txt, (str(errs or warns) if (errs or warns) else "")
         self.b_console.setText(txt)
+        self._compact()
         self.b_console.setIcon(icon("est_error" if errs else "est_aviso" if warns else "pan_consola",
                                     C["bad"] if errs else C["warn"] if warns else C["mut"], 14))
         self.b_fix.setVisible(bool(errs or warns))

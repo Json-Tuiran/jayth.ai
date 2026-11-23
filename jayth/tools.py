@@ -2893,9 +2893,13 @@ def _canvas_result(item, ctx, text):
         except Exception:
             cap = {}
         shot = cap.get("image")
+        note = ""
         if cap.get("console"):                           # errores de su JavaScript: el modelo no los vería en la captura
             from .canvas import console_note
-            res["text"] += console_note(cap["console"])
+            note = console_note(cap["console"])
+            res["text"] += note
+        if item["kind"] == "html" and cap.get("image") and not note:
+            res["text"] += " La consola de la página no dio errores."     # (si no, el modelo no sabe si lo comprobó)
         if shot:
             res["image"] = shot
             res["text"] += " Te llega una captura de cómo se ve: compruébala y, si algo no quedó bien, corrígelo con edit_canvas."

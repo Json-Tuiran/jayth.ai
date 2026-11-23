@@ -5066,6 +5066,8 @@ class Main(QMainWindow):
         self.pages.addWidget(self.chat)
         self.code = CodePage(self)
         self.pages.addWidget(self.code)
+        self.pages.currentChanged.connect(lambda _i: self._fit_pages())
+        self._fit_pages()
         # lienzo: a la derecha de la conversacion; aparece cuando el agente muestra algo en el
         from .canvas import CanvasPanel
         self.body_split = panels.Splitter(Qt.Horizontal, "bodySplit")
@@ -5499,6 +5501,17 @@ class Main(QMainWindow):
         if on:
             self.set_canvas(True)
         self.pages.setVisible(not on)
+
+    def _fit_pages(self):
+        """La pila Chat/Code toma como ancho mínimo el de su página más exigente aunque esté oculta: con la de Code
+        (árbol, editor y agente, unos 760 px) el lienzo del modo chat se quedaba en una tira de 340 px. Solo cuenta la
+        página que se ve."""
+        cur = self.pages.currentWidget()
+        for i in range(self.pages.count()):
+            w = self.pages.widget(i)
+            pol = QSizePolicy.Preferred if w is cur else QSizePolicy.Ignored
+            w.setSizePolicy(pol, pol)
+        self.pages.updateGeometry()
 
     def _sync_canvas_btn(self):
         """El botón del lienzo aparece cuando la conversación actual tiene algo en él, y se resalta si está abierto."""
