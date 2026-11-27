@@ -104,9 +104,46 @@ No hace falta instalar Python ni nada más.
 En el primer arranque, un **asistente** detecta tu hardware, descarga el motor y el modelo (con reanudación y
 verificación SHA-256) y deja todo configurado.
 
-> Los paquetes aún no están firmados. **Windows:** si aparece «Windows protegió su PC», pulsa *Más información →
-> Ejecutar de todas formas*. **macOS:** la primera vez, clic derecho sobre Jayth → *Abrir* (o *Ajustes del Sistema →
-> Privacidad y seguridad → Abrir igualmente*).
+> Los paquetes aún no están firmados (la firma gratuita de SignPath Foundation está en trámite). **Windows:** si aparece
+> «Windows protegió su PC», pulsa *Más información → Ejecutar de todas formas*. **macOS:** la primera vez, clic derecho
+> sobre Jayth → *Abrir* (o *Ajustes del Sistema → Privacidad y seguridad → Abrir igualmente*).
+>
+> **Comprobar la descarga:** cada versión publica `SHA256SUMS.txt` con la huella de cada archivo. En Windows:
+> `Get-FileHash .\Jayth-Setup-x64.exe -Algorithm SHA256`; en macOS, `shasum -a 256 archivo`; en Linux, `sha256sum archivo`.
+> La huella debe coincidir con la de `SHA256SUMS.txt` de esa versión.
+
+¿Es la primera vez que usas algo así? Lee **[Primeros pasos](docs/primeros-pasos.md)**: una guía corta, sin tecnicismos.
+
+## Qué funciona en cada sistema
+
+| | Windows 10/11 | macOS 11+ | Linux X11 | Linux Wayland |
+|---|---|---|---|---|
+| Chat, Jayth Code, lienzo, navegador, documentos, imágenes, voz | ✅ | ✅ | ✅ | ✅ |
+| Modelos locales en CPU | ✅ | ✅ | ✅ | ✅ |
+| Aceleración con gráfica | NVIDIA (CUDA), AMD/Intel Arc (Vulkan) | Metal (Apple Silicon) | NVIDIA, Vulkan | NVIDIA, Vulkan |
+| Capturas de pantalla | ✅ | ✅ (permiso «Grabación de pantalla») | ✅ | ✅ con `grim`, `gnome-screenshot` o `spectacle` |
+| Leer y pulsar botones de otros programas (accesibilidad) | ✅ UI Automation | ✅ (permiso «Accesibilidad») | ✅ AT-SPI | ✅ AT-SPI |
+| Ratón y teclado | ✅ | ✅ (permiso «Accesibilidad») | ✅ | ✅ con `dotool` o `ydotool` |
+| Listar y manejar ventanas | ✅ | ✅ | ✅ con `wmctrl` o `xdotool` | Sway, Hyprland y KDE (`kdotool`); en GNOME no |
+| Actualizaciones automáticas | ✅ (parches pequeños) | ✅ | ✅ (AppImage) | ✅ (AppImage) |
+
+En Linux, Jayth avisa de qué instalar si falta alguna de esas utilidades.
+
+## Velocidad medida
+
+Medida en un portátil normal: **Intel Core i5-8250U (4 núcleos, 2018), 20 GB de RAM, sin tarjeta gráfica**.
+«Lee» es lo rápido que procesa lo que le das (el mensaje, los archivos); «escribe», lo rápido que responde.
+
+| Modelo | Tamaño | Lee | Escribe |
+|---|---|---|---|
+| Gemma 4 E4B (Q4) | 3,9 GB | 22 tokens/s | 4,9 tokens/s (≈ 3–4 palabras por segundo) |
+| Qwen3.8 27B (IQ4_XS) | 14,3 GB | — | 0,7 tokens/s en texto; ≈ 1 token/s al reescribir código con la aceleración por n-gramas |
+| FLUX.2 [klein] 4B (imagen de 512 px) | — | — | unos 11 minutos por imagen |
+
+Jayth usa **llama.cpp** por dentro, así que con el mismo modelo y los mismos hilos va **igual de rápido que llama.cpp**
+(las cifras de Gemma son de `llama-bench`, el medidor de llama.cpp). Ollama también usa llama.cpp, así que debería ir
+parecido; no lo hemos medido. Con una tarjeta gráfica o un Mac con Apple Silicon, todo va varias veces más rápido.
+**Optimizar para este equipo** (Ajustes › Rendimiento) mide tu equipo y elige los hilos y la aceleración más rápidos.
 
 ### Desde el código (para desarrollar)
 
@@ -202,6 +239,14 @@ Para compilar a mano en cada sistema (con `pip install -r requirements.txt pyins
 | Linux | `bash packaging/linux/build_appimage.sh` | `.AppImage` y `.tar.gz` |
 
 Cada script comprueba el paquete antes de terminar (`Jayth --selftest`).
+
+## Seguridad
+
+Lo que siempre pide permiso (también en modo Automático), cómo se tratan las instrucciones escondidas en páginas web, dónde
+se guardan las claves y cómo informar de un fallo: **[SECURITY.md](SECURITY.md)**. Esas protecciones tienen pruebas
+automáticas ([`tests/test_seguridad.py`](tests/test_seguridad.py)) que se ejecutan en cada compilación.
+
+Qué sale de tu ordenador y cuándo (nada sin que lo pidas; sin cuentas ni estadísticas de uso): **[PRIVACY.md](PRIVACY.md)**.
 
 ## Licencia y autoría
 

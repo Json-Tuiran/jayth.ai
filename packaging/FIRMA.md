@@ -13,6 +13,24 @@ está preparada: en cuanto existan las claves de abajo, cada versión se firma s
    - Compilación: GitHub Actions ([`.github/workflows/release.yml`](../.github/workflows/release.yml))
 3. Espera la aprobación (la revisa SignPath Foundation; puede tardar unos días o semanas).
 
+### Respuestas preparadas para el formulario (<https://signpath.org/apply>)
+
+Tus datos personales (nombre, correo), el reCAPTCHA y las casillas de consentimiento los rellenas tú.
+
+| Campo | Respuesta |
+|---|---|
+| Project Name | `Jayth` |
+| Repository URL | `https://github.com/Json-Tuiran/jayth.ai` |
+| Homepage URL | `https://github.com/Json-Tuiran/jayth.ai` |
+| Download URL | `https://github.com/Json-Tuiran/jayth.ai#descargar-e-instalar` (el README menciona a SignPath Foundation, como piden) |
+| Privacy Policy URL | `https://github.com/Json-Tuiran/jayth.ai/blob/main/PRIVACY.md` |
+| Tagline | `Open-source desktop AI agent that runs local models (llama.cpp) and works on your computer: files, commands, apps, web and documents.` |
+| Category | la más cercana a «Developer tools» o «Productivity» |
+| Description | `Jayth is a free, open-source (GPL-3.0) desktop app for Windows, macOS and Linux that turns a local AI model (GGUF via llama.cpp) or an API model into an agent that works on the user's computer: it writes and edits files, runs commands, uses other programs through accessibility APIs, browses the web with its own browser, and reads and creates Word, Excel, PowerPoint and PDF documents. Every action is visible and can require the user's approval; it works offline with local models.` |
+| Reputation | enlaces honestos: el repositorio, sus Releases (`https://github.com/Json-Tuiran/jayth.ai/releases`), [`SECURITY.md`](../SECURITY.md) y la ficha de winget si ya está aceptada. Es un proyecto nuevo: dilo tal cual. |
+| Maintainer Type | individual |
+| Build System | GitHub Actions |
+
 ## 2. Configurar el proyecto en SignPath (cuando te aprueben)
 
 1. Crea (o revisa) el proyecto con el *slug* **`jayth`**.

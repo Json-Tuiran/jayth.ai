@@ -104,8 +104,46 @@ Not sure whether your Mac is Apple Silicon or Intel? Apple menu → *About This 
 On first launch, a **setup wizard** detects your hardware, downloads the engine and the model (resumable, verified with
 SHA-256) and configures everything.
 
-> The packages are not signed yet. **Windows:** if «Windows protected your PC» appears, click *More info → Run anyway*.
-> **macOS:** the first time, right-click Jayth → *Open* (or *System Settings → Privacy & Security → Open Anyway*).
+> The packages are not signed yet (free signing by SignPath Foundation is in progress). **Windows:** if «Windows protected
+> your PC» appears, click *More info → Run anyway*. **macOS:** the first time, right-click Jayth → *Open* (or *System
+> Settings → Privacy & Security → Open Anyway*).
+>
+> **Verify your download:** each release publishes `SHA256SUMS.txt` with the fingerprint of every file. On Windows:
+> `Get-FileHash .\Jayth-Setup-x64.exe -Algorithm SHA256`; on macOS, `shasum -a 256 file`; on Linux, `sha256sum file`.
+> It must match the one in that release's `SHA256SUMS.txt`.
+
+New to this kind of tool? Read **[Getting started](docs/getting-started.md)**: a short guide with no jargon.
+
+## What works on each system
+
+| | Windows 10/11 | macOS 11+ | Linux X11 | Linux Wayland |
+|---|---|---|---|---|
+| Chat, Jayth Code, canvas, browser, documents, images, voice | ✅ | ✅ | ✅ | ✅ |
+| Local models on CPU | ✅ | ✅ | ✅ | ✅ |
+| Graphics acceleration | NVIDIA (CUDA), AMD/Intel Arc (Vulkan) | Metal (Apple Silicon) | NVIDIA, Vulkan | NVIDIA, Vulkan |
+| Screenshots | ✅ | ✅ ("Screen Recording" permission) | ✅ | ✅ with `grim`, `gnome-screenshot` or `spectacle` |
+| Reading and pressing other apps' buttons (accessibility) | ✅ UI Automation | ✅ ("Accessibility" permission) | ✅ AT-SPI | ✅ AT-SPI |
+| Mouse and keyboard | ✅ | ✅ ("Accessibility" permission) | ✅ | ✅ with `dotool` or `ydotool` |
+| Listing and managing windows | ✅ | ✅ | ✅ with `wmctrl` or `xdotool` | Sway, Hyprland and KDE (`kdotool`); not GNOME |
+| Automatic updates | ✅ (small patches) | ✅ | ✅ (AppImage) | ✅ (AppImage) |
+
+On Linux, Jayth tells you what to install if one of those tools is missing.
+
+## Measured speed
+
+Measured on an ordinary laptop: **Intel Core i5-8250U (4 cores, 2018), 20 GB RAM, no graphics card**. "Reads" is how fast
+it processes what you give it (your message, files); "writes", how fast it answers.
+
+| Model | Size | Reads | Writes |
+|---|---|---|---|
+| Gemma 4 E4B (Q4) | 3.9 GB | 22 tokens/s | 4.9 tokens/s (≈ 3–4 words per second) |
+| Qwen3.8 27B (IQ4_XS) | 14.3 GB | — | 0.7 tokens/s on text; ≈ 1 token/s rewriting code with n-gram acceleration |
+| FLUX.2 [klein] 4B (512 px image) | — | — | about 11 minutes per image |
+
+Jayth runs **llama.cpp** inside, so with the same model and threads it is **as fast as llama.cpp** (the Gemma figures come
+from `llama-bench`, llama.cpp's benchmark). Ollama also uses llama.cpp, so it should be similar; we haven't measured it.
+With a graphics card or an Apple Silicon Mac everything is several times faster. **Optimize for this computer**
+(Settings › Performance) measures your computer and picks the fastest threads and acceleration.
 
 ### From source (for development)
 
@@ -178,6 +216,14 @@ Your data and models are not deleted when uninstalling; they are in the folders 
 Windows 10/11 (64-bit), macOS 11 or later, or a 64-bit Linux distribution with glibc 2.35+ (Ubuntu 22.04, Debian 12,
 Fedora 36 or later). The memory you need depends on the model: the wizard shows which quantizations fit. With an NVIDIA
 GPU the model is split automatically between VRAM and RAM; on Apple Silicon Macs it uses unified memory with Metal.
+
+## Security
+
+What always asks for permission (even in Automatic mode), how hidden instructions in web pages are handled, where keys are
+stored and how to report a problem: **[SECURITY.md](SECURITY.md)**. Those protections have automated tests
+([`tests/test_seguridad.py`](tests/test_seguridad.py)) that run on every build.
+
+What leaves your computer and when (nothing you didn't ask for; no accounts or usage analytics): **[PRIVACY.md](PRIVACY.md)**.
 
 ## License and authorship
 
