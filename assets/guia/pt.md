@@ -61,6 +61,10 @@ sempre pedem permissão, inclusive no Automático. No **Planejar** o agente pesq
 plano** ele o coloca em prática (ou **Continuar ajustando**). Para parar na hora o controle do mouse: levar o ponteiro
 ao canto superior esquerdo da tela.
 
+O que o agente lê em páginas web ou serviços conectados chega marcado como dados, não como ordens; se tiver texto que
+tenta lhe dar ordens («ignore suas instruções…»), o Jayth avisa e, até o fim dessa resposta, tudo o que muda algo pede
+permissão mesmo no Automático.
+
 ## O que aparece enquanto ele trabalha
 
 - Antes de cada ação o agente diz em uma frase o que vai fazer. Cada ação é uma linha com seu ícone e uma
@@ -240,8 +244,11 @@ O agente pode abrir programas e arquivos, ler os botões e campos de qualquer ja
 clicar, arrastar, digitar, pressionar atalhos, gerenciar janelas, usar a área de transferência e fazer capturas da
 tela ou de uma janela. Enquanto ele controla, aparecem um brilho nas bordas da tela e o ponteiro dele. Ativa-se ou
 desativa-se em **Configurações › Ferramentas › Permitir o controle do computador**. No macOS é preciso dar ao Jayth as
-permissões de **Gravação de Tela** e **Acessibilidade** (Ajustes do Sistema › Privacidade e Segurança). No Linux
-funciona em sessões X11 (no Wayland o controle global é limitado); para listar janelas é necessário o `wmctrl`.
+permissões de **Gravação de Tela** e **Acessibilidade** (Ajustes do Sistema › Privacidade e Segurança). No Linux com X11
+funciona como está (para listar janelas é necessário o `wmctrl` ou o `xdotool`). No Wayland, a captura usa `grim`,
+`gnome-screenshot` ou `spectacle`; o mouse e o teclado, `dotool` ou `ydotool`; as janelas podem ser controladas no
+Sway, no Hyprland e no KDE (com `kdotool`), não no GNOME. Ler e clicar em botões pela acessibilidade funciona igual nos
+dois; se faltar algo, o Jayth diz o que instalar.
 
 ## Modelos
 
@@ -283,7 +290,7 @@ O Jayth baixa a versão oficial do llama.cpp adequada ao computador: Metal em Ma
 Vulkan para AMD ou Intel Arc, ou CPU. Em **Configurações › Desempenho**: **Trocar ou atualizar o motor…**,
 **Pré-aquecer ao ligar o modelo**, **Memória da conversa (contexto)** (por padrão **Automático**: todo o contexto que
 o modelo suporta de fábrica, reduzido se a memória dele não couber no computador; com **Contexto comprimido** cabe o
-dobro ou mais), **Desligar o modelo se não for usado por**, e em
+dobro ou mais; no automático, o Jayth só comprime se o contexto inteiro não couber), **Desligar o modelo se não for usado por**, e em
 **Configurações do motor**: Threads da CPU, Threads ao ler (automático: sem placa de vídeo lê com todos os threads do processador), Camadas na GPU (o automático divide o modelo entre GPU e RAM), Tamanho do
 lote, Contexto comprimido, Flash attention, Aceleração ao escrever, mmap, travar na RAM e a porta local. As alterações do motor são aplicadas
 ao reiniciar o modelo (**Reiniciar modelo**). O log do motor fica em **Configurações › Log do modelo**.

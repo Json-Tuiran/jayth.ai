@@ -823,7 +823,8 @@ class SettingsDialog(QDialog):
         self.field(v, "batch_size", tr("Tamaño de lote"), "choice", choices=[(str(x), x) for x in (128, 256, 512, 1024, 2048)],
                    help=tr("Más grande procesa más rápido los textos largos, con algo más de memoria."))
         self.field(v, "cache_type", tr("Contexto comprimido"), "choice",
-                   choices=[(tr("No (máxima calidad)"), "f16"), (tr("8 bits (la mitad de memoria, casi sin pérdida)"), "q8_0"), (tr("4 bits (un cuarto de memoria)"), "q4_0")])
+                   choices=[(tr("Automático (8 bits solo si no cabe)"), "auto"), (tr("No (máxima calidad)"), "f16"),
+                            (tr("8 bits (la mitad de memoria, casi sin pérdida)"), "q8_0"), (tr("4 bits (un cuarto de memoria)"), "q4_0")])
         self.field(v, "flash_attn", "Flash attention", "choice", choices=[(tr("Automático"), "auto"), (tr("Activado"), "on"), (tr("Desactivado"), "off")])
         self.field(v, "spec_type", tr("Aceleración al escribir"), "choice",
                    choices=[(tr("Automática (la que elija «Optimizar»)"), "auto"), (tr("Desactivada"), "none"),

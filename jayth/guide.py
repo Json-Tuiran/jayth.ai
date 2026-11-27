@@ -154,13 +154,37 @@ def extras():
     return "\n".join(out)
 
 
+ALL_WORDS = ("todo", "toda", "todos", "entera", "completa", "all", "everything", "whole", "tudo", "tout", "alles", "tutto",
+             "全部", "すべて")
+BIG_CHARS = 45000          # la guía entera o varios temas de una vez (una sola consulta en vez de quince)
+# palabras que piden los datos de esta instalación (versión, modelo, carpetas…): solo entonces se añaden
+_LIVE_WORDS = ("version", "instal", "modelo activo", "model", "carpeta", "folder", "pasta", "dossier", "ordner", "cartella",
+               "ruta", "path", "datos", "data", "atajo", "shortcut", "permis", "ajuste", "setting", "configur", "idioma",
+               "language", "motor", "engine", "grafica", "gpu", "memoria", "memory", "equipo", "hardware")
+
+
 def answer(topic=""):
-    """Respuesta de la herramienta: secciones de la guía sobre el tema (o el índice) y los datos de esta instalación."""
+    """Respuesta de la herramienta: secciones de la guía sobre el tema o los temas («a; b; c»), la guía entera («todo») o
+    el índice; los datos de esta instalación, cuando vienen al caso."""
     secs = sections()
     if not secs:
         return tr("No encuentro la guía de %s en esta instalación.") % APP_NAME + "\n\n" + live()
     topic = (topic or "").strip()
-    found = search(topic) if topic else []
+    nt = _norm(topic)
+    topics = [t.strip() for t in re.split(r"[;\n|]+", topic) if t.strip()]
+    limit = MAX_CHARS
+    if nt.strip(" .") in ALL_WORDS:
+        found, limit = secs, BIG_CHARS
+    elif len(topics) > 1:
+        found, seen = [], set()
+        for t in topics:
+            for title, body in search(t, top=2):
+                if title not in seen:
+                    seen.add(title)
+                    found.append((title, body))
+        limit = BIG_CHARS
+    else:
+        found = search(topic) if topic else []
     parts = []
     if found:
         parts += ["## %s\n%s" % (t, b) for t, b in found]
@@ -168,14 +192,16 @@ def answer(topic=""):
         if topic:
             parts.append(tr("No hay una sección sobre «%s». Temas de la guía:") % topic)
         else:
-            parts.append(tr("Temas de la guía de %s (pide uno con topic):") % APP_NAME)
+            parts.append(tr("Temas de la guía de %s (pide uno con topic, varios separados por «;» o «todo»):") % APP_NAME)
         parts.append("\n".join("- " + t for t, _ in secs))
-    parts.append(live())
-    nt = _norm(topic)
-    if not topic or any(w in nt for w in ("atajo", "teclado", "shortcut", "keyboard", "tecla", "permis", "modo", "mode",
-                                          "herramient", "tool", "ferrament", "puede hacer", "can you do", "pode fazer")):
-        parts.append(extras())
+    tail = []                     # lo que va al final no se recorta (antes el recorte se llevaba justo estos datos)
+    if not topic or not found or limit == BIG_CHARS and nt.strip(" .") in ALL_WORDS or any(w in nt for w in _LIVE_WORDS):
+        tail.append(live())
+    if not topic or re.search(r"atajo|teclado|shortcut|keyboard|tecla|permis|\bmodos?\b|\bmodes?\b|herramient|\btools?\b|"
+                              r"ferrament|puede hacer|can you do|pode fazer", nt):
+        tail.append(extras())
     text = "\n\n".join(parts)
-    if len(text) > MAX_CHARS:
-        text = text[:MAX_CHARS] + "\n…"
-    return text
+    room = max(1500, limit - sum(len(t) + 2 for t in tail))
+    if len(text) > room:
+        text = text[:room] + "\n…"
+    return "\n\n".join([text] + tail)

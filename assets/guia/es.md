@@ -60,6 +60,10 @@ siempre, también en Automático. En **Planificar** el agente investiga y propon
 lleva a cabo (o **Seguir ajustando**). Para detener al instante el control del ratón: llevar el puntero a la esquina
 superior izquierda de la pantalla.
 
+Lo que el agente lee en páginas web o servicios conectados le llega marcado como datos, no como órdenes; si contiene texto que
+intenta darle órdenes («ignora tus instrucciones…»), Jayth te avisa y, hasta el final de esa respuesta, todo lo que cambia
+algo pide permiso aunque estés en Automático.
+
 ## Lo que se ve mientras trabaja
 
 - Antes de cada acción el agente dice en una frase qué va a hacer. Cada acción es una línea con su icono y una
@@ -235,8 +239,11 @@ El agente puede abrir programas y archivos, leer los botones y campos de cualqui
 hacer clic, arrastrar, escribir, pulsar atajos, manejar ventanas, usar el portapapeles y hacer capturas de la pantalla o
 de una ventana. Mientras controla, se ven un brillo en los bordes de la pantalla y su puntero. Se activa o desactiva en
 **Ajustes › Herramientas › Permitir el control del ordenador**. En macOS hay que dar a Jayth los permisos de
-**Grabación de pantalla** y **Accesibilidad** (Ajustes del Sistema › Privacidad y seguridad). En Linux funciona en
-sesiones X11 (en Wayland el control global está limitado); para listar ventanas hace falta `wmctrl`.
+**Grabación de pantalla** y **Accesibilidad** (Ajustes del Sistema › Privacidad y seguridad). En Linux con X11 funciona tal
+cual (para listar ventanas hace falta `wmctrl` o `xdotool`). Con Wayland, la captura usa `grim`, `gnome-screenshot` o
+`spectacle`; el ratón y el teclado, `dotool` o `ydotool`; las ventanas se manejan en Sway, Hyprland y KDE (con
+`kdotool`), no en GNOME. Leer y pulsar botones por accesibilidad funciona igual en los dos; si falta algo, Jayth dice qué
+instalar.
 
 ## Modelos
 
@@ -274,7 +281,8 @@ sesiones X11 (en Wayland el control global está limitado); para listar ventanas
 Jayth descarga la versión oficial de llama.cpp adecuada al equipo: Metal en Mac con Apple Silicon, CUDA para NVIDIA,
 Vulkan para AMD o Intel Arc, o CPU. En **Ajustes › Rendimiento**: **Cambiar o actualizar el motor…**, **Precalentar al
 encender el modelo**, **Memoria de la conversación (contexto)** (por defecto **Automático**: todo el contexto que admite
-el modelo de fábrica, reducido si su memoria no cabe en el equipo; con **Contexto comprimido** cabe el doble o más),
+el modelo de fábrica, reducido si su memoria no cabe en el equipo; con **Contexto comprimido** cabe el doble o más; en automático, Jayth lo comprime solo si en el equipo
+no cabe todo el contexto),
 **Apagar el modelo si no se usa durante**, y en
 **Ajustes del motor**: Hilos de CPU, Hilos al leer (automático: sin gráfica lee con todos los hilos del procesador), Capas en la GPU (automático reparte el modelo entre GPU y RAM), Tamaño de lote,
 Contexto comprimido, Flash attention, Aceleración al escribir, mmap, bloquear en la RAM y el puerto local. Los cambios del motor se aplican al

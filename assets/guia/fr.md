@@ -68,6 +68,10 @@ toucher au système ou à des chemins protégés) demandent toujours l'autorisat
 l'agent étudie et propose un plan ; **Exécuter le plan** le met en œuvre (ou **Continuer à affiner**). Pour arrêter
 instantanément le contrôle de la souris : amener le pointeur dans le coin supérieur gauche de l'écran.
 
+Ce que l'agent lit sur des pages web ou des services connectés lui arrive marqué comme des données, pas comme des ordres ;
+s'il contient du texte qui tente de lui donner des ordres (« ignore tes instructions… »), Jayth vous prévient et, jusqu'à la
+fin de cette réponse, tout ce qui modifie quelque chose demande l'autorisation, même en Automatique.
+
 ## Ce que l'on voit pendant qu'il travaille
 
 - Avant chaque action, l'agent dit en une phrase ce qu'il va faire. Chaque action est une ligne avec son icône et une
@@ -270,8 +274,11 @@ L'agent peut ouvrir des programmes et des fichiers, lire les boutons et les cham
 presse-papiers et faire des captures de l'écran ou d'une fenêtre. Pendant qu'il a le contrôle, on voit une lueur sur les
 bords de l'écran et son pointeur. Cela s'active ou se désactive dans **Paramètres › Outils › Autoriser le contrôle de
 l'ordinateur**. Sous macOS, il faut accorder à Jayth les autorisations **Enregistrement de l'écran** et
-**Accessibilité** (Réglages Système › Confidentialité et sécurité). Sous Linux, cela fonctionne dans les sessions X11
-(sous Wayland, le contrôle global est limité) ; pour lister les fenêtres, il faut `wmctrl`.
+**Accessibilité** (Réglages Système › Confidentialité et sécurité). Sous Linux avec X11, cela fonctionne
+tel quel (pour lister les fenêtres, il faut `wmctrl` ou `xdotool`). Sous Wayland, la capture utilise `grim`,
+`gnome-screenshot` ou `spectacle` ; la souris et le clavier, `dotool` ou `ydotool` ; les fenêtres se gèrent sous Sway,
+Hyprland et KDE (avec `kdotool`), pas sous GNOME. Lire et cliquer sur les boutons par l'accessibilité fonctionne pareil
+dans les deux cas ; s'il manque quelque chose, Jayth indique quoi installer.
 
 ## Modèles
 
@@ -316,7 +323,8 @@ Jayth télécharge la version officielle de llama.cpp adaptée à l'ordinateur 
 NVIDIA, Vulkan pour AMD ou Intel Arc, ou CPU. Dans **Paramètres › Performances** : **Changer ou mettre à jour le
 moteur…**, **Préchauffer au démarrage du modèle**, **Mémoire de la conversation (contexte)** (par défaut
 **Automatique** : tout le contexte que le modèle accepte d'origine, réduit si sa mémoire ne tient pas sur l'ordinateur ;
-avec **Contexte compressé**, il en tient deux fois plus, voire davantage), **Arrêter le modèle s'il est inutilisé
+avec **Contexte compressé**, il en tient deux fois plus, voire davantage ; en automatique, Jayth ne
+compresse que si le contexte complet ne tient pas), **Arrêter le modèle s'il est inutilisé
 pendant**, et dans **Paramètres du moteur** : Threads CPU, Threads en lecture (automatique : sans carte graphique, lit avec tous les threads du processeur), Couches sur le GPU (l'automatique répartit le modèle entre le
 GPU et la RAM), Taille de lot, Contexte compressé, Flash attention, Accélération de l'écriture, mmap, verrouillage en
 RAM et le port local. Les changements du moteur s'appliquent au redémarrage du modèle (**Redémarrer le modèle**). Le

@@ -29,23 +29,33 @@ START = """<!doctype html><html><head><meta charset="utf-8"><title>%(title)s</ti
 _COLLECT = r"""
 (function () {
   const sel = 'a[href], button, input:not([type=hidden]), textarea, select, summary, [role=button], [role=link], [role=tab], ' +
-              '[role=checkbox], [role=switch], [role=radio], [role=menuitem], [role=option], [role=combobox], [onclick], [contenteditable=""], [contenteditable=true]';
+              '[role=checkbox], [role=switch], [role=radio], [role=menuitem], [role=option], [role=combobox], [onclick], [contenteditable=""], [contenteditable=true], ' +
+              '[tabindex]:not([tabindex="-1"])';
   const vis = el => { const r = el.getBoundingClientRect(); if (r.width < 2 || r.height < 2) return false;
                       const s = getComputedStyle(el); return s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0'; };
   const txt = s => (s || '').replace(/\s+/g, ' ').trim();
   document.querySelectorAll('[data-jayth]').forEach(e => e.removeAttribute('data-jayth'));
   const out = []; let i = 0;
+  const base = sel.slice(0, sel.lastIndexOf(', [tabindex]'));
   for (const el of document.querySelectorAll(sel)) {
     if (out.length >= 250) break;
-    if (!vis(el)) continue;
+    // un contenedor que solo es «navegable con el teclado» (un diálogo, una zona con desplazamiento) no es un control
+    if (!el.matches(base) && (el.querySelector(base + ', li, [tabindex]') || (el.innerText || '').length > 200)) continue;
     const tag = el.tagName.toLowerCase(), type = (el.getAttribute('type') || '').toLowerCase();
+    let box = el;
+    if (!vis(el)) {                     // casilla nativa escondida bajo un interruptor dibujado: se pulsa su etiqueta
+      const lab = (tag === 'input' && (type === 'checkbox' || type === 'radio')) ? (el.closest('label') || (el.labels && el.labels[0])) : null;
+      if (!lab || !vis(lab)) continue;
+      box = lab;
+    }
     const field = tag === 'input' || tag === 'textarea' || tag === 'select';
     let label = el.getAttribute('aria-label') || '';
     if (!label && field) label = (el.labels && el.labels[0] ? el.labels[0].innerText : '') || el.placeholder || el.title || el.name || '';
     if (!label && tag === 'input' && (type === 'submit' || type === 'button')) label = el.value;
     if (!label) label = el.innerText || el.title || el.getAttribute('alt') || (el.querySelector('img[alt]') || {}).alt || '';
-    const r = el.getBoundingClientRect();
+    const r = box.getBoundingClientRect();
     i++; el.setAttribute('data-jayth', String(i));
+    if (box !== el) box.setAttribute('data-jayth-box', String(i));
     let value = '';
     if (tag === 'select') value = (el.options[el.selectedIndex] || {}).text || '';
     else if (field && type !== 'password' && type !== 'checkbox' && type !== 'radio') value = el.value || '';
@@ -53,6 +63,28 @@ _COLLECT = r"""
               href: tag === 'a' ? el.getAttribute('href') || '' : '', checked: !!el.checked || el.getAttribute('aria-checked') === 'true',
               disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true', editable: el.isContentEditable && !field,
               options: tag === 'select' ? Array.from(el.options).slice(0, 12).map(o => txt(o.text)).join(' | ') : '',
+              range: type === 'range' ? [el.min || '0', el.max || '100', el.step || '1'] : null,
+              view: r.bottom > 0 && r.top < innerHeight ? 0 : (r.top >= innerHeight ? 1 : -1)});
+  }
+  // lo que se puede pulsar aunque el HTML no lo diga (opciones de un menú hechas con <li> o <div> y un clic de
+  // JavaScript): el cursor de mano. Solo el elemento de más arriba con ese cursor (los hijos lo heredan).
+  let looked = 0;
+  for (const el of document.querySelectorAll('li, div, span, td, th, img, svg, label, p, i, h1, h2, h3, h4, dt, dd')) {
+    if (out.length >= 250 || looked > 4000) break;
+    looked++;
+    if (el.closest('[data-jayth]') || el.querySelector('[data-jayth]')) continue;
+    const st = getComputedStyle(el);
+    if (st.cursor !== 'pointer') continue;
+    const par = el.parentElement;
+    if (par && getComputedStyle(par).cursor === 'pointer') continue;
+    if (!vis(el)) continue;
+    const label = el.getAttribute('aria-label') || el.innerText || el.title || el.getAttribute('alt') || '';
+    if (!txt(label)) continue;
+    const r = el.getBoundingClientRect();
+    i++; el.setAttribute('data-jayth', String(i));
+    out.push({i: i, tag: el.tagName.toLowerCase(), type: '', role: el.getAttribute('role') || '', label: txt(label).slice(0, 90), value: '',
+              href: '', checked: el.classList.contains('active') || el.classList.contains('selected') || el.getAttribute('aria-selected') === 'true',
+              disabled: el.getAttribute('aria-disabled') === 'true', editable: false, options: '', range: null, generic: true,
               view: r.bottom > 0 && r.top < innerHeight ? 0 : (r.top >= innerHeight ? 1 : -1)});
   }
   const text = (document.body ? document.body.innerText : '').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim();
@@ -79,8 +111,9 @@ _LOCATE = r"""
 (function (i) {
   const el = document.querySelector('[data-jayth="' + i + '"]');
   if (!el) return null;
-  el.scrollIntoView({block: 'center', inline: 'nearest'});
-  const r = el.getBoundingClientRect();
+  const box = document.querySelector('[data-jayth-box="' + i + '"]') || el;
+  box.scrollIntoView({block: 'center', inline: 'nearest'});
+  const r = box.getBoundingClientRect();
   return JSON.stringify({x: r.left, y: r.top, w: r.width, h: r.height, tag: el.tagName.toLowerCase(), type: (el.getAttribute('type') || '').toLowerCase(),
                          disabled: !!el.disabled});
 })(%d)
@@ -191,7 +224,7 @@ def _role(e):
         return "opción"
     if role == "tab":
         return "pestaña"
-    if role in ("menuitem", "option"):
+    if role in ("menuitem", "option") or tag == "li":
         return "opción de menú"
     if e.get("editable"):
         return "zona editable"
@@ -206,6 +239,9 @@ def _line(e):
         s += " = «%s»" % e["value"]
     if e.get("options"):
         s += " (opciones: %s)" % e["options"][:160]
+    if e.get("range"):
+        lo, hi, step = e["range"]
+        s += " (de %s a %s, de %s en %s: pon el valor con browser_type)" % (lo, hi, step, step)
     if e["checked"]:
         s += " (marcada)"
     if e["disabled"]:
@@ -879,6 +915,8 @@ class BrowserPanel(QWidget):
                 return self._fail(job, "Ese elemento está desactivado ahora mismo.")
             if loc["tag"] == "select":
                 return self._fail(job, "Es una lista desplegable: elige la opción con browser_type (text = la opción).")
+            if loc.get("type") == "range":
+                return self._fail(job, "Es un deslizador: pon su valor con browser_type (text = el número).")
             info = next((e for e in (self.page_info or {}).get("elements", []) if e["i"] == int(index)), None)
             want = " ".join(str(expect or "").lower().split())
             if want and info is not None and want not in " ".join((info["label"] + " " + info["value"]).lower().split()):

@@ -39,10 +39,11 @@ DEFAULTS = {
     "llm_port": 8080,
     "n_ctx": 0,                  # 0 = automatico: el maximo que admite el modelo, ajustado a la memoria (ver effective_ctx)
     "ctx_auto_migrated": False,  # el antiguo valor fijo por defecto (16384) ya se paso a automatico
+    "kv_auto_migrated": False,   # el antiguo «Contexto comprimido» de fábrica (f16) ya se pasó a automático
     "gpu_layers": -1,            # -1 = automatico (--fit); 0 = solo CPU; N = capas en la GPU
     "batch_size": 512,
     "flash_attn": "auto",        # auto | on | off
-    "cache_type": "f16",         # f16 | q8_0 | q4_0 (contexto comprimido: menos memoria)
+    "cache_type": "auto",        # auto | f16 | q8_0 | q4_0 (contexto comprimido: menos memoria; auto = 8 bits solo si no cabe)
     "mmap": True,
     "mlock": False,
     "spec_type": "auto",         # decodificación especulativa: auto (lo que eligió el ajuste medido) | none | draft-mtp | ngram-mod | …
@@ -371,6 +372,10 @@ class Settings:
                             pass
                         self.load_error = tr("No se pudieron leer tus ajustes (%s). Se guardó una copia en %s.") % (e, bak)
                     time.sleep(0.3)
+        if not self.v.get("kv_auto_migrated"):
+            if self.v.get("cache_type") == "f16":    # el valor de fábrica anterior: pasa a automático
+                self.v["cache_type"] = "auto"
+            self.v["kv_auto_migrated"] = True
         if not self.v.get("ctx_auto_migrated"):
             # antes el contexto era 16 000 fijo por defecto: pasa a automático (el máximo del modelo que quepa en memoria)
             if int(self.v.get("n_ctx") or 0) == 16384:
@@ -808,6 +813,24 @@ def _hardware():
     return _HW[0]
 
 
+def kv_type(cfg, m=None):
+    """Cómo se guarda la memoria de la conversación (caché KV). «auto»: en 16 bits si cabe todo el contexto del modelo;
+    si no, en 8 bits (la mitad de memoria, casi sin pérdida), que en un portátil sin gráfica da casi el doble de
+    conversación con la misma RAM."""
+    t = str(cfg.get("cache_type") or "auto")
+    if t != "auto":
+        return t
+    if cfg.get("llm_mode") == "external" or int(cfg.get("n_ctx") or 0) > 0:
+        return "f16"
+    m = m or active_model(cfg)
+    c = model_caps(m) if m else None
+    native = int((c or {}).get("ctx") or 0) or 32768
+    if not (c or {}).get("kv"):
+        return "f16"
+    full = effective_ctx(dict(cfg, cache_type="f16"), m)
+    return "f16" if full >= native else "q8_0"
+
+
 def effective_ctx(cfg, m=None):
     """Contexto con el que se enciende el modelo. Con n_ctx > 0 es ese número; con 0 (automático) es el máximo que admite
     el modelo de fábrica, reducido si su caché no cabe en la memoria del equipo (nunca por debajo de CTX_FLOOR)."""
@@ -819,7 +842,7 @@ def effective_ctx(cfg, m=None):
     m = m or active_model(cfg)
     c = model_caps(m) if m else None
     native = int((c or {}).get("ctx") or 0) or 32768
-    kv = int((c or {}).get("kv") or 0) * _KV_BYTES.get(cfg.get("cache_type", "f16"), 2.0)
+    kv = int((c or {}).get("kv") or 0) * _KV_BYTES.get(kv_type(cfg, m), 2.0)
     if not kv:
         return min(native, CTX_FLOOR * 2)
     # medido con llama.cpp (Qwen3.5 27B en CPU): la caché crece exactamente kv bytes por token, el búfer de cálculo unos
@@ -909,7 +932,7 @@ def memory_plan(cfg, m=None):
         return {"level": "ok", "cache_mib": None, "need": 0, "room": 0}
     GB = 1 << 30
     c = model_caps(m, compute=False) or {}
-    kv = int(c.get("kv") or 0) * _KV_BYTES.get(cfg.get("cache_type", "f16"), 2.0)
+    kv = int(c.get("kv") or 0) * _KV_BYTES.get(kv_type(cfg, m), 2.0)
     need = GB // 2 + (kv + 2048) * effective_ctx(cfg, m) if kv else GB
     for p in (m.get("path"), m.get("mmproj") if cfg.get("vision", True) else None):
         try:
@@ -1606,8 +1629,9 @@ class LLM:
                 # --fit: todas a la gráfica (si no caben, falla y se vuelve al procesador)
                 cmd += ["--fit", "on"] if fit else ["-ngl", "999"]
         fa = cfg["flash_attn"]
-        if cfg["cache_type"] != "f16":
-            cmd += ["-ctk", cfg["cache_type"], "-ctv", cfg["cache_type"]]
+        kt = kv_type(cfg, m)
+        if kt != "f16":
+            cmd += ["-ctk", kt, "-ctv", kt]
             fa = "on"                           # la cache V comprimida requiere flash attention
         if fa in ("on", "off"):
             cmd += ["-fa", fa]

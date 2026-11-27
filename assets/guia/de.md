@@ -66,6 +66,10 @@ geschützte Pfade) fragen immer nach, auch im Modus Automatisch. Im Modus **Plan
 einen Plan vor; mit **Plan ausführen** setzt er ihn um (oder **Weiter anpassen**). Um die Maussteuerung sofort zu
 stoppen: den Mauszeiger in die obere linke Ecke des Bildschirms bewegen.
 
+Was der Agent auf Webseiten oder in verbundenen Diensten liest, erreicht ihn als Daten markiert, nicht als Befehle; enthält es
+Text, der ihm Befehle geben will («ignoriere deine Anweisungen…»), warnt Jayth dich, und bis zum Ende dieser Antwort fragt
+alles, was etwas ändert, um Erlaubnis, auch im Automatikmodus.
+
 ## Was du siehst, während er arbeitet
 
 - Vor jeder Aktion sagt der Agent in einem Satz, was er tun wird. Jede Aktion ist eine Zeile mit ihrem Symbol und einer
@@ -262,8 +266,11 @@ Systems), klicken, ziehen, tippen, Tastenkürzel drücken, Fenster verwalten, di
 vom Bildschirm oder von einem Fenster machen. Während er steuert, siehst du ein Leuchten an den Bildschirmrändern und
 seinen Mauszeiger. Ein- oder ausschalten lässt es sich unter **Einstellungen › Werkzeuge › Computersteuerung
 erlauben**. Unter macOS braucht Jayth die Berechtigungen **Bildschirmaufnahme** und **Bedienungshilfen**
-(Systemeinstellungen › Datenschutz & Sicherheit). Unter Linux funktioniert es in X11-Sitzungen (unter Wayland ist die
-globale Steuerung eingeschränkt); zum Auflisten von Fenstern wird `wmctrl` benötigt.
+(Systemeinstellungen › Datenschutz & Sicherheit). Unter Linux mit X11 funktioniert es
+ohne Weiteres (zum Auflisten von Fenstern wird `wmctrl` oder `xdotool` benötigt). Unter Wayland nutzt die Bildschirmaufnahme
+`grim`, `gnome-screenshot` oder `spectacle`, Maus und Tastatur `dotool` oder `ydotool`; Fenster lassen sich unter Sway,
+Hyprland und KDE (mit `kdotool`) steuern, nicht unter GNOME. Schaltflächen über die Bedienungshilfen lesen und drücken
+funktioniert in beiden gleich; fehlt etwas, sagt Jayth, was zu installieren ist.
 
 ## Modelle
 
@@ -307,7 +314,8 @@ Jayth lädt die offizielle llama.cpp-Version herunter, die zum Computer passt: M
 NVIDIA, Vulkan für AMD oder Intel Arc, oder CPU. Unter **Einstellungen › Leistung**: **Engine wechseln oder
 aktualisieren…**, **Beim Starten des Modells vorwärmen**, **Gedächtnis der Unterhaltung (Kontext)** (standardmäßig
 **Automatisch**: der gesamte Kontext, den das Modell ab Werk unterstützt, verringert, wenn sein Speicher nicht auf den
-Computer passt; mit **Kontext komprimiert** passt doppelt so viel oder mehr hinein), **Modell stoppen nach Inaktivität
+Computer passt; mit **Kontext komprimiert** passt doppelt so viel oder mehr hinein; auf
+automatisch komprimiert Jayth nur, wenn der ganze Kontext nicht passt), **Modell stoppen nach Inaktivität
 von**, und in den
 **Engine-Einstellungen**: CPU-Threads, Threads beim Lesen (automatisch: ohne Grafikkarte liest es mit allen Threads des Prozessors), Layer auf der GPU (automatisch verteilt das Modell auf GPU und RAM), Batch-Größe,
 Kontext komprimiert, Flash attention, Beschleunigung beim Schreiben, mmap, im RAM halten und der lokale Port. Änderungen

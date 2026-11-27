@@ -5,8 +5,11 @@
 Captura con mss (X11 y macOS) o con la utilidad del sistema; ratón y teclado con pynput; ventanas con
 AppleScript (macOS) o wmctrl/xdotool (Linux).
 Permisos: en macOS hay que conceder a Jayth «Grabación de pantalla» y «Accesibilidad» (Ajustes del Sistema >
-Privacidad y seguridad). En Linux con Wayland el control global del ratón/teclado está limitado por diseño;
-funciona en sesiones X11 (o con XWayland para apps X11)."""
+Privacidad y seguridad).
+Linux con Wayland: la captura usa la utilidad del escritorio (grim, gnome-screenshot o spectacle); el ratón y el teclado,
+dotool o ydotool (escriben como un teclado y un ratón del sistema, así que valen en GNOME, KDE y Sway; necesitan permiso
+sobre /dev/uinput y, ydotool, su servicio ydotoold); las ventanas, swaymsg, hyprctl o kdotool según el escritorio. Leer y
+pulsar botones por accesibilidad (ui_elements, click_element) funciona igual que en X11."""
 import os, sys, time, shutil, subprocess, tempfile
 
 MAC = sys.platform == "darwin"
@@ -24,15 +27,78 @@ def _need(mod, pip_name):
 
 
 def _wayland():
-    return not MAC and os.environ.get("XDG_SESSION_TYPE") == "wayland" and not os.environ.get("DISPLAY")
+    """¿Sesión Wayland? (también con XWayland, que define DISPLAY: antes se tomaba por X11 y la captura salía negra)"""
+    return not MAC and (os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland" or bool(os.environ.get("WAYLAND_DISPLAY")))
+
+
+def _desktop():
+    return (os.environ.get("XDG_CURRENT_DESKTOP") or os.environ.get("DESKTOP_SESSION") or "").lower()
 
 
 def _hint():
     if MAC:
         return " En macOS concede a Jayth «Grabación de pantalla» y «Accesibilidad» en Ajustes del Sistema > Privacidad y seguridad."
     if _wayland():
-        return " En Wayland el control global está limitado: inicia sesión en X11 («Ubuntu on Xorg») para usarlo."
+        return (" En Wayland: para la captura instala grim (Sway, Hyprland), gnome-screenshot (GNOME) o spectacle (KDE); para el "
+                "ratón y el teclado, dotool o ydotool (con su servicio ydotoold y permiso sobre /dev/uinput). Para pulsar botones "
+                "sin coordenadas usa ui_elements y click_element, que funcionan en Wayland. Otra opción: iniciar sesión en X11.")
     return ""
+
+
+# ---------------------------------------------------------------- ratón y teclado en Wayland (dotool / ydotool)
+# códigos de tecla de Linux (input-event-codes.h) para ydotool, que no entiende nombres
+_KEYCODES = {"esc": 1, "escape": 1, "1": 2, "2": 3, "3": 4, "4": 5, "5": 6, "6": 7, "7": 8, "8": 9, "9": 10, "0": 11, "-": 12,
+             "=": 13, "backspace": 14, "tab": 15, "q": 16, "w": 17, "e": 18, "r": 19, "t": 20, "y": 21, "u": 22, "i": 23, "o": 24,
+             "p": 25, "[": 26, "]": 27, "enter": 28, "return": 28, "ctrl": 29, "control": 29, "a": 30, "s": 31, "d": 32, "f": 33,
+             "g": 34, "h": 35, "j": 36, "k": 37, "l": 38, ";": 39, "'": 40, "`": 41, "shift": 42, "\\": 43, "z": 44, "x": 45,
+             "c": 46, "v": 47, "b": 48, "n": 49, "m": 50, ",": 51, ".": 52, "/": 53, "alt": 56, "option": 56, "space": 57,
+             "capslock": 58, "f1": 59, "f2": 60, "f3": 61, "f4": 62, "f5": 63, "f6": 64, "f7": 65, "f8": 66, "f9": 67, "f10": 68,
+             "f11": 87, "f12": 88, "home": 102, "up": 103, "pageup": 104, "left": 105, "right": 106, "end": 107, "down": 108,
+             "pagedown": 109, "insert": 110, "delete": 111, "del": 111, "win": 125, "windows": 125, "super": 125, "cmd": 125,
+             "command": 125, "meta": 125, "printscreen": 99}
+# nombres para dotool (los de XKB)
+_DOTOOL_NAMES = {"control": "ctrl", "return": "enter", "escape": "esc", "del": "delete", "win": "super", "windows": "super",
+                 "cmd": "super", "command": "super", "meta": "super", "option": "alt", "printscreen": "print"}
+_wl_pos = [-1, -1]               # Wayland no deja leer la posición del ratón: la última que puso Jayth (-1: ninguna)
+
+
+def _wl_tool():
+    """dotool o ydotool en una sesión Wayland (None fuera de Wayland: allí sirve pynput)."""
+    if not _wayland():
+        return None
+    for t in ("dotool", "ydotool"):
+        if shutil.which(t):
+            return t
+    raise ControlError("En Wayland el ratón y el teclado no se pueden controlar sin ayuda del sistema." + _hint())
+
+
+def _wl(cmds):
+    """Órdenes para dotool (por su entrada) o ydotool (una por llamada)."""
+    t = _wl_tool()
+    if t == "dotool":
+        r = subprocess.run(["dotool"], input="\n".join(cmds) + "\n", capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            raise ControlError("dotool no pudo: %s.%s" % (r.stderr.strip()[:200], _hint()))
+        return
+    for c in cmds:
+        r = subprocess.run(["ydotool"] + c.split(" ") if not c.startswith("type ") else ["ydotool", "type", "--", c[5:]],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            raise ControlError("ydotool no pudo: %s.%s" % (r.stderr.strip()[:200], _hint()))
+
+
+def _wl_btn(button):
+    return {"right": "right", "middle": "middle"}.get(button, "left")
+
+
+def _wl_key(name, down=None):
+    """Una tecla para dotool («ctrl») o ydotool («29:1»)."""
+    if _wl_tool() == "dotool":
+        return _DOTOOL_NAMES.get(name, name)
+    code = _KEYCODES.get(name.lower())
+    if code is None:
+        raise ControlError("Tecla desconocida para ydotool: " + name)
+    return "%d:%d" % (code, 1 if down else 0)
 
 
 # ---------------------------------------------------------------- pantalla
@@ -58,6 +124,8 @@ def _grab_raw():
     """Devuelve (QImage, ancho_logico, alto_logico)."""
     from PySide6.QtGui import QImage
     try:
+        if _wayland():                       # mss solo ve las ventanas de XWayland (lo demás sale negro)
+            raise ControlError("Wayland")
         mss = _need("mss", "mss")
         with mss.mss() as s:
             m = s.monitors[1] if len(s.monitors) > 1 else s.monitors[0]
@@ -67,8 +135,13 @@ def _grab_raw():
     except Exception as first:
         # alternativa: utilidades del sistema (Wayland, o mss sin acceso)
         tmp = os.path.join(tempfile.gettempdir(), "jayth_shot_%d.png" % os.getpid())
+        desk = _desktop()
         cmds = [["screencapture", "-x", "-C", tmp]] if MAC else [
             ["grim", tmp], ["gnome-screenshot", "-f", tmp], ["spectacle", "-b", "-n", "-o", tmp], ["import", "-window", "root", tmp]]
+        if "kde" in desk:                    # la del propio escritorio primero
+            cmds.insert(0, cmds.pop(2))
+        elif "gnome" in desk:
+            cmds.insert(0, cmds.pop(1))
         for c in cmds:
             if shutil.which(c[0]):
                 try:
@@ -80,7 +153,7 @@ def _grab_raw():
                         except OSError:
                             pass
                         try:
-                            w, h = screen_size()
+                            w, h = (img.width(), img.height()) if _wayland() else screen_size()
                         except Exception:
                             w, h = img.width(), img.height()
                         return img, w, h
@@ -159,17 +232,47 @@ def _ctl():
 
 
 def cursor():
+    if _wayland():                           # no se puede leer: la última posición que puso Jayth
+        return tuple(_wl_pos)
     m, _ = _ctl()
     x, y = m.position
     return int(x), int(y)
 
 
 def set_cursor(x, y):
+    t = _wl_tool()
+    if t:
+        _wl_pos[:] = [int(x), int(y)]
+        if t == "dotool":                    # dotool mueve en fracciones de la pantalla
+            img_w, img_h = _wl_screen()
+            _wl(["mouseto %.5f %.5f" % (x / float(img_w), y / float(img_h))])
+        else:
+            _wl(["mousemove --absolute -x %d -y %d" % (x, y)])
+        return
     m, _ = _ctl()
     m.position = (x, y)
 
 
+def _wl_screen():
+    """Tamaño de la pantalla en Wayland (el de la captura; si no, el que dice Qt)."""
+    try:
+        from PySide6.QtGui import QGuiApplication
+        s = QGuiApplication.primaryScreen()
+        if s is not None:
+            g = s.geometry()
+            return max(1, g.width()), max(1, g.height())
+    except Exception:
+        pass
+    return 1920, 1080
+
+
 def click(button="left", double=False):
+    t = _wl_tool()
+    if t == "dotool":
+        return _wl(["click " + _wl_btn(button)] * (2 if double else 1))
+    if t == "ydotool":
+        code = {"left": "0xC0", "right": "0xC1", "middle": "0xC2"}[_wl_btn(button)]
+        return _wl(["click --repeat %d %s" % (2 if double else 1, code)])
     from pynput.mouse import Button
     m, _ = _ctl()
     b = {"right": Button.right, "middle": Button.middle}.get(button, Button.left)
@@ -178,6 +281,12 @@ def click(button="left", double=False):
 
 def mouse_button(button="left", down=True):
     """Pulsar o soltar un botón (para arrastrar)."""
+    t = _wl_tool()
+    if t == "dotool":
+        return _wl(["button%s %s" % ("down" if down else "up", _wl_btn(button))])
+    if t == "ydotool":
+        base = {"left": 0, "right": 1, "middle": 2}[_wl_btn(button)]
+        return _wl(["click 0x%02X" % ((0x40 if down else 0x80) + base)])
     from pynput.mouse import Button
     m, _ = _ctl()
     b = {"right": Button.right, "middle": Button.middle}.get(button, Button.left)
@@ -186,6 +295,11 @@ def mouse_button(button="left", down=True):
 
 def hold(parts, down=True):
     """Mantener pulsadas (o soltar) teclas como shift o ctrl mientras se hace clic."""
+    t = _wl_tool()
+    if t == "dotool":
+        return _wl(["key%s %s" % ("down" if down else "up", _wl_key(p)) for p in (parts if down else list(reversed(parts)))])
+    if t == "ydotool":
+        return _wl(["key " + " ".join(_wl_key(p, down) for p in (parts if down else list(reversed(parts))))])
     _, k = _ctl()
     names = _key_names()
     for p in (parts if down else reversed(parts)):
@@ -196,11 +310,25 @@ def hold(parts, down=True):
 
 
 def wheel(amount):
+    t = _wl_tool()
+    if t == "dotool":
+        return _wl(["wheel %d" % int(amount)])
+    if t == "ydotool":
+        return _wl(["mousemove --wheel -x 0 -y %d" % int(amount)])
     m, _ = _ctl()
     m.scroll(0, int(amount))
 
 
 def type_text(txt, stop=None):
+    if _wl_tool():                           # por líneas: Intro entre ellas
+        for i, line in enumerate(str(txt).replace("\r", "").split("\n")):
+            if stop is not None and stop.is_set():
+                break
+            if i:
+                press_combo(["enter"])
+            if line:
+                _wl(["type " + line])
+        return
     _, k = _ctl()
     from pynput.keyboard import Key
     for ch in txt:
@@ -234,6 +362,11 @@ def _key_names():
 
 
 def press_combo(parts):
+    t = _wl_tool()
+    if t == "dotool":
+        return _wl(["key " + "+".join(_wl_key(p) for p in parts)])
+    if t == "ydotool":
+        return _wl(["key " + " ".join([_wl_key(p, True) for p in parts] + [_wl_key(p, False) for p in reversed(parts)])])
     _, k = _ctl()
     names = _key_names()
     keys = []
@@ -274,8 +407,46 @@ return out
 '''
 
 
+def _wl_windows():
+    """Ventanas de un escritorio Wayland que lo permite: Sway (swaymsg), Hyprland (hyprctl) o KDE (kdotool). None si no."""
+    import json as _json
+    if shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        r = subprocess.run(["hyprctl", "clients", "-j"], capture_output=True, text=True, timeout=10)
+        try:
+            return [("hypr:" + c["address"], c.get("title") or c.get("class") or "") for c in _json.loads(r.stdout or "[]") if c.get("mapped", True)]
+        except ValueError:
+            return None
+    if shutil.which("swaymsg") and os.environ.get("SWAYSOCK"):
+        r = subprocess.run(["swaymsg", "-t", "get_tree", "-r"], capture_output=True, text=True, timeout=10)
+        out = []
+
+        def walk(n):
+            if n.get("pid") and n.get("name"):
+                out.append(("sway:%d" % n["id"], n["name"]))
+            for c in n.get("nodes", []) + n.get("floating_nodes", []):
+                walk(c)
+        try:
+            walk(_json.loads(r.stdout or "{}"))
+            return out
+        except ValueError:
+            return None
+    if shutil.which("kdotool"):
+        r = subprocess.run(["kdotool", "search", "--name", "."], capture_output=True, text=True, timeout=10)
+        out = []
+        for wid in r.stdout.split():
+            t = subprocess.run(["kdotool", "getwindowname", wid], capture_output=True, text=True, timeout=5).stdout.strip()
+            if t:
+                out.append(("kde:" + wid, t))
+        return out
+    return None
+
+
 def windows():
     """Lista de (id, titulo)."""
+    if not MAC and _wayland():
+        w = _wl_windows()
+        if w is not None:
+            return w
     if MAC:
         r = subprocess.run(["osascript", "-e", _AS_LIST], capture_output=True, text=True, timeout=15)
         if r.returncode != 0:
@@ -301,6 +472,13 @@ def windows():
 
 
 def focus(wid, title):
+    w = str(wid)
+    if w.startswith("hypr:"):
+        return subprocess.run(["hyprctl", "dispatch", "focuswindow", "address:" + w[5:]], capture_output=True, timeout=10)
+    if w.startswith("sway:"):
+        return subprocess.run(["swaymsg", "[con_id=%s] focus" % w[5:]], capture_output=True, timeout=10)
+    if w.startswith("kde:"):
+        return subprocess.run(["kdotool", "windowactivate", w[4:]], capture_output=True, timeout=10)
     if MAC:
         app = wid.replace('"', '\\"')
         win = title.split(" — ", 1)[1].replace('"', '\\"') if " — " in title else ""
@@ -349,8 +527,11 @@ def window_action(wid, title, action, x=None, y=None, w=None, h=None):
             if w is not None and h is not None:
                 _osa(tell + "set size of %s to {%d, %d}" % (sel, w, h))
         return
+    s = str(wid)
+    if s.startswith(("hypr:", "sway:", "kde:")):
+        return _wl_window_action(s, action, x, y, w, h)
     if not shutil.which("wmctrl") and not shutil.which("xdotool"):
-        raise ControlError("Para manejar ventanas en Linux instala wmctrl o xdotool (p. ej. sudo apt install wmctrl xdotool).")
+        raise ControlError("Para manejar ventanas en Linux instala wmctrl o xdotool (p. ej. sudo apt install wmctrl xdotool)." + _hint())
     run = lambda *c: subprocess.run(list(c), capture_output=True, timeout=10)
     if action == "minimize":
         run("xdotool", "windowminimize", str(int(str(wid), 0))) if shutil.which("xdotool") else run("wmctrl", "-i", "-r", wid, "-b", "add,hidden")
@@ -365,6 +546,44 @@ def window_action(wid, title, action, x=None, y=None, w=None, h=None):
         run("wmctrl", "-i", "-r", wid, "-b", "remove,maximized_vert,maximized_horz")
         run("wmctrl", "-i", "-r", wid, "-e", "0,%d,%d,%d,%d" % (x if x is not None else -1, y if y is not None else -1,
                                                               w if w is not None else -1, h if h is not None else -1))
+
+
+def _wl_window_action(wid, action, x=None, y=None, w=None, h=None):
+    """Lo mismo en Sway, Hyprland y KDE (cada uno con su orden)."""
+    run = lambda *c: subprocess.run(list(c), capture_output=True, timeout=10)
+    kind, ident = wid.split(":", 1)
+    if kind == "hypr":
+        a = "address:" + ident
+        if action == "close":
+            return run("hyprctl", "dispatch", "closewindow", a)
+        if action in ("maximize", "restore"):
+            run("hyprctl", "dispatch", "focuswindow", a)
+            return run("hyprctl", "dispatch", "fullscreen", "1")
+        if action == "minimize":
+            return run("hyprctl", "dispatch", "movetoworkspacesilent", "special," + a)
+        if x is not None and y is not None:
+            run("hyprctl", "dispatch", "movewindowpixel", "exact %d %d,%s" % (x, y, a))
+        if w is not None and h is not None:
+            run("hyprctl", "dispatch", "resizewindowpixel", "exact %d %d,%s" % (w, h, a))
+        return
+    if kind == "sway":
+        sel = "[con_id=%s] " % ident
+        cmd = {"close": "kill", "maximize": "fullscreen enable", "restore": "fullscreen disable", "minimize": "move scratchpad"}.get(action)
+        if cmd:
+            return run("swaymsg", sel + cmd)
+        if x is not None and y is not None:
+            run("swaymsg", sel + "floating enable, move position %d %d" % (x, y))
+        if w is not None and h is not None:
+            run("swaymsg", sel + "floating enable, resize set %d %d" % (w, h))
+        return
+    sub = {"close": ["windowclose"], "minimize": ["windowminimize"], "maximize": ["windowstate", "--add", "MAXIMIZED"],
+           "restore": ["windowstate", "--remove", "MAXIMIZED"]}.get(action)
+    if sub:
+        return run("kdotool", *sub[:1], ident, *sub[1:]) if sub[0] != "windowstate" else run("kdotool", "windowstate", sub[1], sub[2], ident)
+    if x is not None and y is not None:
+        run("kdotool", "windowmove", ident, str(x), str(y))
+    if w is not None and h is not None:
+        run("kdotool", "windowsize", ident, str(w), str(h))
 
 
 # ---------------------------------------------------------------- portapapeles

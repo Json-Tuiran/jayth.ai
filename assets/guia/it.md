@@ -63,6 +63,10 @@ protetti) chiedono sempre il permesso, anche in Automatico. In **Pianifica** l'a
 **Esegui il piano** lo mette in pratica (oppure **Continua a perfezionare**). Per fermare all'istante il controllo del
 mouse: porta il puntatore nell'angolo in alto a sinistra dello schermo.
 
+Ciò che l'agente legge su pagine web o servizi collegati gli arriva marcato come dati, non come ordini; se contiene testo che
+cerca di dargli ordini («ignora le tue istruzioni…»), Jayth ti avvisa e, fino alla fine di quella risposta, tutto ciò che
+cambia qualcosa chiede il permesso anche in Automatico.
+
 ## Cosa si vede mentre lavora
 
 - Prima di ogni azione l'agente dice in una frase cosa sta per fare. Ogni azione è una riga con la sua icona e
@@ -247,7 +251,10 @@ fare clic, trascinare, scrivere, premere scorciatoie, gestire le finestre, usare
 schermo o di una finestra. Mentre ha il controllo, si vedono un bagliore sui bordi dello schermo e il suo puntatore. Si
 attiva o disattiva in **Impostazioni › Strumenti › Consenti il controllo del computer**. Su macOS bisogna concedere a
 Jayth i permessi di **Registrazione schermo** e **Accessibilità** (Impostazioni di Sistema › Privacy e sicurezza). Su
-Linux funziona nelle sessioni X11 (su Wayland il controllo globale è limitato); per elencare le finestre serve `wmctrl`.
+Linux con X11 funziona così com'è (per elencare le finestre serve `wmctrl` o `xdotool`). Su Wayland, la cattura usa
+`grim`, `gnome-screenshot` o `spectacle`; mouse e tastiera, `dotool` o `ydotool`; le finestre si gestiscono su Sway,
+Hyprland e KDE (con `kdotool`), non su GNOME. Leggere e premere i pulsanti tramite l'accessibilità funziona allo stesso
+modo; se manca qualcosa, Jayth dice cosa installare.
 
 ## Modelli
 
@@ -289,7 +296,8 @@ Jayth scarica la versione ufficiale di llama.cpp adatta al computer: Metal sui M
 Vulkan per AMD o Intel Arc, oppure CPU. In **Impostazioni › Prestazioni**: **Cambia o aggiorna il motore…**,
 **Preriscalda all'avvio del modello**, **Memoria della conversazione (contesto)** (di default **Automatico**: tutto il
 contesto che il modello supporta di fabbrica, ridotto se la sua memoria non entra nel computer; con **Contesto
-compresso** ne entra il doppio o più), **Arresta il modello se non viene usato per**, e in
+compresso** ne entra il doppio o più; in automatico Jayth lo comprime solo se il contesto completo
+non entra), **Arresta il modello se non viene usato per**, e in
 **Impostazioni del motore**: Thread della CPU, Thread in lettura (automatico: senza scheda grafica legge con tutti i thread del processore), Layer sulla GPU (in automatico il modello viene ripartito tra GPU e RAM),
 Dimensione del batch, Contesto compresso, Flash attention, Accelerazione in scrittura, mmap, blocco nella RAM e la porta
 locale. Le modifiche del motore si applicano al riavvio del modello (**Riavvia modello**). Il registro del motore è in

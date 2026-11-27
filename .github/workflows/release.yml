@@ -65,6 +65,13 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pyinstaller
 
+      # protecciones del agente (acciones peligrosas, datos privados, inyección de instrucciones…): ver SECURITY.md
+      - name: Pruebas de seguridad
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m unittest discover -s tests -v
+
       - name: Compilar (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -171,6 +178,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -lh out
+          # huellas SHA-256 de cada descarga, para comprobarla (Get-FileHash en Windows, sha256sum en Linux y macOS)
+          (cd out && sha256sum -- * > SHA256SUMS.txt && cat SHA256SUMS.txt)
           # idempotente: si la Release ya existe (p. ej. al repetir una plataforma que fallo) se suben o reemplazan los archivos
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --clobber

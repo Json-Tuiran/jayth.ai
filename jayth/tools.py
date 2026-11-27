@@ -264,6 +264,38 @@ def _mentions_private(text):
     return bool(near and _PRIVATE_RX.search(t))
 
 
+# ---- contenido de terceros (páginas web, servicios conectados): datos, no órdenes
+EXTERNAL_TOOLS = {"web_search", "web_fetch", "browser_open", "browser_read", "browser_click", "browser_nav", "browser_type"}
+_INJECTION = re.compile(
+    r"ignor(?:e|a|ez|iere|are)\s+(?:all\s+|todas?\s+|tous\s+|alle\s+|tutte\s+)?(?:the\s+|las?\s+|les\s+|as\s+|tus\s+|your\s+)?"
+    r"(?:previous|prior|above|earlier|anteriores|previas|précédentes|vorherigen|precedenti|system)?\s*"
+    r"(?:instructions?|instrucciones|instruções|anweisungen|istruzioni|prompts?|directives?)|"
+    r"disregard\s+(?:all\s+|any\s+|the\s+)?(?:previous|prior|above|your)\s+(?:instructions?|prompts?|rules)|"
+    r"olvida\s+(?:todas?\s+)?(?:tus|las)\s+(?:instrucciones|reglas)|forget\s+(?:all\s+|your\s+)+(?:instructions?|rules)|"
+    r"(?:new|updated|nuevas?)\s+(?:system\s+)?(?:instructions?|instrucciones)\s*(?:for\s+(?:the\s+)?(?:ai|assistant|agent))?\s*:|"
+    r"(?:^|\n)\s*(?:system|sistema)\s*(?:prompt)?\s*:|<\|im_start\|>|<\|system\|>|\[/?INST\]|"
+    r"(?:if|when)\s+you\s+are\s+an?\s+(?:ai|llm|language\s+model|assistant|agent)|"
+    r"si\s+(?:eres|sos)\s+(?:un|una)\s+(?:ia|inteligencia\s+artificial|asistente|agente|modelo)|"
+    r"as\s+an?\s+(?:ai|llm|assistant|agent)[^.\n]{0,40}\byou\s+(?:must|should|have\s+to)|"
+    r"you\s+are\s+now\s+(?:a|an|in|the)\b|ahora\s+eres\s+(?:un|una|el|la)\b|"
+    r"(?:send|reveal|share|print|post|upload|email)\s+(?:me\s+)?(?:your|the|all)\s+(?:api\s*keys?|passwords?|credentials|tokens?|"
+    r"system\s+prompt|secrets?|cookies)|"
+    r"(?:envía|envia|revela|muestra|comparte|sube|manda)(?:me)?\s+(?:tu|tus|la|las|el|los|todas?\s+las)\s+(?:claves?|contraseñas?|"
+    r"credenciales|tokens?|instrucciones|secretos?|cookies)|"
+    r"do\s+not\s+(?:tell|inform|mention\s+(?:this|it)\s+to)\s+the\s+user|no\s+(?:se\s+lo\s+)?(?:digas|cuentes|menciones)\s+al\s+usuario",
+    re.I)
+
+
+def injection_hint(text):
+    """El trozo de un contenido externo que intenta dar órdenes a la IA («ignora las instrucciones anteriores», «envía tu
+    clave…»), o "" si no hay nada así."""
+    m = _INJECTION.search(str(text or "")[:200000])
+    if not m:
+        return ""
+    s = str(text)[max(0, m.start() - 30):m.end() + 50]
+    return " ".join(s.split())[:140]
+
+
 def is_dangerous(name, args, ctx):
     """Acciones que siempre piden confirmacion, incluso en modo automatico."""
     try:
@@ -1569,7 +1601,7 @@ def _cursor():
 
 def _failsafe():
     x, y = _cursor()
-    if x <= 0 and y <= 0:
+    if x <= 0 and y <= 0 and not (not osys.WIN and PX._wayland()):     # (en Wayland no se puede leer el ratón: sirve «Parar»)
         raise Abort(tr("Failsafe: el ratón está en la esquina superior izquierda; se detuvo el agente."))
     if PAUSED.is_set():                              # el usuario pulsó «Pausar» en el aviso: espera a que pulse «Seguir»
         run = CONTROL_RUN
@@ -1740,7 +1772,7 @@ def _screenshot(a, ctx):
         return {"text": "Zona ampliada (%dx%d). Las coordenadas de click/drag ahora son píxeles de esta imagen." % (tw, th), "image": png}
     if rect:
         return {"text": "Captura de la ventana «%s» (%dx%d). Las coordenadas de click/scroll son píxeles de esta imagen." % (title, tw, th), "image": png}
-    cx, cy = _cursor()
+    cx, cy = _here()
     note = (" No pude saber dónde está la ventana «%s»: es la pantalla entera." % title) if q else ""
     return {"text": "Captura %dx%d (pantalla real %dx%d). Ratón en (%d,%d).%s" % (tw, th, W, H, cx / ctx.scale, cy / ctx.scale, note), "image": png}
 
@@ -2527,7 +2559,8 @@ def browser_click(a, ctx):
 
 
 @tool("browser_type", "net", "Escribe en un campo de la página del navegador integrado (por número, o por su nombre en field) y, con submit=true, "
-      "pulsa Intro (buscar, enviar). En una lista desplegable elige la opción con ese texto. Las contraseñas las escribe el usuario.",
+      "pulsa Intro (buscar, enviar). En una lista desplegable elige la opción con ese texto; en un deslizador, pon el número. "
+      "Las contraseñas las escribe el usuario.",
       {"index": I("Número del campo"), "field": S("O el nombre del campo"), "text": S("Texto a escribir (o la opción de la lista)"),
        "submit": B("Pulsar Intro al terminar"), "clear": B("Borrar lo que había antes (por defecto sí)")}, ["text"])
 def browser_type(a, ctx):
@@ -3151,7 +3184,8 @@ def search_knowledge(a, ctx):
 
 @tool("jayth_guide", "agent", "Guía de Jayth, la app en la que trabajas: qué hace cada parte, dónde está cada botón, menú o ajuste, "
       "cómo se hace algo en Jayth y datos de esta instalación (versión, modelo activo, carpetas, atajos, permisos). Consúltala "
-      "antes de responder cualquier pregunta sobre Jayth. Sin tema devuelve el índice.",
+      "antes de responder cualquier pregunta sobre Jayth. Sin tema devuelve el índice; varios temas a la vez separados por «;», "
+      "o «todo» para la guía entera en una sola consulta.",
       {"topic": S("Tema o pregunta, p. ej. «cambiar el idioma», «dónde se guardan los modelos», «deshacer cambios»")})
 def jayth_guide(a, ctx):
     from . import guide

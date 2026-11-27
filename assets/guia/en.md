@@ -61,6 +61,10 @@ permission, even in Automatic. In **Plan** the agent researches and proposes a p
 (or **Keep refining**). To instantly stop mouse control: move the pointer to the top-left corner of the
 screen.
 
+What the agent reads on web pages or connected services reaches it marked as data, not as orders; if it contains text that
+tries to give it orders («ignore your instructions…»), Jayth warns you and, until the end of that reply, everything that
+changes something asks for permission even in Automatic.
+
 ## What you see while it works
 
 - Before each action the agent says in one sentence what it's going to do. Each action is a line with its icon and an
@@ -240,8 +244,11 @@ The agent can open programs and files, read the buttons and fields of any window
 drag, type, press shortcuts, manage windows, use the clipboard and take screenshots of the screen or of a window.
 While it's in control, you see a glow around the edges of the screen and its pointer. Turn it on or off in
 **Settings › Tools › Allow computer control**. On macOS, Jayth needs the **Screen Recording** and **Accessibility**
-permissions (System Settings › Privacy & Security). On Linux it works in X11 sessions (on Wayland global control is
-limited); listing windows requires `wmctrl`.
+permissions (System Settings › Privacy & Security). On Linux with X11 it works as is
+(listing windows requires `wmctrl` or `xdotool`). On Wayland, screenshots use `grim`, `gnome-screenshot` or `spectacle`;
+mouse and keyboard, `dotool` or `ydotool`; windows can be managed on Sway, Hyprland and KDE (with `kdotool`), not on
+GNOME. Reading and pressing buttons through accessibility works the same on both; if something is missing, Jayth says
+what to install.
 
 ## Models
 
@@ -279,7 +286,8 @@ limited); listing windows requires `wmctrl`.
 Jayth downloads the official llama.cpp build suited to the computer: Metal on Macs with Apple Silicon, CUDA for
 NVIDIA, Vulkan for AMD or Intel Arc, or CPU. In **Settings › Performance**: **Change or update the engine…**, **Warm
 up when starting the model**, **Conversation memory (context)** (by default **Automatic**: all the context the model
-supports out of the box, reduced if its memory doesn't fit on the computer; with **Compressed context** twice as much
+supports out of the box, reduced if its memory doesn't fit on the computer; with **Compressed context** twice as much (on automatic, Jayth compresses it only when the full
+context doesn't fit)
 or more fits), **Stop the model if unused for**, and in
 **Engine settings**: CPU threads, Threads for reading (automatic: without a graphics card it reads with all the processor's threads), GPU layers (automatic splits the model between GPU and RAM), Batch size,
 Compressed context, Flash attention, Writing speed-up, mmap, lock in RAM and the local port. Engine changes apply when the model
