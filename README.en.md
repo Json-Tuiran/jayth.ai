@@ -256,7 +256,8 @@ Jayth is free, with no ads and no accounts, and it is maintained by one person. 
 
 - give this repository a ⭐ and tell someone who could use it;
 - send your ideas and bug reports from the app (profile menu › **Send feedback…**);
-- or chip in: **[ways to support Jayth](https://json-tuiran.github.io/jayth.ai/en/support.html)**.
+- or chip in, once or monthly, on **[GitHub Sponsors](https://github.com/sponsors/Json-Tuiran)**
+  (more ways in [Support Jayth](https://json-tuiran.github.io/jayth.ai/en/support.html)).
 
 ## License and authorship
 
