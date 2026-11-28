@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jayth · Your local AI agent, on your computer</title>
+<meta name="description" content="Jayth turns an AI model running on your computer into an agent that codes, creates documents, and uses your apps and the web. Free, open source, no accounts, works offline. You approve every action. Windows, macOS and Linux.">
+<link rel="canonical" href="https://json-tuiran.github.io/jayth.ai/en/">
+<link rel="alternate" hreflang="es" href="https://json-tuiran.github.io/jayth.ai/">
+<link rel="alternate" hreflang="en" href="https://json-tuiran.github.io/jayth.ai/en/">
+<link rel="alternate" hreflang="x-default" href="https://json-tuiran.github.io/jayth.ai/en/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Jayth">
+<meta property="og:title" content="Jayth · Your local AI agent">
+<meta property="og:description" content="Codes, creates documents, and uses your apps and the web with models that run on your computer. You approve every action. Free and open source.">
+<meta property="og:image" content="https://json-tuiran.github.io/jayth.ai/img/social.png">
+<meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0D1110">
+<link rel="icon" href="../img/icono.png">
+<link rel="stylesheet" href="../estilo.css">
+<link rel="stylesheet" href="../movimiento.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Jayth","applicationCategory":"DeveloperApplication",
+ "operatingSystem":"Windows 10, Windows 11, macOS 11+, Linux","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},
+ "description":"Local desktop AI agent: codes, creates documents, and uses your apps and the web with GGUF models that run on your computer.",
+ "memoryRequirements":"8 GB (16 GB recommended)","processorRequirements":"4 cores, 2018 or newer",
+ "url":"https://json-tuiran.github.io/jayth.ai/en/","downloadUrl":"https://github.com/Json-Tuiran/jayth.ai/releases/latest",
+ "license":"https://www.gnu.org/licenses/gpl-3.0.html","author":{"@type":"Person","name":"Jeison Tuiran"},"inLanguage":["es","en","pt","fr","de","it","ja","zh"]}
+</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./" aria-label="Jayth, home">
+      <img class="logo-light" src="../img/logotipo-fondo-claro.svg" alt="Jayth" width="132" height="45">
+      <img class="logo-dark" src="../img/logotipo-fondo-oscuro.svg" alt="Jayth" width="132" height="45">
+    </a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#features">Features</a>
+      <a href="#examples">Examples</a>
+      <a href="#hardware">What computer do I need</a>
+      <a href="#privacy">Privacy</a>
+      <a href="#faq">FAQ</a>
+      <a class="gh" href="https://github.com/Json-Tuiran/jayth.ai">GitHub</a>
+      <a class="lang" href="../" hreflang="es" lang="es">ES</a>
+      <a class="btn btn-main btn-top" href="#download" data-direct>Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="content">
+  <div class="hero">
+    <div class="wrap">
+      <span class="eyebrow"><span class="dot" aria-hidden="true"></span>Free · Open source · Works offline</span>
+      <h1>Your AI agent,<br><span class="grad">on your computer</span></h1>
+      <p class="rotor" aria-live="off">Ask it to <span class="typed" data-rotate='["build an app and check that it works","write a sales report in Word","make a website for your business","tidy up your Downloads folder","search the web and sum it up","fill in that form for you"]'>build an app and check that it works</span></p>
+      <p class="lead">Jayth turns an AI model running on your computer into an agent that <strong>does the work</strong>:
+        it codes, creates documents, and uses your apps and the web. No cloud, no subscription, and <strong>you approve every action</strong>.</p>
+      <div class="cta" data-download data-github="View the code on GitHub">
+        <a class="btn btn-main" href="#download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14"/></svg><span>Download Jayth<small>Windows · macOS · Linux</small></span></a>
+        <a class="btn btn-soft" href="https://github.com/Json-Tuiran/jayth.ai">View the code on GitHub</a>
+      </div>
+      <ul class="trust">
+        <li>No accounts</li><li>No ads or tracking</li><li>Your files stay on your computer</li><li>8 languages</li>
+      </ul>
+      <p class="hw-hint">It runs even on a laptop without a graphics card. How fast the agent is depends on your computer:
+        <a href="#hardware">see what to expect from yours</a>. <span data-version></span></p>
+      <div class="stage">
+        <figure class="shot">
+          <div class="win">
+            <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>Jayth</span></div>
+            <video autoplay muted loop playsinline preload="metadata" poster="../img/chat_en.png" width="1280" height="720"
+              aria-label="Jayth video: it codes a calculator, creates a website and a Word report, uses the browser and asks before deleting">
+              <source src="../img/video_en.mp4" type="video/mp4">
+            </video>
+          </div>
+        </figure>
+        <div class="glow-under" aria-hidden="true"></div>
+      </div>
+      <p class="caption">Sped-up demo of the real app: on your computer, speed depends on the model and the hardware.</p>
+    </div>
+  </div>
+
+  <div class="marquee" aria-label="Compatible models and engines">
+    <p class="marquee-label">Works with the models and engines you already know</p>
+    <div class="track">
+      <span><b>●</b>Gemma</span><span><b>●</b>Qwen</span><span><b>●</b>Llama</span><span><b>●</b>Mistral</span><span><b>●</b>DeepSeek</span>
+      <span><b>●</b>GLM</span><span><b>●</b>llama.cpp</span><span><b>●</b>Ollama</span><span><b>●</b>LM Studio</span><span><b>●</b>Claude</span>
+      <span><b>●</b>Gemini</span><span><b>●</b>OpenRouter</span><span><b>●</b>Hugging Face</span>
+      <span aria-hidden="true"><b>●</b>Gemma</span><span aria-hidden="true"><b>●</b>Qwen</span><span aria-hidden="true"><b>●</b>Llama</span><span aria-hidden="true"><b>●</b>Mistral</span><span aria-hidden="true"><b>●</b>DeepSeek</span>
+      <span aria-hidden="true"><b>●</b>GLM</span><span aria-hidden="true"><b>●</b>llama.cpp</span><span aria-hidden="true"><b>●</b>Ollama</span><span aria-hidden="true"><b>●</b>LM Studio</span><span aria-hidden="true"><b>●</b>Claude</span>
+      <span aria-hidden="true"><b>●</b>Gemini</span><span aria-hidden="true"><b>●</b>OpenRouter</span><span aria-hidden="true"><b>●</b>Hugging Face</span>
+    </div>
+  </div>
+
+  <section>
+    <div class="wrap">
+      <div class="stats">
+        <div class="stat reveal"><b class="grad" data-count="8">8</b><span>languages in the app</span></div>
+        <div class="stat reveal" style="--d:.1s"><b class="grad" data-count="3">3</b><span>systems: Windows, macOS and Linux</span></div>
+        <div class="stat reveal" style="--d:.2s"><b class="grad" data-count="0">0</b><span>accounts, ads or tracking</span></div>
+        <div class="stat reveal" style="--d:.3s"><b class="grad" data-count="100" data-suffix=" %">100 %</b><span>open source (GPL-3.0)</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="alt">
+    <div class="wrap">
+      <div class="head center reveal"><h2>Ready in three steps</h2><p>No Python or anything else to install, and no admin rights needed.</p></div>
+      <div class="steps">
+        <div class="step reveal"><div class="n">1</div><h3>Download it</h3><p>The installer for your system, free. It updates itself in the background.</p></div>
+        <div class="step reveal" style="--d:.15s"><div class="n">2</div><h3>Pick a model</h3><p>A setup assistant checks your computer and suggests models that fit, with their approximate speed.</p></div>
+        <div class="step reveal" style="--d:.3s"><div class="n">3</div><h3>Ask for anything</h3><p>You see every step it takes and approve what matters. You can undo its changes.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <div class="head reveal">
+        <h2>It does the work, not just explains it</h2>
+        <p>An AI chat tells you what to do. Jayth does it on your computer, in plain sight, and asks your permission for what matters.</p>
+      </div>
+      <div class="grid">
+        <article class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/></svg></div>
+          <h3>Codes and checks</h3>
+          <p>It writes the code, runs it, reads the errors and fixes them. For projects there's Jayth Code: explorer, editor and terminal.</p>
+        </article>
+        <article class="card reveal" style="--d:.08s">
+          <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3l14 7-6 2-2 6z"/></svg></div>
+          <h3>Uses your apps</h3>
+          <p>It reads the buttons and fields of any app, clicks, types and manages windows. Moving the mouse to a corner stops it.</p>
+        </article>
+        <article class="card reveal" style="--d:.16s">
+          <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z"/></svg></div>
+          <h3>Browses in plain sight</h3>
+          <p>Its built-in browser searches, clicks and fills in forms with its own pointer. You can step in at any time.</p>
+        </article>
+        <article class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/></svg></div>
+          <h3>Documents and canvas</h3>
+          <p>It creates Word, Excel, PowerPoint and PDF files. On the canvas you see web pages and documents, edit them or ask for changes, and export them.</p>
+        </article>
+        <article class="card reveal" style="--d:.08s">
+          <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg></div>
+          <h3>No cloud, no GPU needed</h3>
+          <p>Once the model is downloaded it works offline. It runs on a laptop without a graphics card, and uses NVIDIA, AMD, Intel Arc or Apple Silicon if you have them.</p>
+        </article>
+        <article class="card reveal" style="--d:.16s">
+          <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0zM12 16v5"/></svg></div>
+          <h3>Any model you like</h3>
+          <p>Download GGUF models from the app (it marks the ones that fit), use your own, Ollama or LM Studio, or an API model such as Claude or Gemini.</p>
+        </article>
+        <article class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg></div>
+          <h3>You're in charge</h3>
+          <p>Approve every action or give it free rein; risky actions always ask. If a website tries to give it orders, it warns you. And you can undo its changes.</p>
+        </article>
+        <article class="card reveal" style="--d:.08s">
+          <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7 4.7 1.8-4.7 1.8L12 16l-1.8-4.7-4.7-1.8 4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></div>
+          <h3>Skills and services</h3>
+          <p>Teach it procedures with <code>SKILL.md</code> skills (also as .zip), create assistants, and connect Gmail, Drive, Notion and more with your own account.</p>
+        </article>
+        <article class="card reveal" style="--d:.16s">
+          <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h9M8.5 3v2c0 4-2 7-5 8M6 9c1.5 2.5 3.5 4 6 4.5M13 21l4-10 4 10M14.5 17.5h5"/></svg></div>
+          <h3>In your language</h3>
+          <p>English, Spanish, Portuguese, French, German, Italian, Japanese and Chinese. It answers in the language you write in.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="examples" class="alt">
+    <div class="wrap">
+      <div class="head reveal"><h2>What would you ask it?</h2><p>Some typical requests and what Jayth does with them.</p></div>
+      <div class="tabs" role="tablist" aria-label="Examples by profile">
+        <button role="tab" id="t-prog" aria-controls="p-prog" aria-selected="true">Coding</button>
+        <button role="tab" id="t-ofi" aria-controls="p-ofi" aria-selected="false" tabindex="-1">Office</button>
+        <button role="tab" id="t-neg" aria-controls="p-neg" aria-selected="false" tabindex="-1">Your business</button>
+        <button role="tab" id="t-apr" aria-controls="p-apr" aria-selected="false" tabindex="-1">Learning</button>
+      </div>
+      <div role="tabpanel" id="p-prog" aria-labelledby="t-prog">
+        <div class="chat">
+          <div class="bubble user">Add a dark mode to my app and check that the tests still pass.</div>
+          <div class="bubble agent"><span class="typing" aria-hidden="true"><i></i><i></i><i></i></span>
+            <ol><li>I read the project and its instructions.</li><li>I edit the styles and the theme switch.</li><li>I run the tests and read the results.</li><li>I show you the changed files, in case you want to undo something.</li></ol></div>
+        </div>
+      </div>
+      <div role="tabpanel" id="p-ofi" aria-labelledby="t-ofi" hidden>
+        <div class="chat">
+          <div class="bubble user">Summarize this quarter's sales from this Excel file in a Word report with a table.</div>
+          <div class="bubble agent"><span class="typing" aria-hidden="true"><i></i><i></i><i></i></span>
+            <ol><li>I read the spreadsheet.</li><li>I work out the monthly totals.</li><li>I create the Word report with the table and the conclusions.</li><li>I open it on the canvas so you can review and download it.</li></ol></div>
+        </div>
+      </div>
+      <div role="tabpanel" id="p-neg" aria-labelledby="t-neg" hidden>
+        <div class="chat">
+          <div class="bubble user">Make a website for my café with the menu and opening hours, and show it to me on a phone.</div>
+          <div class="bubble agent"><span class="typing" aria-hidden="true"><i></i><i></i><i></i></span>
+            <ol><li>I write the page and its design.</li><li>I show it on the canvas.</li><li>I switch to the phone view and check the console.</li><li>I export it or save it to your project.</li></ol></div>
+        </div>
+      </div>
+      <div role="tabpanel" id="p-apr" aria-labelledby="t-apr" hidden>
+        <div class="chat">
+          <div class="bubble user">Explain this Python error and fix it step by step.</div>
+          <div class="bubble agent"><span class="typing" aria-hidden="true"><i></i><i></i><i></i></span>
+            <ol><li>I read the error and the file where it happens.</li><li>I explain the cause in plain words.</li><li>I fix the code and run it again.</li><li>I tell you what I changed and why.</li></ol></div>
+        </div>
+      </div>
+      <p class="example-note">Illustrative examples: how well and how fast it does them depends on the model and your computer.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="split reveal">
+        <div>
+          <h2>The canvas: what it makes, in view</h2>
+          <p class="note" style="margin-top:0">Web pages, documents and code right next to the conversation.</p>
+          <ul>
+            <li>See the page as on a phone, a tablet or a desktop, with its error console.</li>
+            <li>Edit it yourself, or select a part and ask for a change.</li>
+            <li>Compare versions and export to PDF, Word, HTML or PNG, or save it to your project.</li>
+            <li>It also opens the Word, Excel, PowerPoint and PDF files it creates, and lets you download a copy.</li>
+          </ul>
+        </div>
+        <div class="pic"><img src="../img/lienzo_en.png" width="1280" height="720" loading="lazy" alt="The Jayth canvas shows a café website the agent just created"></div>
+      </div>
+      <div class="split flip reveal">
+        <div>
+          <h2>Jayth Code, for your projects</h2>
+          <p class="note" style="margin-top:0">The agent works on your files and you see everything.</p>
+          <ul>
+            <li>Explorer with previews of Markdown, Word, Excel, PowerPoint, PDF and images.</li>
+            <li>Editor with autosave and a built-in terminal.</li>
+            <li>It reads your project's instructions (<code>AGENTS.md</code>, <code>CLAUDE.md</code>) and remembers your preferences.</li>
+            <li>The files it changes are marked, and you can undo any change.</li>
+          </ul>
+        </div>
+        <div class="pic"><img src="../img/code_en.png" width="1280" height="720" loading="lazy" alt="Jayth Code: file explorer, formatted README and the agent in the right panel"></div>
+      </div>
+      <div class="split reveal">
+        <div>
+          <h2>A browser it uses in plain sight</h2>
+          <p class="note" style="margin-top:0">No hidden magic: you see its pointer and what it types.</p>
+          <ul>
+            <li>It opens websites, searches, clicks buttons and fills in forms.</li>
+            <li>In Ask mode every step waits for your OK; a card number is always confirmed by you.</li>
+            <li>Website content is treated as data, never as orders.</li>
+          </ul>
+        </div>
+        <div class="pic"><img src="../img/navegador_en.png" width="1280" height="720" loading="lazy" alt="The agent types into a shop's search box with its “Jayth” pointer"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="hardware" class="alt">
+    <div class="wrap">
+      <div class="head reveal">
+        <h2>What computer do I need?</h2>
+        <p>Jayth runs on almost any computer, but <strong>how fast and how smoothly the agent works depends on your hardware</strong>:
+          the AI model reads what you give it and writes its answer on your processor or graphics card. More power means faster
+          answers and more capable models; with less, it still works, just more slowly and with small models.</p>
+      </div>
+      <div class="why reveal">
+        <div><b>Reading</b><span>Before answering, the model reads your message, its instructions and your files. This is where a graphics card helps most.</span></div>
+        <div><b>Writing</b><span>The answer comes out word by word. It depends mostly on memory speed and the size of the model.</span></div>
+        <div><b>Thinking better</b><span>Bigger models make better agents, but they need more memory. The setup assistant tells you which ones fit.</span></div>
+      </div>
+      <div class="tabs reveal" role="tablist" aria-label="Hardware levels">
+        <button role="tab" id="t-min" aria-controls="p-min" aria-selected="true">Minimum</button>
+        <button role="tab" id="t-rec" aria-controls="p-rec" aria-selected="false" tabindex="-1">Recommended</button>
+        <button role="tab" id="t-ide" aria-controls="p-ide" aria-selected="false" tabindex="-1">Ideal</button>
+        <button role="tab" id="t-api" aria-controls="p-api" aria-selected="false" tabindex="-1">No powerful computer</button>
+      </div>
+      <div role="tabpanel" id="p-min" aria-labelledby="t-min">
+        <div class="tier">
+          <div>
+            <h3>It works, with some patience</h3>
+            <ul>
+              <li>4-core processor (2018 or newer).</li>
+              <li>8 GB of RAM (16 GB recommended).</li>
+              <li>No graphics card.</li>
+              <li>About 10 GB of free disk space.</li>
+              <li>Small models, like Gemma 4 E4B (about 4 GB).</li>
+            </ul>
+          </div>
+          <div>
+            <div class="meter"><div class="rail"><div class="fill" style="--v:22%"></div></div><div class="lab"><span>Rough speed</span><span>Slow</span></div></div>
+            <p class="expect">Measured on an i5-8250U with 20 GB and no GPU: it reads about <strong>22 tokens/s</strong> and writes about <strong>5</strong> (3–4 words per second). Fine for short, focused tasks; the first answer in each conversation can take a few minutes, and long tasks quite a bit more.</p>
+          </div>
+        </div>
+      </div>
+      <div role="tabpanel" id="p-rec" aria-labelledby="t-rec" hidden>
+        <div class="tier">
+          <div>
+            <h3>Smooth for everyday work</h3>
+            <ul>
+              <li>16 GB of RAM or more.</li>
+              <li>A graphics card with 8 GB (NVIDIA, AMD or Intel Arc), or a Mac with an Apple chip and 16 GB.</li>
+              <li>Medium models, around 8 to 14 billion parameters.</li>
+            </ul>
+          </div>
+          <div>
+            <div class="meter"><div class="rail"><div class="fill" style="--v:62%"></div></div><div class="lab"><span>Rough speed</span><span>Good</span></div></div>
+            <p class="expect">Several times faster than without a GPU, with more capable models. Integrated graphics usually don't help: Jayth then uses the processor.</p>
+          </div>
+        </div>
+      </div>
+      <div role="tabpanel" id="p-ide" aria-labelledby="t-ide" hidden>
+        <div class="tier">
+          <div>
+            <h3>Big models, no waiting</h3>
+            <ul>
+              <li>A graphics card with 16–24 GB, or a Mac with an Apple chip and 32 GB or more.</li>
+              <li>Big models, 27 to 32 billion parameters (like Qwen3.8 27B).</li>
+            </ul>
+          </div>
+          <div>
+            <div class="meter"><div class="rail"><div class="fill" style="--v:90%"></div></div><div class="lab"><span>Rough speed</span><span>Very good</span></div></div>
+            <p class="expect">Big models make the best agents. They also run without a GPU, but very slowly: Qwen3.8 27B writes under 1 token/s on the test laptop.</p>
+          </div>
+        </div>
+      </div>
+      <div role="tabpanel" id="p-api" aria-labelledby="t-api" hidden>
+        <div class="tier">
+          <div>
+            <h3>Use an API model</h3>
+            <ul>
+              <li>Any computer that runs Jayth.</li>
+              <li>A key for Claude, Gemini, OpenRouter or another compatible service.</li>
+            </ul>
+          </div>
+          <div>
+            <div class="meter"><div class="rail"><div class="fill" style="--v:85%"></div></div><div class="lab"><span>Rough speed</span><span>Fast (depends on the service)</span></div></div>
+            <p class="expect">Fast even on a modest computer, and you can switch back to a local model whenever you like. In exchange, you pay the service for what you use and your messages go through it.</p>
+          </div>
+        </div>
+      </div>
+      <p class="note">On first launch, the setup assistant checks your computer and shows which models fit and their approximate speed. And <strong>Optimize for this computer</strong> (Settings › Performance) measures yours and picks the fastest settings.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="head reveal"><h2>Local or cloud: an honest comparison</h2><p>A model on your computer doesn't always win. Here's what changes.</p></div>
+      <div class="table reveal">
+        <table class="compare">
+          <thead><tr><th></th><th>Jayth with a local model</th><th>A cloud AI service</th></tr></thead>
+          <tbody>
+            <tr><td>Your files and messages stay on your computer</td><td class="yes">Yes</td><td class="no">No: they go to the service</td></tr>
+            <tr><td>Works offline</td><td class="yes">Yes</td><td class="no">No</td></tr>
+            <tr><td>Price</td><td class="yes">Free</td><td class="meh">Subscription or pay per use</td></tr>
+            <tr><td>Open source and auditable</td><td class="yes">Yes</td><td class="no">Usually not</td></tr>
+            <tr><td>Speed</td><td class="meh">Depends on your computer</td><td class="yes">Fast on any computer</td></tr>
+            <tr><td>The most capable models</td><td class="meh">Those that fit on your computer</td><td class="yes">Yes</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">The best of both: in Jayth you can also use a cloud model for a specific task and switch back to local.</p>
+    </div>
+  </section>
+
+  <section id="privacy" class="alt">
+    <div class="wrap">
+      <div class="head reveal">
+        <h2>Your data stays with you</h2>
+        <p>An agent that uses your computer has to be trustworthy. That's why its code is public and the important things always need your OK.</p>
+      </div>
+      <ul class="checks">
+        <li class="reveal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg><div><b>No accounts, no tracking</b><span>No sign-up and no usage statistics. This website uses no cookies or analytics either.</span></div></li>
+        <li class="reveal" style="--d:.08s"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg><div><b>Everything on your computer</b><span>With a local model, your conversations and files never leave your computer.</span></div></li>
+        <li class="reveal" style="--d:.16s"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg><div><b>Risky actions always ask</b><span>Deleting, installing software, or posting and sending from your accounts needs your OK, even in automatic mode.</span></div></li>
+        <li class="reveal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg><div><b>Guards against web tricks</b><span>If a page tries to give it orders, it warns you and asks before anything that changes something.</span></div></li>
+        <li class="reveal" style="--d:.08s"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg><div><b>Protected keys</b><span>API keys are kept in a vault: encrypted on Windows, readable only by your user on macOS and Linux.</span></div></li>
+        <li class="reveal" style="--d:.16s"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg><div><b>Open and verifiable</b><span>Anyone can review the code. Every release publishes the SHA-256 checksums of its downloads.</span></div></li>
+      </ul>
+      <p class="note">Details in the <a href="https://github.com/Json-Tuiran/jayth.ai/blob/main/PRIVACY.md">privacy policy</a> and <a href="https://github.com/Json-Tuiran/jayth.ai/blob/main/SECURITY.md">security</a>.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="story reveal">
+        <img src="../img/icono.png" alt="" width="96" height="96">
+        <div>
+          <h2>Built in the open, by one person</h2>
+          <p>Jayth is built and maintained by Ing. Jeison Tuiran. No company or investors behind it: the code is public, every
+            release can be verified, and what you ask stays on your computer. Your ideas and the bugs you find go straight to the
+            person who writes it.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="download" class="alt">
+    <div class="wrap">
+      <div class="head reveal">
+        <h2>Download</h2>
+        <p>Nothing else to install. On first launch, a setup assistant detects your computer, downloads the engine and a model that fits, and gets everything ready.</p>
+      </div>
+      <div class="table reveal">
+        <table>
+          <thead><tr><th>System</th><th>Download</th><th>How</th></tr></thead>
+          <tbody>
+            <tr><td>Windows 10/11 (64-bit)</td><td><a href="https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-Setup-x64.exe">Installer (.exe)</a></td><td>Open it and follow the steps. It installs for your user, no admin rights needed.</td></tr>
+            <tr><td>Windows, no install</td><td><a href="https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-windows-x64-portable.zip">Portable version (.zip)</a></td><td>Unzip and open <code>Jayth.exe</code>. Great for a USB stick.</td></tr>
+            <tr><td>Mac with Apple chip (M1–M4)</td><td><a href="https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-macos-arm64.dmg">Jayth for Apple Silicon (.dmg)</a></td><td>Open the .dmg and drag Jayth to Applications.</td></tr>
+            <tr><td>Mac with Intel</td><td><a href="https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-macos-x64.dmg">Jayth for Intel (.dmg)</a></td><td>Same as above.</td></tr>
+            <tr><td>Linux x86_64</td><td><a href="https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-linux-x86_64.AppImage">AppImage</a> · <a href="https://github.com/Json-Tuiran/jayth.ai/releases/latest/download/Jayth-linux-x86_64.tar.gz">.tar.gz</a></td><td><code>chmod +x Jayth-*.AppImage</code> and open it.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Requirements: Windows 10/11, macOS 11 or later, or 64-bit Linux; at least 8 GB of RAM (16 GB recommended) and about 10 GB of free space. <a href="#hardware">What to expect from your computer</a>. Every release is on <a href="https://github.com/Json-Tuiran/jayth.ai/releases">GitHub Releases</a>, each with a <code>SHA256SUMS.txt</code> to verify your download.</p>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="wrap">
+      <div class="head reveal"><h2>Frequently asked questions</h2></div>
+      <details>
+        <summary>Is it free?</summary>
+        <p>Yes. Jayth is free and open source (GPL-3.0 license), with no ads and no accounts, for companies too. Local models are free as well. If you choose an API model such as Claude or Gemini, that service charges you for what you use.</p>
+      </details>
+      <details>
+        <summary>Why is it slow on my computer?</summary>
+        <p>Because the model runs on your processor or graphics card: without a GPU, or with a model that's big for your computer, it reads and writes more slowly, and the first answer in each conversation takes longer because it reads its instructions. Try a smaller model, click <em>Optimize for this computer</em> in Settings › Performance, or use an API model for tasks that need speed. More in <a href="#hardware">What computer do I need</a>.</p>
+      </details>
+      <details>
+        <summary>Do I need an internet connection?</summary>
+        <p>Only to download the app and the model the first time. After that it works offline; web searches and connected services are only used when you're online.</p>
+      </details>
+      <details>
+        <summary>Windows says "Windows protected your PC". Is it safe?</summary>
+        <p>It shows up because the installers aren't signed yet: free signing for open-source projects is in progress. Click <em>More info → Run anyway</em>. To check that your download is the original, compare its SHA-256 checksum with the one in that release's <code>SHA256SUMS.txt</code>.</p>
+      </details>
+      <details>
+        <summary>How is it different from Ollama or LM Studio?</summary>
+        <p>Ollama and LM Studio let you chat with local models. Jayth also takes action: it creates and edits files, runs commands, and uses apps and the web, always with your approval. If you already use Ollama or LM Studio, Jayth can use them as its engine.</p>
+      </details>
+      <details>
+        <summary>Can it break something on my computer?</summary>
+        <p>You choose how much freedom it gets, from read-only to free rein. Deleting, installing software or acting on your accounts always asks. Deleted files go to the recycle bin, and you can undo the file changes it makes.</p>
+      </details>
+      <details>
+        <summary>How can I help?</summary>
+        <p>Use it and tell us what breaks or what you miss (from the app: profile menu › <em>Send feedback…</em>), star it on GitHub or recommend it. More ways on <a href="support.html">Support Jayth</a>.</p>
+      </details>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap reveal">
+      <h2>Try it on your computer today</h2>
+      <p class="lead" style="color:var(--muted);max-width:640px;margin:0 auto 24px">Free, no accounts, ready in minutes. If you find it useful, a star or a recommendation helps more people find it.</p>
+      <div class="cta">
+        <a class="btn btn-main" href="#download" data-direct><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14"/></svg>Download Jayth</a>
+        <a class="btn btn-soft" href="support.html"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 20.5s-7.5-4.6-9.3-9.2C1.4 8 3.4 4.5 7 4.5c2 0 3.6 1.1 5 3 1.4-1.9 3-3 5-3 3.6 0 5.6 3.5 4.3 6.8-1.8 4.6-9.3 9.2-9.3 9.2z"/></svg>Support Jayth</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<a class="btn btn-main float-cta" href="#download" data-direct aria-label="Download Jayth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14"/></svg>Download</a>
+
+<footer>
+  <div class="wrap">
+    <div>© 2026 Ing. Jeison Tuiran · Free software under the <a href="https://github.com/Json-Tuiran/jayth.ai/blob/main/LICENSE">GPL-3.0</a> license</div>
+    <nav aria-label="Footer links">
+      <a href="https://github.com/Json-Tuiran/jayth.ai">GitHub</a>
+      <a href="support.html">Support</a>
+      <a href="https://github.com/Json-Tuiran/jayth.ai/blob/main/PRIVACY.md">Privacy</a>
+      <a href="https://github.com/Json-Tuiran/jayth.ai/blob/main/SECURITY.md">Security</a>
+      <a href="https://github.com/Json-Tuiran/jayth.ai/blob/main/MARCA.md">Trademark</a>
+      <a href="https://github.com/Json-Tuiran/jayth.ai/blob/main/CONTRIBUTING.md#contributing-to-jayth">Contribute</a>
+      <a href="../" hreflang="es" lang="es">Español</a>
+    </nav>
+  </div>
+</footer>
+<script src="../sitio.js" defer></script>
+</body>
+</html>

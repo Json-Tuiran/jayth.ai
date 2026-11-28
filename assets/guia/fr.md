@@ -30,7 +30,7 @@ Créé par Ing. Jeison Tuiran. Logiciel libre sous licence GPL-3.0. Web : https
   **Panneau de l'agent** (Ctrl+L).
 - **Menu de votre profil** (en bas de la barre latérale) : Paramètres, Personnalisation, Mémoire, Assistants et
   compétences, Tâches planifiées, Modèles, Modèles par API…, Raccourcis clavier, Envoyer des commentaires…, Signaler un
-  bug…, Rechercher des mises à jour, À propos de Jayth et Quitter.
+  bug…, Soutenir Jayth, Rechercher des mises à jour, À propos de Jayth et Quitter.
 - **Zone de notification :** Afficher, Question rapide, Arrêter l'agent et Quitter.
 
 ## La zone de texte
@@ -317,6 +317,18 @@ dans les deux cas ; s'il manque quelque chose, Jayth indique quoi installer.
 - Si une nouvelle version de l'un de vos modèles est publiée, Jayth vous prévient (se désactive dans Paramètres › À
   propos › Nouveautés).
 
+## De quel ordinateur ai-je besoin ?
+
+La rapidité de l'agent dépend de l'ordinateur : le modèle lit (message, instructions, fichiers) et écrit avec le
+processeur ou la carte graphique. **Minimum :** processeur 4 cœurs (2018 ou plus récent), 8 Go de RAM (16 recommandés),
+environ 10 Go libres et de petits modèles comme Gemma 4 E4B ; sans carte graphique, il lit environ 22 tokens/s et en
+écrit environ 5 (mesuré sur un i5-8250U), et la première réponse de chaque conversation peut prendre quelques minutes.
+**Recommandé :** 16 Go ou plus et une carte graphique de 8 Go (NVIDIA, AMD ou Intel Arc) ou un Mac à puce Apple avec
+16 Go, pour des modèles moyens (8–14 B), plusieurs fois plus rapide. **Idéal :** carte graphique de 16–24 Go ou Mac avec
+32 Go ou plus, pour de grands modèles (27–32 B), les meilleurs comme agents. Sans ordinateur puissant, un modèle par API
+(Claude, Gemini, OpenRouter) est rapide sur n'importe quel ordinateur, en payant le service. Si c'est lent : un modèle
+plus petit, **Optimiser pour cet ordinateur** ou un modèle par API.
+
 ## Moteur et performances
 
 Jayth télécharge la version officielle de llama.cpp adaptée à l'ordinateur : Metal sur Mac avec Apple Silicon, CUDA pour
@@ -414,6 +426,7 @@ options (avec leur nom exact) :
     arrière-plan et les installer à la fermeture de Jayth », « M'avertir quand une nouvelle version de mes modèles est
     publiée ».
   - **Commentaires :** **Signaler un bug…** et **Suggérer une amélioration…**.
+  - **Soutenir Jayth :** **Soutenir Jayth** (ouvre la page avec les façons de soutenir le projet) et **Mettre une étoile sur GitHub**.
 
 ## Personnalisation et mémoire
 
@@ -430,6 +443,8 @@ de référence (p. ex. « Correcteur de style ») ; il se choisit avec **+ �
 Une **compétence** est une procédure que l'agent utilise quand elle correspond à la tâche (p. ex. « Rédiger des rapports
 de synthèse et les livrer en Word ») ; les compétences se créent, s'importent, s'activent ou se désactivent dans
 l'onglet Compétences (**Ajouter des exemples** en ajoute quelques-unes à titre d'exemple).
+**Importer…** accepte un dossier avec `SKILL.md`, un `.md` seul ou un `.zip` comme ceux des boutiques de compétences
+(y compris des lots de plusieurs) ; si l'une contient des phrases typiques d'injection d'instructions, Jayth le signale.
 
 ## Tâches planifiées
 

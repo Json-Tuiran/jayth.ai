@@ -25,6 +25,10 @@ smarter but paid, and the conversation is sent to that service.
 
 ## 3. Choosing the AI
 
+**How fast it works depends on your computer.** The AI thinks with your processor or graphics card: without a graphics
+card it works, but more slowly and with small models; with a graphics card or an Apple-chip Mac it's several times
+faster. At minimum: a 4-core processor (2018 or newer), 8 GB of memory and about 10 GB of free disk space.
+
 - **Little memory (8 GB) or no graphics card:** use a small model (the wizard picks it). It will answer slowly — that's
   normal. For speed, add an online AI in **Your profile → API models…** (you need a paid key from that service).
 - **16 GB or more, or a graphics card:** you can use bigger, smarter models (**Your profile → Models**).

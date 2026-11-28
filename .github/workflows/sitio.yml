@@ -1,0 +1,42 @@
+# Web del proyecto (carpeta sitio/) en GitHub Pages: https://json-tuiran.github.io/jayth.ai/
+# Se publica sola al cambiar la web o las imágenes en main. Requisito (una vez): Settings › Pages › Source: «GitHub Actions».
+name: Publicar la web
+
+on:
+  push:
+    branches: [main]
+    paths: ["sitio/**", "docs/img/**", "assets/icon.png", ".github/workflows/sitio.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publicar:
+    name: Publicar en GitHub Pages
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.despliegue.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Montar la web con las imágenes del repositorio
+        run: |
+          mkdir -p _web
+          cp -r sitio/. _web/
+          mkdir -p _web/img
+          cp -r docs/img/. _web/img/
+          cp assets/icon.png _web/img/icono.png
+          ls -R _web | head -50
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _web
+      - id: despliegue
+        uses: actions/deploy-pages@v5

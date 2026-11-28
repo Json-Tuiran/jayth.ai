@@ -11,6 +11,11 @@ machine and **you approve every action**.
 
 Created by **Ing. Jeison Tuiran** · Free software under the [GPL-3.0](LICENSE) license · [Trademark policy](MARCA.md) (in Spanish)
 
+> **Speed depends on your computer.** The AI model reads and writes on your processor or graphics card: on a laptop
+> without a GPU it works, with small models and more slowly; with a graphics card or an Apple-chip Mac it's several times
+> faster and can run more capable models. Minimum: 4 cores, 8 GB of RAM (16 recommended) and about 10 GB free. Details in
+> **[What computer do I need](#what-computer-do-i-need)**.
+
 [Español](README.md) · **English**
 
 > **Languages:** Jayth's interface is available in **English, Spanish, Portuguese (Brazil), French, German, Italian, Japanese and
@@ -82,6 +87,10 @@ Each link downloads the latest version for that system. All versions and their n
 agent working on your project (the files it changes are marked in green).
 
 <p align="center"><img src="docs/img/code_en.png" width="860" alt="Jayth Code: explorer, formatted README and the agent on the right"></p>
+
+**Canvas:** the web pages, documents and code it creates, right next to the conversation: phone or desktop sizes, editing, asking the agent for a change, and export to PDF, Word, HTML or PNG.
+
+<p align="center"><img src="docs/img/lienzo_en.png" width="860" alt="The canvas shows a café website the agent just created"></p>
 
 **Built-in browser:** the agent opens websites, searches, clicks and fills in forms in plain sight; you can step in at any time.
 
@@ -217,6 +226,22 @@ Windows 10/11 (64-bit), macOS 11 or later, or a 64-bit Linux distribution with g
 Fedora 36 or later). The memory you need depends on the model: the wizard shows which quantizations fit. With an NVIDIA
 GPU the model is split automatically between VRAM and RAM; on Apple Silicon Macs it uses unified memory with Metal.
 
+### What computer do I need
+
+Jayth runs on almost any computer, but **how fast and how smoothly the agent works depends on the hardware**: the model
+reads what you give it (your message, its instructions, your files) and writes its answer on your processor or graphics
+card. More power means faster answers and more capable models, which are the ones that work best as agents.
+
+| Computer | What to expect |
+|---|---|
+| **Minimum:** 4-core processor (2018 or newer), 8 GB of RAM (16 recommended), no graphics card, about 10 GB free | Small models, like Gemma 4 E4B (about 4 GB). It reads about 22 tokens/s and writes about 5 (measured, see [Measured speed](#measured-speed)). Fine for short, focused tasks; the first answer in each conversation can take a few minutes, and long tasks quite a bit more. |
+| **Recommended:** 16 GB of RAM or more and a graphics card with 8 GB (NVIDIA, AMD or Intel Arc), or an Apple-chip Mac with 16 GB | Medium models (around 8 to 14 billion parameters), more capable and several times faster. Integrated graphics usually don't help. |
+| **Ideal:** a graphics card with 16–24 GB, or an Apple-chip Mac with 32 GB or more | Big models (27–32 billion, like Qwen3.8 27B) with smooth answers. They also run without a GPU, but very slowly (under 1 token/s on the test laptop). |
+| **No powerful computer** | An API model (Claude, Gemini, OpenRouter): fast on any computer; you pay the service for what you use and your messages go through it. |
+
+On first launch, the setup assistant shows which models fit your computer and their approximate speed, and **Optimize
+for this computer** (Settings › Performance) measures yours and picks the fastest settings.
+
 ## Security
 
 What always asks for permission (even in Automatic mode), how hidden instructions in web pages are handled, where keys are
@@ -224,6 +249,14 @@ stored and how to report a problem: **[SECURITY.md](SECURITY.md)**. Those protec
 ([`tests/test_seguridad.py`](tests/test_seguridad.py)) that run on every build.
 
 What leaves your computer and when (nothing you didn't ask for; no accounts or usage analytics): **[PRIVACY.md](PRIVACY.md)**.
+
+## Support Jayth
+
+Jayth is free, with no ads and no accounts, and it is maintained by one person. If you find it useful:
+
+- give this repository a ⭐ and tell someone who could use it;
+- send your ideas and bug reports from the app (profile menu › **Send feedback…**);
+- or chip in: **[ways to support Jayth](https://json-tuiran.github.io/jayth.ai/en/support.html)**.
 
 ## License and authorship
 
@@ -236,7 +269,9 @@ It is free software under the **[GNU GPL-3.0](LICENSE)** license:
 - **The name «Jayth», its logo and icons** are the project's trademark: a modified version must use a different name and
   logo and cannot be presented as official. Details in the [trademark policy](MARCA.md) (in Spanish).
 
-Contributions to the repository are accepted under the same GPL-3.0 license.
+Contributions to the repository are accepted under the same GPL-3.0 license and the
+[Contributor License Agreement](CLA.md#jayth-contributor-license-agreement-cla). How to contribute:
+[CONTRIBUTING.md](CONTRIBUTING.md#contributing-to-jayth).
 
 **[Code signing policy](CODE_SIGNING_POLICY.md#english-summary):** free code signing provided by
 [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Windows packages

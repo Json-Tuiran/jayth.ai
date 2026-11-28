@@ -9,6 +9,29 @@ MAC = sys.platform == "darwin"
 LINUX = sys.platform.startswith("linux")
 NO_WINDOW = 0x08000000 if WIN else 0
 FROZEN = getattr(sys, "frozen", False)          # empaquetado (PyInstaller)
+_STORE = []
+
+
+def store_package():
+    """Nombre completo del paquete MSIX si Jayth se instaló desde la Microsoft Store (las actualizaciones las hace la
+    tienda), o "". JAYTH_STORE=1 lo simula en las pruebas."""
+    if not _STORE:
+        name = ""
+        if os.environ.get("JAYTH_STORE"):
+            name = "JeisonTuiran.Jayth_prueba"
+        elif sys.platform == "win32":
+            try:
+                import ctypes
+                n = ctypes.c_uint32(0)
+                k32 = ctypes.windll.kernel32
+                if k32.GetCurrentPackageFullName(ctypes.byref(n), None) == 122:     # ERROR_INSUFFICIENT_BUFFER: hay paquete
+                    buf = ctypes.create_unicode_buffer(n.value + 1)
+                    if k32.GetCurrentPackageFullName(ctypes.byref(n), buf) == 0:
+                        name = buf.value
+            except Exception:
+                name = ""
+        _STORE.append(name)
+    return _STORE[0]
 
 
 def os_label():

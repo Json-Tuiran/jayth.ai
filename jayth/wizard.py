@@ -163,6 +163,10 @@ class SetupWizard(QDialog):
         v.addWidget(lbl(tr("TU EQUIPO"), "section"))
         self.hw_lbl = lbl(tr("Detectando hardware…"))
         v.addWidget(self.hw_lbl)
+        v.addWidget(lbl(tr("La rapidez del agente depende de este equipo: con una tarjeta gráfica o un Mac con chip Apple responde "
+                           "varias veces más rápido. Sin gráfica también funciona, con modelos pequeños y más despacio (la primera "
+                           "respuesta de cada conversación puede tardar unos minutos). En el paso siguiente verás qué modelos caben "
+                           "y su velocidad aproximada."), "faint"))
         v.addSpacing(8)
         v.addWidget(lbl(tr("DÓNDE SE GUARDA"), "section"))
         v.addWidget(lbl(tr("Ajustes y conversaciones: %s\nCarpeta de trabajo del agente: %s") % (paths.HOME, self.cfg["workspace"]), "muted"))

@@ -29,7 +29,7 @@ Erstellt von Ing. Jeison Tuiran. Freie Software unter der Lizenz GPL-3.0. Web: h
   die Schaltflächen für den **Datei-Explorer** (Strg+B), das **Terminal** (Strg+`) und den **Agent-Bereich**
   (Strg+L).
 - **Dein Profilmenü** (unten in der Seitenleiste): Einstellungen, Personalisierung, Gedächtnis, Assistenten und
-  Fähigkeiten, Geplante Aufgaben, Modelle, API-Modelle…, Tastenkürzel, Feedback senden…, Fehler melden…, Nach Updates
+  Fähigkeiten, Geplante Aufgaben, Modelle, API-Modelle…, Tastenkürzel, Feedback senden…, Fehler melden…, Jayth unterstützen, Nach Updates
   suchen, Über Jayth und Beenden.
 - **Infobereich:** Anzeigen, Schnelle Frage, Agent stoppen und Beenden.
 
@@ -308,6 +308,18 @@ funktioniert in beiden gleich; fehlt etwas, sagt Jayth, was zu installieren ist.
 - Erscheint eine neue Version eines deiner Modelle, gibt Jayth Bescheid (abschalten unter Einstellungen › Über ›
   Neuigkeiten).
 
+## Welchen Computer brauche ich?
+
+Wie schnell der Agent ist, hängt vom Computer ab: Das Modell liest (Nachricht, Anweisungen, Dateien) und schreibt mit
+dem Prozessor oder der Grafikkarte. **Minimum:** 4-Kern-Prozessor (2018 oder neuer), 8 GB RAM (16 empfohlen), etwa
+10 GB frei und kleine Modelle wie Gemma 4 E4B; ohne Grafikkarte liest es etwa 22 Token/s und schreibt etwa 5 (gemessen
+auf einem i5-8250U), und die erste Antwort jeder Unterhaltung kann einige Minuten dauern. **Empfohlen:** 16 GB oder
+mehr und eine Grafikkarte mit 8 GB (NVIDIA, AMD oder Intel Arc) oder ein Mac mit Apple-Chip und 16 GB, für mittlere
+Modelle (8–14 B), mehrfach schneller. **Ideal:** Grafikkarte mit 16–24 GB oder Mac mit 32 GB oder mehr, für große
+Modelle (27–32 B), die besten als Agenten. Ohne leistungsstarken Computer ist ein API-Modell (Claude, Gemini,
+OpenRouter) auf jedem Computer schnell, gegen Bezahlung des Dienstes. Wenn es langsam ist: ein kleineres Modell,
+**Für diesen Computer optimieren** oder ein API-Modell.
+
 ## Engine und Leistung
 
 Jayth lädt die offizielle llama.cpp-Version herunter, die zum Computer passt: Metal auf Macs mit Apple Silicon, CUDA für
@@ -404,6 +416,7 @@ Du öffnest sie über das Profilmenü (**Einstellungen**). Änderungen werden au
     herunterladen und beim Schließen von Jayth installieren“, „Benachrichtige mich, wenn eine neue Version meiner Modelle
     erscheint“.
   - **Feedback:** **Fehler melden…** und **Verbesserung vorschlagen…**.
+  - **Jayth unterstützen:** **Jayth unterstützen** (öffnet die Seite mit den Möglichkeiten, das Projekt zu unterstützen) und **Auf GitHub einen Stern geben**.
 
 ## Personalisierung und Gedächtnis
 
@@ -420,6 +433,8 @@ Referenzdateien (z. B. „Stilkorrektur“); du wählst ihn mit **+ › Assisten
 **Fähigkeit** ist ein Ablauf, den der Agent nutzt, wenn er zur Aufgabe passt (z. B. „Managementberichte verfassen und
 als Word-Datei liefern“); im Tab Fähigkeiten lassen sie sich erstellen, importieren, aktivieren oder deaktivieren
 (**Beispiele hinzufügen** bringt einige Muster mit).
+**Importieren…** akzeptiert einen Ordner mit `SKILL.md`, eine einzelne `.md` oder eine `.zip` wie aus Fähigkeiten-Shops
+(auch Pakete mit mehreren); enthält eine davon typische Sätze von Prompt-Injection, warnt Jayth.
 
 ## Geplante Aufgaben
 

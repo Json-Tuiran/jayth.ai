@@ -1,0 +1,48 @@
+# Acuerdo de colaborador (CLA.md): en cada propuesta de cambio de alguien nuevo, un bot pide aceptar el acuerdo con un
+# comentario y guarda la firma en la rama «cla-firmas» (signatures/cla.json). El autor del proyecto y los bots no firman.
+# No ejecuta el código de la propuesta: solo lee los comentarios y escribe la firma.
+name: Acuerdo de colaborador
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  cla:
+    name: Comprobar el acuerdo de colaborador
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request &&
+       (github.event.comment.body == 'recheck' ||
+        github.event.comment.body == 'He leído el CLA y lo acepto / I have read the CLA and I agree'))
+    steps:
+      - uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08   # v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-signatures: signatures/cla.json
+          path-to-document: https://github.com/Json-Tuiran/jayth.ai/blob/main/CLA.md
+          branch: cla-firmas
+          allowlist: Json-Tuiran,*[bot]
+          custom-pr-sign-comment: He leído el CLA y lo acepto / I have read the CLA and I agree
+          custom-notsigned-prcomment: >-
+            ¡Gracias por tu propuesta! Antes de aceptarla, lee el [acuerdo de colaborador](https://github.com/Json-Tuiran/jayth.ai/blob/main/CLA.md)
+            y, si estás de acuerdo, responde con este comentario exacto. ·
+            Thank you for your pull request! Before it can be accepted, please read the
+            [Contributor License Agreement](https://github.com/Json-Tuiran/jayth.ai/blob/main/CLA.md#jayth-contributor-license-agreement-cla)
+            and, if you agree, reply with this exact comment:
+          custom-allsigned-prcomment: >-
+            Todas las personas de esta propuesta aceptaron el acuerdo de colaborador. ·
+            Everyone in this pull request has signed the CLA.
+          signed-commit-message: "$contributorName aceptó el acuerdo de colaborador en #$pullRequestNo"
+          create-file-commit-message: "Firmas del acuerdo de colaborador"
+          lock-pullrequest-aftermerge: false

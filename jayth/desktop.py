@@ -5237,6 +5237,7 @@ class Main(QMainWindow):
         pm.addAction(icon("inp_teclado"), tr("Atajos de teclado"), lambda: self.settings("Atajos de teclado"))
         pm.addAction(icon("mat_comentario"), tr("Enviar comentarios…"), lambda: FeedbackDialog(self, "idea").exec())
         pm.addAction(icon("est_error"), tr("Informar de un error…"), lambda: FeedbackDialog(self, "error").exec())
+        pm.addAction(icon("mat_corazon"), tr("Apoyar a %s") % APP_NAME, self.open_support)
         pm.addAction(icon("acc_refrescar"), tr("Buscar actualizaciones"), lambda: self.check_news(manual=True))
         pm.addAction(icon("est_info"), tr("Acerca de %s") % APP_NAME, lambda: self.settings("Acerca de"))
         pm.addSeparator()
@@ -5244,6 +5245,11 @@ class Main(QMainWindow):
         foot.clicked.connect(lambda: pm.exec(foot.mapToGlobal(QPoint(0, 0)) - QPoint(0, pm.sizeHint().height() + 4)))   # se abre hacia arriba
         sv.addWidget(foot)
         return self.side
+
+    def open_support(self):
+        import webbrowser
+        from . import support_url
+        webbrowser.open(support_url(i18n.LANG))
 
     def _header(self):
         head = QWidget()
@@ -5848,7 +5854,10 @@ class Main(QMainWindow):
     # ---- novedades: versiones nuevas de Jayth y de los modelos
     def check_news(self, manual=False):
         cfg = core.SET.snapshot()
-        if cfg.get("auto_update_check", True) or manual:
+        if updater.installed()["kind"] == "store":
+            if manual:
+                self.toast(tr("Las actualizaciones de %s llegan por la Microsoft Store.") % APP_NAME, icon_name="est_info")
+        elif cfg.get("auto_update_check", True) or manual:
             run_bg(updater.check_app, lambda r: self._got_app_news(r, manual))
         if cfg.get("model_news", True) and cfg["models"]:
             run_bg(lambda: updater.check_models(cfg["models"], set(cfg.get("model_news_seen") or [])), self._got_model_news)

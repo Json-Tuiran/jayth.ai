@@ -25,6 +25,10 @@ más rápida y lista, pero de pago y enviando la conversación a ese servicio.
 
 ## 3. Elegir la IA
 
+**Lo rápido que trabaje depende de tu ordenador.** La IA piensa con tu procesador o tu tarjeta gráfica: sin gráfica
+funciona, pero más despacio y con modelos pequeños; con una gráfica o un Mac con chip Apple va varias veces más rápido.
+Como mínimo: un procesador de 4 núcleos (de 2018 o posterior), 8 GB de memoria y unos 10 GB libres en el disco.
+
 - **Tu ordenador tiene poca memoria (8 GB) o no tiene tarjeta gráfica:** usa un modelo pequeño (el asistente lo elige
   solo). Responderá despacio: es normal. Si quieres rapidez, añade una IA por internet en **Tu perfil → Modelos por API…**
   (necesitas una clave de pago de ese servicio).

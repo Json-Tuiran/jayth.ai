@@ -1,0 +1,23 @@
+# Jayth
+
+> Jayth is a free, open-source (GPL-3.0) desktop app for Windows, macOS and Linux that turns a local AI model (GGUF, run with llama.cpp) into an agent that codes, creates documents (Word, Excel, PowerPoint, PDF), runs commands, uses other apps and the web, and controls the computer. It works offline once the model is downloaded, runs on laptops without a graphics card, and the user approves its actions. Created by Ing. Jeison Tuiran.
+
+- Interface in Spanish, English, Portuguese, French, German, Italian, Japanese and Simplified Chinese.
+- Models: downloads GGUF models from Hugging Face inside the app, uses local .gguf files, Ollama or LM Studio, or API models (Claude, Gemini, OpenRouter and other OpenAI-compatible services).
+- Two modes: Chat for any task, and Jayth Code for projects (file explorer, editor, terminal and agent).
+- Canvas: previews web pages, documents and code the agent creates; the user can edit them, ask for changes and export to PDF, Word, HTML or PNG.
+- Safety: permission modes (read-only to automatic); deleting, installing software, acting on connected accounts and typing card numbers always ask; content from websites is treated as data, and suspected prompt injection triggers a warning and approvals.
+- Privacy: no accounts, no usage statistics; API keys are kept in an encrypted vault on Windows.
+- Measured speed on an Intel Core i5-8250U laptop with 20 GB RAM and no GPU: Gemma 4 E4B reads 22 tokens/s and writes 4.9 tokens/s.
+- Performance depends on the hardware: the model runs on the CPU or GPU. Minimum: 4-core CPU (2018+), 8 GB RAM (16 recommended), ~10 GB disk, small models (e.g. Gemma 4 E4B), slow on CPU only. Recommended: 16 GB RAM plus an 8 GB GPU (NVIDIA, AMD, Intel Arc) or an Apple-silicon Mac with 16 GB, for 8-14B models. Ideal: 16-24 GB GPU or a Mac with 32 GB+, for 27-32B models. On modest hardware, API models (Claude, Gemini, OpenRouter) are fast.
+- Skills: supports SKILL.md agent skills (folder, .md or .zip import), assistants, scheduled tasks and MCP connectors (Gmail, Google Drive, Notion and more).
+
+## Links
+
+- [Website (English)](https://json-tuiran.github.io/jayth.ai/en/)
+- [Sitio web (español)](https://json-tuiran.github.io/jayth.ai/)
+- [Source code and releases](https://github.com/Json-Tuiran/jayth.ai)
+- [Latest release downloads](https://github.com/Json-Tuiran/jayth.ai/releases/latest)
+- [Security](https://github.com/Json-Tuiran/jayth.ai/blob/main/SECURITY.md)
+- [Privacy](https://github.com/Json-Tuiran/jayth.ai/blob/main/PRIVACY.md)
+- [Support the project](https://json-tuiran.github.io/jayth.ai/en/support.html)

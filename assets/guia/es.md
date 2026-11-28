@@ -27,7 +27,7 @@ Creado por Ing. Jeison Tuiran. Software libre con licencia GPL-3.0. Web: https:/
   agente** (Ctrl+L).
 - **Menú de tu perfil** (abajo en la barra lateral): Ajustes, Personalización, Memoria, Asistentes y habilidades,
   Tareas programadas, Modelos, Modelos por API…, Atajos de teclado, Enviar comentarios…, Informar de un error…,
-  Buscar actualizaciones, Acerca de Jayth y Salir.
+  Apoyar a Jayth, Buscar actualizaciones, Acerca de Jayth y Salir.
 - **Bandeja del sistema:** Mostrar, Pregunta rápida, Detener agente y Salir.
 
 ## El cuadro de mensaje
@@ -276,6 +276,17 @@ instalar.
 - Las descargas muestran porcentaje, velocidad y tiempo, se reanudan si se cortan y se comprueban con SHA-256.
 - Si se publica una versión nueva de uno de tus modelos, Jayth avisa (se desactiva en Ajustes › Acerca de › Novedades).
 
+## Qué equipo necesito
+
+La rapidez del agente depende del equipo: el modelo lee (mensaje, instrucciones, archivos) y escribe con el procesador o
+la tarjeta gráfica. **Mínimo:** procesador de 4 núcleos (2018 o posterior), 8 GB de RAM (16 recomendados), unos 10 GB
+libres y modelos pequeños como Gemma 4 E4B; sin gráfica lee unos 22 tokens/s y escribe unos 5 (medido en un i5-8250U),
+y la primera respuesta de cada conversación puede tardar unos minutos. **Recomendado:** 16 GB o más y una gráfica con
+8 GB (NVIDIA, AMD o Intel Arc) o un Mac con chip Apple y 16 GB, para modelos medianos (8–14 B), varias veces más rápido.
+**Ideal:** gráfica con 16–24 GB o Mac con 32 GB o más, para modelos grandes (27–32 B), los mejores como agentes. Sin un
+equipo potente, un modelo por API (Claude, Gemini, OpenRouter) va rápido en cualquier ordenador, pagando al servicio.
+Si va lento: un modelo más pequeño, **Optimizar para este equipo** o un modelo por API.
+
 ## Motor y rendimiento
 
 Jayth descarga la versión oficial de llama.cpp adecuada al equipo: Metal en Mac con Apple Silicon, CUDA para NVIDIA,
@@ -364,6 +375,7 @@ Se abren desde el menú del perfil (**Ajustes**). Los cambios se guardan solos. 
   - **Novedades:** «Avisarme cuando haya una versión nueva de Jayth», «Descargar las actualizaciones en segundo plano e
     instalarlas al cerrar Jayth», «Avisarme cuando se publique una versión nueva de mis modelos».
   - **Comentarios:** **Informar de un error…** y **Sugerir una mejora…**.
+  - **Apoyar a Jayth:** **Apoyar a Jayth** (abre la página con las formas de apoyar el proyecto) y **Dar una estrella en GitHub**.
 
 ## Personalización y memoria
 
@@ -379,6 +391,8 @@ propios (p. ej. «Corrector de estilo»); se elige con **+ › Usar un asistente
 **habilidad** es un procedimiento que el agente usa cuando encaja con la tarea (p. ej. «Redactar informes ejecutivos y
 entregarlos en Word»); se crean, importan, activan o desactivan en la pestaña Habilidades (**Añadir ejemplos** trae
 algunas de muestra).
+**Importar…** acepta una carpeta con `SKILL.md`, un `.md` suelto o un `.zip` como los de las tiendas de habilidades
+(también paquetes con varias); si una trae frases típicas de inyección de instrucciones, Jayth lo avisa.
 
 ## Tareas programadas
 

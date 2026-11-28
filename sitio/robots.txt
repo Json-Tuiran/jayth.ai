@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://json-tuiran.github.io/jayth.ai/sitemap.xml

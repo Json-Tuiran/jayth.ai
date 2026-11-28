@@ -11,7 +11,7 @@
 import os, re, uuid, shutil
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QListWidget, QListWidgetItem, QWidget,
-                               QTabWidget, QFileDialog, QMessageBox, QCheckBox)
+                               QTabWidget, QFileDialog, QMessageBox, QCheckBox, QMenu)
 from . import APP_NAME, core, paths
 from .wizard import btn, lbl
 from .i18n import tr
@@ -118,6 +118,101 @@ def save_skill(name, description, body, old_id=None):
     with open(os.path.join(folder, "SKILL.md"), "w", encoding="utf-8") as f:
         f.write("---\nname: %s\ndescription: %s\n---\n\n%s\n" % (name.strip(), description.strip().replace("\n", " "), body.strip()))
     return sid
+
+
+ZIP_MAX_BYTES = 60 * 1024 * 1024        # una habilidad son instrucciones y algún script: más que esto no lo es
+ZIP_MAX_FILES = 3000
+
+
+def _unzip(zpath, dest):
+    """Descomprime un .zip de habilidades sin salirse de dest: ignora rutas absolutas, «..», enlaces simbólicos y la
+    basura de macOS, y corta si lo descomprimido pasa del límite (aunque el .zip mienta sobre los tamaños)."""
+    import zipfile
+    root = os.path.realpath(dest)
+    left = ZIP_MAX_BYTES
+    with zipfile.ZipFile(zpath) as z:
+        infos = [i for i in z.infolist() if not i.is_dir()]
+        if len(infos) > ZIP_MAX_FILES:
+            raise ValueError(tr("Ese .zip tiene demasiados archivos para ser una habilidad."))
+        for i in infos:
+            name = i.filename.replace("\\", "/")
+            parts = [p for p in name.split("/") if p not in ("", ".")]
+            if not parts or name.startswith("/") or ".." in parts or ":" in name or parts[0] == "__MACOSX" or parts[-1] == ".DS_Store":
+                continue
+            if (i.external_attr >> 16) & 0o170000 == 0o120000:
+                continue
+            out = os.path.realpath(os.path.join(dest, *parts))
+            if not out.startswith(root + os.sep):
+                continue
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            with z.open(i) as fi, open(out, "wb") as fo:
+                while True:
+                    chunk = fi.read(1 << 16)
+                    if not chunk:
+                        break
+                    left -= len(chunk)
+                    if left < 0:
+                        raise ValueError(tr("Ese .zip es demasiado grande para ser una habilidad."))
+                    fo.write(chunk)
+
+
+def _skill_folders(root):
+    """Carpetas con SKILL.md dentro de root (las de más arriba: una habilidad puede traer ejemplos con su propio SKILL.md)."""
+    out = []
+    for d, dirs, files in os.walk(root):
+        dirs.sort()
+        hit = next((f for f in files if f.lower() == "skill.md"), None)
+        if hit:
+            if hit != "SKILL.md":
+                os.replace(os.path.join(d, hit), os.path.join(d, "SKILL.md"))
+            out.append(d)
+            dirs[:] = []
+    return out
+
+
+def _skill_id(name):
+    return re.sub(r"[^\w-]+", "-", name.strip().lower()).strip("-")[:48] or "habilidad"
+
+
+def import_skills(src):
+    """Importa una habilidad o un paquete de ellas: carpeta con SKILL.md, .md suelto o .zip (como los que se descargan
+    de las tiendas de habilidades). Devuelve los ids importados."""
+    if not (os.path.isfile(src) and src.lower().endswith(".zip")):
+        return [import_skill(src)]
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="jayth-skill-")
+    try:
+        _unzip(src, tmp)
+        found = _skill_folders(tmp)
+        if not found:
+            mds = [f for f in os.listdir(tmp) if f.lower().endswith(".md") and os.path.isfile(os.path.join(tmp, f))]
+            if len(mds) == 1:
+                return [import_skill(os.path.join(tmp, mds[0]))]
+            raise ValueError(tr("Ese .zip no tiene ningún archivo SKILL.md."))
+        stem = os.path.splitext(os.path.basename(src))[0]
+        done, taken = [], []
+        for d in found:
+            sid = _skill_id(stem if os.path.realpath(d) == os.path.realpath(tmp) else os.path.basename(d))
+            dst = os.path.join(SKILLS_DIR, sid)
+            if os.path.exists(dst):
+                taken.append(sid)
+                continue
+            os.makedirs(SKILLS_DIR, exist_ok=True)
+            shutil.copytree(d, dst)
+            done.append(sid)
+        if not done:
+            raise ValueError(tr("Ya existe una habilidad llamada «%s».") % ", ".join(taken))
+        return done
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def suspicious(sid):
+    """Trozo de las instrucciones de una habilidad que intenta saltarse las normas («ignora las instrucciones
+    anteriores», «envía la clave…»), o ""."""
+    from .tools import injection_hint
+    s = _parse(os.path.join(SKILLS_DIR, sid, "SKILL.md")) or {}
+    return injection_hint(s.get("body", ""))
 
 
 def import_skill(src):
@@ -302,7 +397,9 @@ class AssistantsDialog(QDialog):
         self.s_list.currentRowChanged.connect(self._s_pick)
         left.addWidget(self.s_list, 1)
         left.addWidget(btn(tr("Nueva habilidad"), None, self._s_new, "acc_anadir"))
-        left.addWidget(btn(tr("Importar…"), None, self._s_import, "acc_descargar"))
+        self.s_imp = btn(tr("Importar…"), None, self._s_import, "acc_descargar")
+        self.s_imp.setToolTip(tr("Desde un .zip (como los de las tiendas de habilidades), un archivo .md o una carpeta con SKILL.md"))
+        left.addWidget(self.s_imp)
         self.s_ex = btn(tr("Añadir ejemplos"), None, self._s_examples)
         left.addWidget(self.s_ex)
         h.addLayout(left)
@@ -403,14 +500,40 @@ class AssistantsDialog(QDialog):
             self._s_reload()
 
     def _s_import(self):
-        d = QFileDialog.getExistingDirectory(self, tr("Carpeta de la habilidad (con SKILL.md)"), os.path.expanduser("~"))
-        if not d:
+        m = QMenu(self)
+        a_file = m.addAction(tr("Desde un archivo .zip o .md…"))
+        a_dir = m.addAction(tr("Desde una carpeta…"))
+        hit = m.exec(self.s_imp.mapToGlobal(self.s_imp.rect().bottomLeft()))
+        if hit is a_file:
+            src, _ = QFileDialog.getOpenFileName(self, tr("Habilidad para importar"), os.path.expanduser("~"),
+                                                 tr("Habilidades (*.zip *.md)"))
+        elif hit is a_dir:
+            src = QFileDialog.getExistingDirectory(self, tr("Carpeta de la habilidad (con SKILL.md)"), os.path.expanduser("~"))
+        else:
             return
+        if src:
+            self._s_import_from(src)
+
+    def _s_import_from(self, src):
         try:
-            self._s_reload(import_skill(d))
-            self.msg.setText(tr("✓ Habilidad importada."))
+            ids = import_skills(src)
         except (ValueError, OSError) as e:
-            self.msg.setText("✗ %s" % e)
+            return self.msg.setText("✗ %s" % e)
+        except Exception as e:                  # .zip dañado u otro formato
+            return self.msg.setText("✗ " + tr("No se pudo importar: %s") % e)
+        self._s_reload(ids[0])
+        warn = [(i, suspicious(i)) for i in ids]
+        warn = [(i, w) for i, w in warn if w]
+        if warn:
+            self.msg.setText("⚠ " + tr("Importada, pero «%s» contiene frases típicas de quien intenta saltarse las normas de la IA "
+                                      "(«%s»). Si la habilidad habla de ellas (por ejemplo, para protegerse), no pasa nada; si "
+                                      "no, léela antes de usarla o desactívala.") % warn[0])
+        elif len(ids) > 1:
+            self.msg.setText(tr("✓ %d habilidades importadas. El agente seguirá sus instrucciones: usa solo habilidades de "
+                                "fuentes de confianza.") % len(ids))
+        else:
+            self.msg.setText(tr("✓ Habilidad importada. El agente seguirá sus instrucciones: usa solo habilidades de fuentes "
+                                "de confianza."))
 
     def _s_examples(self):
         for name, desc, body in EXAMPLES:

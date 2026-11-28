@@ -20,6 +20,8 @@ DETACHED = 0x00000008 if osys.WIN else 0
 # ---------------------------------------------------------------- Jayth
 def installed():
     """Version instalada: empaquetada, commit de git (copia clonada) o installed.json (instalador desde el codigo)."""
+    if osys.FROZEN and osys.store_package():           # Microsoft Store: la tienda la actualiza
+        return {"kind": "store", "version": __version__}
     if osys.FROZEN:
         return {"kind": "frozen", "version": __version__}
     git = os.path.join(paths.APP_DIR, ".git")
@@ -83,6 +85,8 @@ def latest_release():
 def check_app():
     """Devuelve la version nueva si la hay (dict con date y message) o None."""
     cur = installed()
+    if cur["kind"] == "store":
+        return None
     if cur["kind"] == "frozen":
         new = latest_release()
         if new["asset"] and _vtuple(new["version"]) > _vtuple(__version__):

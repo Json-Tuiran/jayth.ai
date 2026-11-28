@@ -1448,12 +1448,24 @@ class SettingsDialog(QDialog):
         r.addWidget(btn(tr("Sugerir una mejora…"), cb=lambda: FeedbackDialog(self, "idea").exec(), ico="vfx_magia"))
         r.addStretch(1)
         v.addLayout(r)
+        self._section(v, tr("Apoyar a %s") % APP_NAME)
+        sup = lbl(tr("%s es gratis, sin anuncios ni cuentas, y lo mantiene una sola persona. Si te resulta útil, puedes apoyarlo "
+                     "con una aportación, con una estrella en GitHub o contándoselo a alguien.") % APP_NAME, "muted")
+        sup.setWordWrap(True)
+        v.addWidget(sup)
+        r = QHBoxLayout()
+        from . import support_url
+        r.addWidget(btn(tr("Apoyar a %s") % APP_NAME, cb=lambda: webbrowser.open(support_url(i18n.LANG)), ico="mat_corazon"))
+        r.addWidget(btn(tr("Dar una estrella en GitHub"), cb=lambda: webbrowser.open("https://github.com/" + REPO), ico="acc_abrir_externo"))
+        r.addStretch(1)
+        v.addLayout(r)
 
     def _check_updates(self):
         self.upd.show()
-        self.upd.setText(tr("Consultando GitHub…"))
-
         from . import updater
+        if updater.installed()["kind"] == "store":
+            return self.upd.setText(tr("Las actualizaciones de %s llegan por la Microsoft Store.") % APP_NAME)
+        self.upd.setText(tr("Consultando GitHub…"))
 
         def done(r):
             if isinstance(r, Exception):

@@ -11,6 +11,11 @@ equipo y **tú apruebas cada acción**.
 
 Creado por **Ing. Jeison Tuiran** · Software libre con licencia [GPL-3.0](LICENSE) · [Política de marca](MARCA.md)
 
+> **La rapidez depende de tu equipo.** El modelo de IA lee y escribe con tu procesador o tu tarjeta gráfica: en un
+> portátil sin gráfica funciona, con modelos pequeños y más despacio; con una gráfica o un Mac con chip Apple va varias
+> veces más rápido y admite modelos más capaces. Mínimo: 4 núcleos, 8 GB de RAM (16 recomendados) y unos 10 GB libres.
+> Detalles en **[Qué equipo necesito](#qué-equipo-necesito)**.
+
 **Español** · [English](README.en.md)
 
 <p align="center"><img src="docs/img/demo_es.gif" width="860"
@@ -82,6 +87,10 @@ Cada enlace baja directamente la última versión para ese sistema. Todas las ve
 el agente trabajando en tu proyecto (los archivos que cambia quedan marcados en verde).
 
 <p align="center"><img src="docs/img/code_es.png" width="860" alt="Jayth Code: explorador, README formateado y el agente en el panel derecho"></p>
+
+**Lienzo:** las páginas web, documentos y código que crea, junto a la conversación: tamaños de móvil o escritorio, edición, «Pedir un cambio» y exportar a PDF, Word, HTML o PNG.
+
+<p align="center"><img src="docs/img/lienzo_es.png" width="860" alt="El lienzo muestra la web de una cafetería que acaba de crear el agente"></p>
 
 **Navegador integrado:** el agente abre webs, busca, pulsa y rellena formularios a la vista; tú puedes intervenir cuando quieras.
 
@@ -219,6 +228,22 @@ Debian 12, Fedora 36 o posteriores). La memoria necesaria depende del modelo: el
 caben. Con GPU NVIDIA el modelo se reparte automáticamente entre la VRAM y la RAM; en los Mac con Apple Silicon usa la
 memoria unificada con Metal.
 
+### Qué equipo necesito
+
+Jayth funciona en casi cualquier ordenador, pero **la rapidez y la soltura del agente dependen del equipo**: el modelo
+lee lo que le das (tu mensaje, sus instrucciones, los archivos) y escribe la respuesta con tu procesador o tu tarjeta
+gráfica. Con más potencia, respuestas más rápidas y modelos más capaces, que son los que mejor trabajan como agentes.
+
+| Equipo | Qué esperar |
+|---|---|
+| **Mínimo:** procesador de 4 núcleos (2018 o posterior), 8 GB de RAM (16 recomendados), sin tarjeta gráfica, unos 10 GB libres | Modelos pequeños, como Gemma 4 E4B (unos 4 GB). Lee unos 22 tokens/s y escribe unos 5 (medido, ver [Velocidad medida](#velocidad-medida)). Va bien para tareas cortas y concretas; la primera respuesta de cada conversación puede tardar unos minutos y las tareas largas, bastante más. |
+| **Recomendado:** 16 GB de RAM o más y una tarjeta gráfica con 8 GB (NVIDIA, AMD o Intel Arc), o un Mac con chip Apple y 16 GB | Modelos medianos (de unos 8 a 14 mil millones de parámetros), más capaces y varias veces más rápidos. Las gráficas integradas no suelen ayudar. |
+| **Ideal:** tarjeta gráfica con 16–24 GB, o Mac con chip Apple y 32 GB o más | Modelos grandes (27–32 mil millones, como Qwen3.8 27B) con respuestas fluidas. Sin gráfica también funcionan, pero muy despacio (menos de 1 token/s en el portátil de prueba). |
+| **Sin un equipo potente** | Un modelo por API (Claude, Gemini, OpenRouter): rápido en cualquier ordenador; pagas al servicio lo que uses y tus mensajes pasan por él. |
+
+El asistente del primer arranque muestra qué modelos caben en tu equipo y su velocidad aproximada, y **Optimizar para
+este equipo** (Ajustes › Rendimiento) mide el tuyo y elige la configuración más rápida.
+
 ## Compilar los paquetes
 
 Cada etiqueta `v*` compila y publica automáticamente los paquetes de los tres sistemas
@@ -248,6 +273,14 @@ automáticas ([`tests/test_seguridad.py`](tests/test_seguridad.py)) que se ejecu
 
 Qué sale de tu ordenador y cuándo (nada sin que lo pidas; sin cuentas ni estadísticas de uso): **[PRIVACY.md](PRIVACY.md)**.
 
+## Apoyar a Jayth
+
+Jayth es gratis, sin anuncios ni cuentas, y lo mantiene una sola persona. Si te resulta útil:
+
+- dale una ⭐ a este repositorio y cuéntaselo a alguien a quien le pueda servir;
+- envía tus ideas y errores desde la app (menú del perfil › **Enviar comentarios…**);
+- o haz una aportación: **[formas de apoyar Jayth](https://json-tuiran.github.io/jayth.ai/apoyar.html)**.
+
 ## Licencia y autoría
 
 **Jayth** fue creado por **Ing. Jeison Tuiran**, que conserva los derechos de autor (Copyright (C) 2026 Ing. Jeison Tuiran).
@@ -259,7 +292,8 @@ Es software libre con la licencia **[GNU GPL-3.0](LICENSE)**:
 - **El nombre «Jayth», su logotipo y sus iconos** son la marca del proyecto: una versión modificada debe llevar otro
   nombre y otro logo, y no puede presentarse como oficial. Detalles en la [política de marca](MARCA.md).
 
-Las contribuciones al repositorio se aceptan bajo la misma licencia GPL-3.0.
+Las contribuciones al repositorio se aceptan bajo la misma licencia GPL-3.0 y con el
+[acuerdo de colaborador](CLA.md). Cómo contribuir: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 **Firma del código — [Code signing policy](CODE_SIGNING_POLICY.md):** free code signing provided by
 [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Los paquetes de

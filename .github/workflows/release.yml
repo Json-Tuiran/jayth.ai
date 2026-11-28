@@ -77,6 +77,31 @@ jobs:
         shell: pwsh
         run: ./packaging/windows/build.ps1
 
+      # ---- Microsoft Store: paquete MSIX sin firmar (la tienda lo firma al publicarlo). Se activa al configurar las
+      #      variables STORE_IDENTITY_NAME, STORE_PUBLISHER y STORE_PUBLISHER_NAME del repositorio (ver packaging/TIENDA.md).
+      #      Queda como artefacto de la ejecución («tienda-msix») para subirlo a Partner Center; no va a la Release.
+      - name: Paquete para la Microsoft Store (Windows)
+        if: runner.os == 'Windows' && vars.STORE_IDENTITY_NAME != ''
+        shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
+          STORE_NAME: ${{ vars.STORE_IDENTITY_NAME }}
+          STORE_PUB: ${{ vars.STORE_PUBLISHER }}
+          STORE_PUB_NAME: ${{ vars.STORE_PUBLISHER_NAME }}
+        run: |
+          $v = python -c "import jayth; print(jayth.__version__)"
+          python packaging/tienda/crear_msix.py dist/Jayth --version $v --nombre $env:STORE_NAME --editor $env:STORE_PUB `
+            --editor-nombre $env:STORE_PUB_NAME -o dist-tienda
+
+      - name: Guardar el paquete de la tienda
+        if: runner.os == 'Windows' && vars.STORE_IDENTITY_NAME != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: tienda-msix
+          if-no-files-found: error
+          retention-days: 30
+          path: dist-tienda/*.msix
+
       - name: Compilar (macOS)
         if: runner.os == 'macOS'
         run: bash packaging/macos/build_dmg.sh
@@ -92,7 +117,7 @@ jobs:
         if: runner.os == 'Windows' && env.SIGNPATH_ON == 'true'
         uses: actions/upload-artifact@v6
         with:
-          name: jayth-windows-x64-sin-firmar
+          name: sin-firmar-windows-x64
           if-no-files-found: error
           path: |
             dist/*.exe
@@ -171,6 +196,7 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           path: out
+          pattern: jayth-*                 # solo los paquetes publicables (no el MSIX de la tienda ni los sin firmar)
           merge-multiple: true
 
       - name: Crear la Release

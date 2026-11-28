@@ -27,7 +27,7 @@ Created by Ing. Jeison Tuiran. Free software licensed under GPL-3.0. Web: https:
   appear.
 - **Your profile menu** (at the bottom of the sidebar): Settings, Personalization, Memory, Assistants and skills,
   Scheduled tasks, Models, API models…, Keyboard shortcuts, Send feedback…, Report a bug…,
-  Check for updates, About Jayth and Quit.
+  Support Jayth, Check for updates, About Jayth and Quit.
 - **System tray:** Show, Quick question, Stop agent and Quit.
 
 ## The message box
@@ -281,6 +281,17 @@ what to install.
 - Downloads show percentage, speed and time remaining, resume if interrupted, and are verified with SHA-256.
 - If a new version of one of your models is released, Jayth lets you know (turn it off in Settings › About › Updates).
 
+## What computer do I need
+
+The agent's speed depends on the computer: the model reads (message, instructions, files) and writes on the processor
+or the graphics card. **Minimum:** 4-core processor (2018 or newer), 8 GB of RAM (16 recommended), about 10 GB free and
+small models like Gemma 4 E4B; without a GPU it reads about 22 tokens/s and writes about 5 (measured on an i5-8250U),
+and the first answer in each conversation can take a few minutes. **Recommended:** 16 GB or more and a graphics card
+with 8 GB (NVIDIA, AMD or Intel Arc) or an Apple-chip Mac with 16 GB, for medium models (8–14 B), several times faster.
+**Ideal:** a graphics card with 16–24 GB or a Mac with 32 GB or more, for big models (27–32 B), the best as agents.
+Without a powerful computer, an API model (Claude, Gemini, OpenRouter) is fast on any computer, paying the service.
+If it's slow: a smaller model, **Optimize for this computer**, or an API model.
+
 ## Engine and performance
 
 Jayth downloads the official llama.cpp build suited to the computer: Metal on Macs with Apple Silicon, CUDA for
@@ -369,6 +380,7 @@ names):
   - **Updates:** “Notify me when there's a new version of Jayth”, “Download updates in the background and install
     them when Jayth closes”, “Notify me when a new version of my models is released”.
   - **Feedback:** **Report a bug…** and **Suggest an improvement…**.
+  - **Support Jayth:** **Support Jayth** (opens the page with ways to support the project) and **Star it on GitHub**.
 
 ## Personalization and memory
 
@@ -383,6 +395,8 @@ Profile menu › **Assistants and skills**. An **assistant** is an agent with it
 (e.g. “Style editor”); pick it with **+ › Use an assistant** in the message box. A **skill** is a procedure the agent
 uses when it fits the task (e.g. “Write executive reports and deliver them in Word”); create, import, enable or
 disable them in the Skills tab (**Add examples** brings in a few samples).
+**Import…** accepts a folder with `SKILL.md`, a single `.md` or a `.zip` like the ones from skill stores (also packs
+with several); if one contains phrases typical of prompt injection, Jayth warns about it.
 
 ## Scheduled tasks
 
