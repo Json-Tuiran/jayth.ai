@@ -1,0 +1,48 @@
+# Agradecimientos a patrocinadores (tools_web/patrocinadores.py): una vez al día lee los patrocinios públicos y activos de
+# GitHub Sponsors y pone los nombres en la web (10 USD al mes o más) y en los README (25 USD o más). Si cambió algo, lo
+# guarda en main y vuelve a publicar la web. Necesita el secreto SPONSORS_TOKEN (token clásico con permiso read:user);
+# sin él no hace nada.
+name: Agradecer a los patrocinadores
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: patrocinadores
+  cancel-in-progress: false
+
+jobs:
+  actualizar:
+    name: Actualizar la lista de patrocinadores
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Leer GitHub Sponsors y actualizar los agradecimientos
+        id: lista
+        env:
+          SPONSORS_TOKEN: ${{ secrets.SPONSORS_TOKEN }}
+          PYTHONIOENCODING: utf-8
+        run: python3 tools_web/patrocinadores.py
+
+      - name: Guardar los cambios
+        if: steps.lista.outputs.cambios == 'si'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md README.en.md sitio/apoyar.html sitio/en/support.html
+          git commit -m "Patrocinadores: lista de agradecimientos actualizada"
+          git push
+
+      # lo que sube esta tarea no dispara otras tareas: la web se publica a mano desde aquí
+      - name: Volver a publicar la web
+        if: steps.lista.outputs.cambios == 'si'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run sitio.yml --ref main

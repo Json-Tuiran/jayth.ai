@@ -282,6 +282,10 @@ Jayth es gratis, sin anuncios ni cuentas, y lo mantiene una sola persona. Si te 
 - o haz una aportación, una vez o cada mes, en **[GitHub Sponsors](https://github.com/sponsors/Json-Tuiran)**
   (más formas en [Apoyar a Jayth](https://json-tuiran.github.io/jayth.ai/apoyar.html)).
 
+<!-- patrocinadores:inicio -->
+¿Quieres aparecer aquí? Patrocina Jayth con 25 USD al mes en [GitHub Sponsors](https://github.com/sponsors/Json-Tuiran).
+<!-- patrocinadores:fin -->
+
 ## Licencia y autoría
 
 **Jayth** fue creado por **Ing. Jeison Tuiran**, que conserva los derechos de autor (Copyright (C) 2026 Ing. Jeison Tuiran).
